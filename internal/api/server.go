@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	dockerclient "github.com/docker/docker/client"
@@ -11,7 +12,10 @@ import (
 	"phyless/internal/docker"
 	"phyless/internal/models"
 	"phyless/internal/store"
+	"phyless/internal/ws"
 )
+
+type contextKey struct{}
 
 type Server struct {
 	store     *store.Store
@@ -67,7 +71,26 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		r.Get("/api/audit", srv.handleListAudit)
 	})
 
+	// WebSocket routes (auth via query param token for WS upgrade compatibility)
+	r.Get("/ws/containers/{id}/logs", wsAuth(jwtSecret, models.RoleViewer, ws.Logs(dc)))
+	r.Get("/ws/containers/{id}/terminal", wsAuth(jwtSecret, models.RoleOperator, ws.Terminal(dc)))
+	r.Get("/ws/containers/{id}/stats", wsAuth(jwtSecret, models.RoleViewer, ws.Stats(dc)))
+	r.Get("/ws/events", wsAuth(jwtSecret, models.RoleViewer, ws.Events(dc)))
+
 	return r
+}
+
+// wsAuth accepts token via ?token= query param (browsers can't set headers on WS upgrade).
+func wsAuth(secret []byte, minRole models.Role, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		claims, err := auth.ValidateToken(token, secret)
+		if err != nil || claims.Role.Level() < minRole.Level() {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next(w, r.WithContext(context.WithValue(r.Context(), contextKey{}, claims)))
+	}
 }
 
 func (s *Server) mountDockerRoutes(r chi.Router) {
