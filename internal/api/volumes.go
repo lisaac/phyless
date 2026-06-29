@@ -3,11 +3,11 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 
-	"github.com/docker/docker/api/types/container"
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/go-chi/chi/v5"
-	dockercontainer "phyless/internal/docker/container"
 )
 
 func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
@@ -65,46 +65,33 @@ func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) {
 	s.handleGetVolume(w, r)
 }
 
-// handleVolumeListFiles mounts the volume in a temporary busybox container and lists files.
 func (s *Server) handleVolumeListFiles(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/data"
-	}
-
-	// ponytail: temp container just to read volume files; removed immediately after
-	resp, err := s.docker.ContainerCreate(r.Context(),
-		&container.Config{Image: "busybox", Cmd: []string{"sh"}},
-		&container.HostConfig{Binds: []string{id + ":/data"}},
-		nil, nil, "")
+	subPath := r.URL.Query().Get("path")
+	v, err := s.docker.VolumeInspect(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	cid := resp.ID
-	defer s.docker.ContainerRemove(r.Context(), cid, container.RemoveOptions{Force: true}) //nolint:errcheck
-
-	headers, err := dockercontainer.ListFiles(r.Context(), s.docker, cid, path)
+	root := filepath.Join(v.Mountpoint, subPath)
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
 	type fileEntry struct {
 		Name  string `json:"name"`
-		Size  int64  `json:"size"`
-		Mode  string `json:"mode"`
 		IsDir bool   `json:"is_dir"`
+		Size  int64  `json:"size"`
 	}
-	out := make([]fileEntry, len(headers))
-	for i, h := range headers {
-		out[i] = fileEntry{
-			Name:  h.Name,
-			Size:  h.Size,
-			Mode:  h.FileInfo().Mode().String(),
-			IsDir: h.Typeflag == 53,
+	out := make([]fileEntry, 0, len(entries))
+	for _, e := range entries {
+		info, _ := e.Info()
+		size := int64(0)
+		if info != nil && !e.IsDir() {
+			size = info.Size()
 		}
+		out = append(out, fileEntry{Name: e.Name(), IsDir: e.IsDir(), Size: size})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

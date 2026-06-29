@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/tar"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -171,13 +172,19 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerPause(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s.docker.ContainerPause(r.Context(), id) //nolint:errcheck
+	if err := s.docker.ContainerPause(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s.docker.ContainerUnpause(r.Context(), id) //nolint:errcheck
+	if err := s.docker.ContainerUnpause(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -295,7 +302,7 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 			Name:  h.Name,
 			Size:  h.Size,
 			Mode:  h.FileInfo().Mode().String(),
-			IsDir: h.Typeflag == 53, // tar.TypeDir == '5' == 53
+			IsDir: h.Typeflag == tar.TypeDir,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -304,6 +311,9 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 func (s *Server) handleContainerDownloadFile(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "/"
+	}
 	rc, err := dockercontainer.DownloadFile(r.Context(), s.docker, id, path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
