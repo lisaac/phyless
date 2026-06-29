@@ -76,6 +76,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 	r.Get("/ws/containers/{id}/terminal", wsAuth(jwtSecret, models.RoleOperator, ws.Terminal(dc)))
 	r.Get("/ws/containers/{id}/stats", wsAuth(jwtSecret, models.RoleViewer, ws.Stats(dc)))
 	r.Get("/ws/events", wsAuth(jwtSecret, models.RoleViewer, ws.Events(dc)))
+	r.Get("/ws/compose/{id}/logs", wsAuth(jwtSecret, models.RoleViewer, srv.handleComposeLogsWS))
 
 	return r
 }
@@ -146,6 +147,5 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Get("/api/volumes/{id}/files", s.handleVolumeListFiles)
 }
 
-func (s *Server) mountComposeRoutes(r chi.Router)  {}
 func (s *Server) mountConfigRoutes(r chi.Router)   {}
 func (s *Server) mountRegistryRoutes(r chi.Router) {}
