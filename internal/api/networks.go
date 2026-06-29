@@ -19,9 +19,11 @@ func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name   string            `json:"name"`
-		Driver string            `json:"driver"`
-		Labels map[string]string `json:"labels,omitempty"`
+		Name    string            `json:"name"`
+		Driver  string            `json:"driver"` // bridge, macvlan, ipvlan, overlay, etc.
+		IPAM    *network.IPAM     `json:"ipam,omitempty"`
+		Options map[string]string `json:"options,omitempty"`
+		Labels  map[string]string `json:"labels,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -31,13 +33,16 @@ func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 		body.Driver = "bridge"
 	}
 	resp, err := s.docker.NetworkCreate(r.Context(), body.Name, network.CreateOptions{
-		Driver: body.Driver,
-		Labels: body.Labels,
+		Driver:  body.Driver,
+		IPAM:    body.IPAM,
+		Options: body.Options,
+		Labels:  body.Labels,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditFromCtx(r, "network.create", body.Name, "ok")
 	writeJSON(w, http.StatusCreated, map[string]string{"id": resp.ID})
 }
 
@@ -57,6 +62,7 @@ func (s *Server) handleDeleteNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditFromCtx(r, "network.delete", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 

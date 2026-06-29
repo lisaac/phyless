@@ -58,6 +58,7 @@ func (s *Server) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditFromCtx(r, "volume.delete", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 
