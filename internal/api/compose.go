@@ -40,7 +40,10 @@ func (s *Server) handleCreateCompose(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := s.store.Read()
 	p.ID = fmt.Sprintf("%d", len(cfg.ComposeProjects)+1)
 	cfg.ComposeProjects = append(cfg.ComposeProjects, p)
-	s.store.Write(cfg)
+	if err := s.store.Write(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save")
+		return
+	}
 	s.auditFromCtx(r, "compose.register", p.Name, "ok")
 	writeJSON(w, http.StatusCreated, map[string]string{"id": p.ID})
 }
@@ -60,7 +63,10 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 	for i, p := range cfg.ComposeProjects {
 		if p.ID == id {
 			cfg.ComposeProjects = append(cfg.ComposeProjects[:i], cfg.ComposeProjects[i+1:]...)
-			s.store.Write(cfg)
+			if err := s.store.Write(cfg); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to save")
+				return
+			}
 			s.auditFromCtx(r, "compose.delete", id, "ok")
 			w.WriteHeader(http.StatusNoContent)
 			return

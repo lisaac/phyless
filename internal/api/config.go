@@ -23,6 +23,10 @@ func (s *Server) mountConfigRoutes(r chi.Router) {
 
 func (s *Server) handleConfigListFiles(w http.ResponseWriter, r *http.Request) {
 	subPath := r.URL.Query().Get("path")
+	if !isSubPath(configRoot, filepath.Join(configRoot, subPath)) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
 	entries, err := config.ListDir(configRoot, subPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

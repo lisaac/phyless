@@ -36,7 +36,10 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 	cfg, _ := s.store.Read()
 	reg := models.Registry{
 		ID:          fmt.Sprintf("%d", len(cfg.Registries)+1),
@@ -45,7 +48,10 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 		PasswordEnc: encrypt(body.Password),
 	}
 	cfg.Registries = append(cfg.Registries, reg)
-	s.store.Write(cfg)
+	if err := s.store.Write(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save")
+		return
+	}
 	s.auditFromCtx(r, "registry.create", reg.URL, "ok")
 	writeJSON(w, http.StatusCreated, map[string]string{"id": reg.ID})
 }
@@ -56,7 +62,10 @@ func (s *Server) handleDeleteRegistry(w http.ResponseWriter, r *http.Request) {
 	for i, reg := range cfg.Registries {
 		if reg.ID == id {
 			cfg.Registries = append(cfg.Registries[:i], cfg.Registries[i+1:]...)
-			s.store.Write(cfg)
+			if err := s.store.Write(cfg); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to save")
+				return
+			}
 			s.auditFromCtx(r, "registry.delete", id, "ok")
 			w.WriteHeader(http.StatusNoContent)
 			return

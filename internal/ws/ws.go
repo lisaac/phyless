@@ -1,7 +1,6 @@
 package ws
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -59,7 +58,7 @@ func Terminal(cli *client.Client) http.HandlerFunc {
 		}
 		defer conn.Close()
 
-		ctx := context.Background()
+		ctx := r.Context()
 		execID, err := cli.ContainerExecCreate(ctx, id, container.ExecOptions{
 			AttachStdin: true, AttachStdout: true, AttachStderr: true,
 			Tty: true, Cmd: []string{"/bin/sh"},

@@ -75,6 +75,10 @@ func (s *Server) handleVolumeListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root := filepath.Join(v.Mountpoint, subPath)
+	if !isSubPath(v.Mountpoint, root) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

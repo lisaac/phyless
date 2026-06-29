@@ -165,7 +165,10 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s.docker.ContainerRestart(r.Context(), id, container.StopOptions{}) //nolint:errcheck
+	if err := s.docker.ContainerRestart(r.Context(), id, container.StopOptions{}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	s.auditFromCtx(r, "container.restart", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -190,7 +193,10 @@ func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s.docker.ContainerKill(r.Context(), id, "SIGKILL") //nolint:errcheck
+	if err := s.docker.ContainerKill(r.Context(), id, "SIGKILL"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	s.auditFromCtx(r, "container.kill", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
