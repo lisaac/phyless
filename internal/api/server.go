@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"phyless/internal/audit"
 	"phyless/internal/auth"
 	"phyless/internal/models"
 	"phyless/internal/store"
@@ -14,10 +15,11 @@ type Server struct {
 	store     *store.Store
 	jwtSecret []byte
 	dataDir   string
+	audit     *audit.Logger
 }
 
 func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
-	srv := &Server{store: s, jwtSecret: jwtSecret, dataDir: dataDir}
+	srv := &Server{store: s, jwtSecret: jwtSecret, dataDir: dataDir, audit: audit.New(dataDir + "/audit.log")}
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
