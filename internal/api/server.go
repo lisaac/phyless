@@ -147,5 +147,3 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Get("/api/volumes/{id}/files", s.handleVolumeListFiles)
 }
 
-func (s *Server) mountConfigRoutes(r chi.Router)   {}
-func (s *Server) mountRegistryRoutes(r chi.Router) {}
