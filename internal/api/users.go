@@ -57,7 +57,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	cfg, _ := s.store.Read()
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	for _, u := range cfg.Users {
 		if u.ID == id {
 			writeJSON(w, http.StatusOK, map[string]any{"id": u.ID, "username": u.Username, "role": u.Role})
@@ -73,18 +77,32 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		Password string      `json:"password,omitempty"`
 		Role     models.Role `json:"role,omitempty"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
-	cfg, _ := s.store.Read()
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	for i, u := range cfg.Users {
 		if u.ID == id {
 			if body.Password != "" {
-				hash, _ := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+				hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "hash error")
+					return
+				}
 				cfg.Users[i].PasswordHash = string(hash)
 			}
 			if body.Role != "" {
 				cfg.Users[i].Role = body.Role
 			}
-			s.store.Write(cfg)
+			if err := s.store.Write(cfg); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]string{"id": id})
 			return
 		}
@@ -94,11 +112,18 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	cfg, _ := s.store.Read()
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	for i, u := range cfg.Users {
 		if u.ID == id {
 			cfg.Users = append(cfg.Users[:i], cfg.Users[i+1:]...)
-			s.store.Write(cfg)
+			if err := s.store.Write(cfg); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
