@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"os"
 
 	dockerclient "github.com/docker/docker/client"
 	"github.com/go-chi/chi/v5"
@@ -38,6 +39,18 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		docker:    dc,
 	}
 	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
@@ -77,6 +90,18 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 	r.Get("/ws/containers/{id}/stats", wsAuth(jwtSecret, models.RoleViewer, ws.Stats(dc)))
 	r.Get("/ws/events", wsAuth(jwtSecret, models.RoleViewer, ws.Events(dc)))
 	r.Get("/ws/compose/{id}/logs", wsAuth(jwtSecret, models.RoleViewer, srv.handleComposeLogsWS))
+
+	distDir := "./web/dist"
+	if _, err := os.Stat(distDir); err == nil {
+		fs := http.FileServer(http.Dir(distDir))
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			if _, err := os.Stat(distDir + r.URL.Path); os.IsNotExist(err) {
+				http.ServeFile(w, r, distDir+"/index.html")
+				return
+			}
+			fs.ServeHTTP(w, r)
+		})
+	}
 
 	return r
 }
