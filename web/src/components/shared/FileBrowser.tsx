@@ -6,12 +6,15 @@ export const FileBrowser: Component<{
   listPath: (sub: string) => Promise<FileEntry[]>;
   downloadURL?: (sub: string) => string;
   onUpload?: (sub: string, file: File) => Promise<void>;
+  onOpenFile?: (fullSubPath: string) => void;
 }> = (props) => {
   const [path, setPath] = createSignal("/");
   const [entries, { refetch }] = createResource(path, (p) => props.listPath(p));
 
   const enter = (e: FileEntry) => {
-    if (e.is_dir) setPath((p) => (p.endsWith("/") ? p : p + "/") + e.name);
+    const full = (path().endsWith("/") ? path() : path() + "/") + e.name;
+    if (e.is_dir) setPath(full);
+    else props.onOpenFile?.(full.replace(/^\/+/, "/"));
   };
   const up = () => setPath((p) => p.replace(/\/[^/]+\/?$/, "") || "/");
 
