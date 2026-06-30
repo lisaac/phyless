@@ -2,7 +2,7 @@ import { Component, createSignal, Show } from "solid-js";
 import { FileBrowser } from "../shared/FileBrowser";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
-import { get, getToken } from "../../api/client";
+import { get, getToken, setToken } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import type { FileEntry } from "../../types";
@@ -38,6 +38,7 @@ export const ConfigFilesPage: Component = () => {
         headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "text/plain" },
         body: content(),
       });
+      if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
       if (!res.ok) throw new Error(await res.text());
       toast.info("saved");
     } catch (e) { toast.error((e as Error).message); }

@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, For, Show } from "solid-js";
 import { useParams } from "@solidjs/router";
-import { get, put, getToken } from "../../api/client";
+import { get, put, getToken, setToken } from "../../api/client";
 import { Button } from "../shared/Button";
 import { toast } from "../shared/Toast";
 import { ContainerLogs } from "./ContainerLogs";
@@ -35,6 +35,7 @@ export const ContainerDetailPage: Component = () => {
       `/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}`,
       { method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: file },
     );
+    if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
     if (!res.ok) throw new Error(await res.text());
   };
 

@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, onCleanup, For, Show } from "solid-js";
 import { useParams } from "@solidjs/router";
-import { get, put, getToken } from "../../api/client";
+import { get, put, getToken, setToken } from "../../api/client";
 import { connectWS } from "../../api/ws";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
@@ -31,18 +31,21 @@ export const ComposeDetailPage: Component = () => {
 
   // run streams text/plain; read the body incrementally into the output pane.
   const runCmd = async (verb: "up" | "down" | "pull" | "restart") => {
-    setOutput("");
-    const res = await fetch(`/api/compose/${id()}/${verb}`, {
-      method: "POST", headers: { Authorization: `Bearer ${getToken()}` },
-    });
-    const reader = res.body?.getReader();
-    if (!reader) return;
-    const dec = new TextDecoder();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      setOutput((o) => o + dec.decode(value));
-    }
+    try {
+      setOutput("");
+      const res = await fetch(`/api/compose/${id()}/${verb}`, {
+        method: "POST", headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
+      const reader = res.body?.getReader();
+      if (!reader) return;
+      const dec = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        setOutput((o) => o + dec.decode(value));
+      }
+    } catch (e) { toast.error((e as Error).message); }
   };
 
   const startLogs = () => {
