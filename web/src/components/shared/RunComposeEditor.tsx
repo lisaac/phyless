@@ -1,10 +1,7 @@
-import { Component, JSX, createSignal, onMount } from "solid-js";
+import { Component, JSX, createSignal, createEffect } from "solid-js";
 import { CodeEditor } from "./CodeEditor";
 import { runToCompose, composeToRun } from "../../api/convert";
 
-// RunComposeEditor: left = docker run, right = compose.yaml.
-// Editing either side live-converts the other. Conversion errors are shown inline.
-// On mount, if initialRun is provided and initialCompose is not, auto-converts.
 export const RunComposeEditor: Component<{
   initialRun?: string;
   initialCompose?: string;
@@ -14,36 +11,25 @@ export const RunComposeEditor: Component<{
   const [compose, setCompose] = createSignal(props.initialCompose ?? "");
   const [err, setErr] = createSignal("");
 
-  // Auto-convert initialRun → compose on first mount so both panes are populated.
-  onMount(() => {
-    if (props.initialRun && !props.initialCompose) {
-      try {
-        setCompose(runToCompose(props.initialRun));
-        setErr("");
-      } catch (e) {
-        setErr((e as Error).message);
-      }
-    }
+  // React to external initialRun changes (template loaded, container cloned).
+  // Runs on mount AND whenever props.initialRun changes.
+  createEffect(() => {
+    const v = props.initialRun;
+    if (!v) return;
+    setRun(v);
+    try { setCompose(runToCompose(v)); setErr(""); }
+    catch (e) { setErr((e as Error).message); }
   });
 
   const onRunEdit = (v: string) => {
     setRun(v);
-    try {
-      setCompose(runToCompose(v));
-      setErr("");
-    } catch (e) {
-      setErr((e as Error).message);
-    }
+    try { setCompose(runToCompose(v)); setErr(""); }
+    catch (e) { setErr((e as Error).message); }
   };
-
   const onComposeEdit = (v: string) => {
     setCompose(v);
-    try {
-      setRun(composeToRun(v));
-      setErr("");
-    } catch (e) {
-      setErr((e as Error).message);
-    }
+    try { setRun(composeToRun(v)); setErr(""); }
+    catch (e) { setErr((e as Error).message); }
   };
 
   return (

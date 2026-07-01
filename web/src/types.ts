@@ -15,9 +15,10 @@ export interface ContainerSummary {
   State: string;
   Status: string;
   Created: number;
-  Ports: { PrivatePort: number; PublicPort?: number; Type: string }[];
-  Mounts: { Source: string; Destination: string }[];
+  Ports: { PrivatePort: number; PublicPort?: number; Type: string; IP?: string }[];
+  Mounts: { Source: string; Destination: string; Mode?: string; Type?: string }[];
   Command: string;
+  NetworkSettings?: { Networks: Record<string, { IPAddress: string }> };
 }
 
 export interface ImageSummary {
