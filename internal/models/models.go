@@ -41,3 +41,10 @@ type Registry struct {
 	Username    string `json:"username"`
 	PasswordEnc string `json:"password_enc"`
 }
+
+type Template struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Cmd     string `json:"cmd"` // docker run command
+	Created string `json:"created"`
+}

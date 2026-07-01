@@ -1,9 +1,10 @@
-import { Component, JSX, createSignal } from "solid-js";
+import { Component, JSX, createSignal, onMount } from "solid-js";
 import { CodeEditor } from "./CodeEditor";
 import { runToCompose, composeToRun } from "../../api/convert";
 
-// RunComposeEditor: left = docker run, right = compose.yaml. Editing one side
-// live-converts into the other. Conversion errors are shown, not thrown.
+// RunComposeEditor: left = docker run, right = compose.yaml.
+// Editing either side live-converts the other. Conversion errors are shown inline.
+// On mount, if initialRun is provided and initialCompose is not, auto-converts.
 export const RunComposeEditor: Component<{
   initialRun?: string;
   initialCompose?: string;
@@ -12,6 +13,18 @@ export const RunComposeEditor: Component<{
   const [run, setRun] = createSignal(props.initialRun ?? "");
   const [compose, setCompose] = createSignal(props.initialCompose ?? "");
   const [err, setErr] = createSignal("");
+
+  // Auto-convert initialRun → compose on first mount so both panes are populated.
+  onMount(() => {
+    if (props.initialRun && !props.initialCompose) {
+      try {
+        setCompose(runToCompose(props.initialRun));
+        setErr("");
+      } catch (e) {
+        setErr((e as Error).message);
+      }
+    }
+  });
 
   const onRunEdit = (v: string) => {
     setRun(v);
@@ -22,6 +35,7 @@ export const RunComposeEditor: Component<{
       setErr((e as Error).message);
     }
   };
+
   const onComposeEdit = (v: string) => {
     setCompose(v);
     try {
@@ -44,7 +58,7 @@ export const RunComposeEditor: Component<{
           <div class="flex-1"><CodeEditor value={compose()} onChange={onComposeEdit} language="yaml" /></div>
         </div>
       </div>
-      {err() && <p class="text-sm text-red-400">{err()}</p>}
+      {err() && <p class="rounded bg-red-900/30 px-2 py-1 text-sm text-red-400">{err()}</p>}
       {props.actions?.({ run: run(), compose: compose() })}
     </div>
   );

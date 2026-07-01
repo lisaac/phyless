@@ -68,3 +68,10 @@ export interface FileEntry {
   size: number;
   mode?: string;
 }
+
+export interface Template {
+  id: string;
+  name: string;
+  cmd: string;
+  created: string;
+}

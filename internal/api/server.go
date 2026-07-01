@@ -71,6 +71,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		srv.mountComposeRoutes(r)
 		srv.mountConfigRoutes(r)
 		srv.mountRegistryRoutes(r)
+		srv.mountTemplateRoutes(r)
 	})
 
 	// Admin only
