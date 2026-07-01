@@ -1,6 +1,6 @@
 import { Component, onMount, onCleanup, createEffect } from "solid-js";
 import { EditorView, keymap } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Transaction } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { yaml } from "@codemirror/lang-yaml";
 import { json } from "@codemirror/lang-json";
@@ -34,7 +34,17 @@ export const CodeEditor: Component<{
           EditorView.theme({ "&": { height: "100%", fontSize: "13px" } }, { dark: true }),
           EditorView.editable.of(!props.readOnly),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged && props.onChange) props.onChange(u.state.doc.toString());
+            // Only fire onChange for user-initiated edits (input, paste, delete).
+            // Programmatic dispatches (from createEffect below) have no userEvent
+            // annotation, so this guard breaks the feedback loop when the two
+            // editors are cross-synced via RunComposeEditor.
+            if (
+              u.docChanged &&
+              props.onChange &&
+              u.transactions.some((t) => t.annotation(Transaction.userEvent))
+            ) {
+              props.onChange(u.state.doc.toString());
+            }
           }),
         ],
       }),

@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -13,7 +13,7 @@ COPY web/ .
 RUN npm run build
 
 FROM alpine:latest
-RUN apk add --no-cache docker-cli docker-compose-plugin
+RUN apk add --no-cache docker-cli docker-cli-compose
 WORKDIR /app
 COPY --from=builder /app/infra-manager .
 COPY --from=frontend /web/dist ./web/dist

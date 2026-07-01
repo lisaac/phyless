@@ -4,3 +4,37 @@
 
 html, body, #root { height: 100%; margin: 0; }
 body { font-family: ui-sans-serif, system-ui, sans-serif; }
+
+/* ── Light mode overrides ─────────────────────────────────────────────────────
+   html.dark  = dark mode (current look)
+   html:not(.dark) = light mode
+   Specificity (0,2,1) beats Tailwind's (0,1,0), no !important needed.
+────────────────────────────────────────────────────────────────────────────── */
+html:not(.dark) body                { background: #f8fafc; color: #0f172a; }
+
+html:not(.dark) .bg-zinc-950        { background-color: #f8fafc; }
+html:not(.dark) .bg-zinc-900        { background-color: #ffffff; }
+html:not(.dark) .bg-zinc-800        { background-color: #f1f5f9; }
+html:not(.dark) .bg-zinc-700        { background-color: #e2e8f0; }
+
+html:not(.dark) .border-zinc-800    { border-color: #e2e8f0; }
+html:not(.dark) .border-zinc-900    { border-color: #f1f5f9; }
+
+html:not(.dark) .text-zinc-100      { color: #0f172a; }
+html:not(.dark) .text-zinc-200      { color: #1e293b; }
+html:not(.dark) .text-zinc-300      { color: #334155; }
+html:not(.dark) .text-zinc-400      { color: #64748b; }
+html:not(.dark) .text-zinc-500      { color: #94a3b8; }
+
+html:not(.dark) .hover\:bg-zinc-800:hover  { background-color: #f1f5f9; }
+html:not(.dark) .hover\:bg-zinc-700:hover  { background-color: #e2e8f0; }
+html:not(.dark) .hover\:text-zinc-100:hover { color: #0f172a; }
+
+/* Sidebar active item */
+html:not(.dark) .bg-zinc-800.font-medium { background-color: #e2e8f0; }
+
+/* Toast (info uses bg-zinc-700 which we mapped to #e2e8f0 — still needs contrast) */
+html:not(.dark) .bg-zinc-700 { background-color: #334155; }
+
+/* Code editor border/bg */
+html:not(.dark) .border-zinc-800.rounded { border-color: #e2e8f0; }

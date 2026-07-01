@@ -1,0 +1,13 @@
+services:
+  phyless:
+    build: .
+    image: phyless:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - phyless_data:/data
+    restart: unless-stopped
+
+volumes:
+  phyless_data:

@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
+	"github.com/docker/go-connections/nat"
 	"github.com/go-chi/chi/v5"
 	dockercontainer "phyless/internal/docker/container"
 )
@@ -43,6 +44,9 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		PidsLimit      *int64            `json:"pids_limit,omitempty"`
 		Sysctls        map[string]string `json:"sysctls,omitempty"`
 		Labels         map[string]string `json:"labels,omitempty"`
+		Ports          []string          `json:"ports,omitempty"` // e.g. ["8080:80", "0.0.0.0:443:443/tcp"]
+		Hostname       string            `json:"hostname,omitempty"`
+		WorkingDir     string            `json:"working_dir,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -73,6 +77,12 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Labels != nil {
 		cfg.Labels = body.Labels
+	}
+	if body.Hostname != "" {
+		cfg.Hostname = body.Hostname
+	}
+	if body.WorkingDir != "" {
+		cfg.WorkingDir = body.WorkingDir
 	}
 
 	hostCfg := &container.HostConfig{}
@@ -110,6 +120,19 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	hostCfg.ReadonlyRootfs = body.ReadonlyRootfs
 	if body.Sysctls != nil {
 		hostCfg.Sysctls = body.Sysctls
+	}
+	if len(body.Ports) > 0 {
+		_, portBindings, err := nat.ParsePortSpecs(body.Ports)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid port spec: "+err.Error())
+			return
+		}
+		hostCfg.PortBindings = portBindings
+		exposed := nat.PortSet{}
+		for p := range portBindings {
+			exposed[p] = struct{}{}
+		}
+		cfg.ExposedPorts = exposed
 	}
 
 	resp, err := s.docker.ContainerCreate(r.Context(), cfg, hostCfg, &network.NetworkingConfig{}, nil, body.Name)

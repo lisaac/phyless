@@ -1,7 +1,7 @@
 import { Component, For, Show } from "solid-js";
-import { A } from "@solidjs/router";
+import { A, useNavigate } from "@solidjs/router";
 import { currentUser, doLogout, hasRole } from "../../stores/auth";
-import { useNavigate } from "@solidjs/router";
+import { theme, toggleTheme } from "../../stores/theme";
 
 const mainLinks = [
   { to: "/containers", label: "容器" },
@@ -24,7 +24,16 @@ export const Sidebar: Component = () => {
   const activeClass = "bg-zinc-800 font-medium";
   return (
     <nav class="flex w-48 flex-col border-r border-zinc-800 bg-zinc-900 p-2">
-      <div class="px-3 py-2 text-lg font-bold">phyless</div>
+      <div class="flex items-center justify-between px-3 py-2">
+        <span class="text-lg font-bold">phyless</span>
+        <button
+          title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
+          class="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+          onClick={toggleTheme}
+        >
+          {theme() === "dark" ? "☀" : "☽"}
+        </button>
+      </div>
       <For each={mainLinks}>
         {(l) => (
           <A href={l.to} class={linkClass} activeClass={activeClass}>{l.label}</A>
