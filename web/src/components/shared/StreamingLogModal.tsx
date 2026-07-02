@@ -66,7 +66,7 @@ export const StreamingLogModal: Component<{
     <Modal open={props.open} onClose={close} title={props.title} wide>
       <pre
         ref={pre}
-        class="h-[55vh] overflow-auto rounded border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-300"
+        class="h-[55vh] overflow-auto border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-300"
       >
         {log() || "连接中…"}
       </pre>

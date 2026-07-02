@@ -45,9 +45,9 @@ export const UsersPage: Component = () => {
       <Table rows={store.items()} columns={columns} rowKey={(u) => u.id} />
 
       <Modal open={show()} onClose={() => setShow(false)} title="新建用户">
-        <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" placeholder="用户名" value={form().username} onInput={(e) => set("username", e.currentTarget.value)} />
-        <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" type="password" placeholder="密码" value={form().password} onInput={(e) => set("password", e.currentTarget.value)} />
-        <select class="mb-3 w-full rounded bg-zinc-800 px-3 py-2" value={form().role} onChange={(e) => set("role", e.currentTarget.value)}>
+        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="用户名" value={form().username} onInput={(e) => set("username", e.currentTarget.value)} />
+        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" type="password" placeholder="密码" value={form().password} onInput={(e) => set("password", e.currentTarget.value)} />
+        <select class="mb-3 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" value={form().role} onChange={(e) => set("role", e.currentTarget.value)}>
           <option value="viewer">viewer</option>
           <option value="operator">operator</option>
           <option value="admin">admin</option>

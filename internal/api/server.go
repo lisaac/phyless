@@ -92,13 +92,27 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 	r.Get("/ws/events", wsAuth(jwtSecret, models.RoleViewer, ws.Events(dc)))
 	r.Get("/ws/compose/{id}/logs", wsAuth(jwtSecret, models.RoleViewer, srv.handleComposeLogsWS))
 
+	// Download routes — browsers can't set Authorization headers on <a href>, use query token instead
+	r.Get("/api/containers/{id}/export", wsAuth(jwtSecret, models.RoleOperator, srv.handleContainerExport))
+	r.Get("/api/containers/{id}/files/download", wsAuth(jwtSecret, models.RoleOperator, srv.handleContainerDownloadFile))
+
 	distDir := "./web/dist"
 	if _, err := os.Stat(distDir); err == nil {
 		fs := http.FileServer(http.Dir(distDir))
 		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-			if _, err := os.Stat(distDir + r.URL.Path); os.IsNotExist(err) {
+			path := r.URL.Path
+			if _, err := os.Stat(distDir + path); os.IsNotExist(err) {
+				// SPA fallback — index.html must never be stale
+				w.Header().Set("Cache-Control", "no-store")
 				http.ServeFile(w, r, distDir+"/index.html")
 				return
+			}
+			// Hashed assets (e.g. /assets/index-abc123.js) can be cached forever.
+			// index.html itself must not be cached.
+			if path == "/" || path == "/index.html" {
+				w.Header().Set("Cache-Control", "no-store")
+			} else {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 			fs.ServeHTTP(w, r)
 		})
@@ -137,11 +151,12 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Post("/api/containers/{id}/upgrade", s.handleContainerUpgrade)
 	r.Put("/api/containers/{id}/resources", s.handleContainerUpdateResources)
 	r.Get("/api/containers/{id}/inspect", s.handleContainerInspect)
-	r.Get("/api/containers/{id}/export", s.handleContainerExport)
 	r.Post("/api/containers/import", s.handleContainerImport)
+	r.Get("/api/containers/{id}/top", s.handleContainerTop)
 	r.Get("/api/containers/{id}/files", s.handleContainerListFiles)
-	r.Get("/api/containers/{id}/files/download", s.handleContainerDownloadFile)
 	r.Post("/api/containers/{id}/files/upload", s.handleContainerUploadFile)
+	r.Delete("/api/containers/{id}/files", s.handleContainerDeleteFile)
+	r.Post("/api/containers/{id}/files/rename", s.handleContainerRenameFile)
 
 	// Images
 	r.Get("/api/images", s.handleListImages)

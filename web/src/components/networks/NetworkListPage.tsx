@@ -62,16 +62,16 @@ export const NetworkListPage: Component = () => {
       <Table rows={store.items()} columns={columns} rowKey={(n) => n.Id} />
 
       <Modal open={show()} onClose={() => setShow(false)} title="创建网络">
-        <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" placeholder="名称" value={form().name} onInput={(e) => set("name", e.currentTarget.value)} />
-        <select class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" value={form().driver} onChange={(e) => set("driver", e.currentTarget.value)}>
+        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="名称" value={form().name} onInput={(e) => set("name", e.currentTarget.value)} />
+        <select class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" value={form().driver} onChange={(e) => set("driver", e.currentTarget.value)}>
           <option value="bridge">bridge</option>
           <option value="macvlan">macvlan</option>
           <option value="ipvlan">ipvlan</option>
         </select>
-        <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" placeholder="子网 192.168.1.0/24 (可选)" value={form().subnet} onInput={(e) => set("subnet", e.currentTarget.value)} />
-        <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" placeholder="网关 192.168.1.1 (可选)" value={form().gateway} onInput={(e) => set("gateway", e.currentTarget.value)} />
+        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="子网 192.168.1.0/24 (可选)" value={form().subnet} onInput={(e) => set("subnet", e.currentTarget.value)} />
+        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="网关 192.168.1.1 (可选)" value={form().gateway} onInput={(e) => set("gateway", e.currentTarget.value)} />
         <Show when={needsParent()}>
-          <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" placeholder="父接口 eth0" value={form().parent} onInput={(e) => set("parent", e.currentTarget.value)} />
+          <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="父接口 eth0" value={form().parent} onInput={(e) => set("parent", e.currentTarget.value)} />
         </Show>
         <div class="flex justify-end gap-2">
           <Button onClick={() => setShow(false)}>取消</Button>

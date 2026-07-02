@@ -19,6 +19,7 @@ export interface ContainerSummary {
   Mounts: { Source: string; Destination: string; Mode?: string; Type?: string }[];
   Command: string;
   NetworkSettings?: { Networks: Record<string, { IPAddress: string }> };
+  Labels?: Record<string, string>;
 }
 
 export interface ImageSummary {
@@ -68,6 +69,10 @@ export interface FileEntry {
   is_dir: boolean;
   size: number;
   mode?: string;
+  mod_time?: number;
+  uname?: string;
+  uid?: number;
+  gid?: number;
 }
 
 export interface Template {

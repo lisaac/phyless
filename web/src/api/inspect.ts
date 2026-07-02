@@ -10,9 +10,12 @@ function arrEq(a: unknown[], b: unknown[]): boolean {
   return a.every((v, i) => JSON.stringify(v) === JSON.stringify(b[i]));
 }
 
-function parseEnvArr(arr: string[] = {}  as unknown as string[]): Record<string, string> {
+// Docker inspect sometimes returns {} instead of null for empty arrays
+const toArr = <T>(v: unknown): T[] => (Array.isArray(v) ? v : []) as T[];
+
+function parseEnvArr(arr?: unknown): Record<string, string> {
   const m: Record<string, string> = {};
-  (arr ?? []).forEach((e) => {
+  toArr<string>(arr).forEach((e) => {
     const idx = e.indexOf("=");
     if (idx < 0) return;
     m[e.slice(0, idx)] = e.slice(idx + 1);
@@ -42,18 +45,19 @@ export function inspectToRunCmd(container: any, image: any): string {
       run.push(`-e ${q(`${k}=${envMap[k]}`)}`);
   }
 
-  // Hostname (skip if matches container ID prefix — Docker default)
+  // Hostname: Docker sets it to the container ID prefix by default — skip that
   if (cfg.Hostname && !container?.Id?.startsWith(cfg.Hostname))
     run.push(`--hostname ${cfg.Hostname}`);
 
   // DNS
-  (host.Dns ?? []).forEach((d: string) => run.push(`--dns ${d}`));
-  (host.DnsSearch ?? []).forEach((s: string) => run.push(`--dns-search ${s}`));
-  (host.DnsOptions ?? []).forEach((o: string) => run.push(`--dns-option ${o}`));
+  toArr<string>(host.Dns).forEach((d) => run.push(`--dns ${d}`));
+  toArr<string>(host.DnsSearch).forEach((s) => run.push(`--dns-search ${s}`));
+  toArr<string>(host.DnsOptions).forEach((o) => run.push(`--dns-option ${o}`));
 
   // Volumes / bind mounts
-  (container?.Mounts ?? []).forEach((m: any) => {
-    const mode = m.Mode || (m.RW === false ? "ro" : "rw");
+  toArr<any>(container?.Mounts).forEach((m: any) => {
+    if (m.Type === "tmpfs") return; // handled by host.Tmpfs below
+    const mode = m.Mode || (m.RW === false ? "ro" : "");
     run.push(`-v ${m.Source}:${m.Destination}${mode ? ":" + mode : ""}`);
   });
 
@@ -79,8 +83,8 @@ export function inspectToRunCmd(container: any, image: any): string {
   if (cfg.WorkingDir && cfg.WorkingDir !== (img.WorkingDir || "/"))
     run.push(`-w ${cfg.WorkingDir}`);
 
-  // User
-  if (cfg.User && cfg.User !== (img.User || ""))
+  // User (docker default is root)
+  if (cfg.User && cfg.User !== (img.User || "root"))
     run.push(`-u ${cfg.User}`);
 
   // Privileged / readonly
@@ -88,14 +92,14 @@ export function inspectToRunCmd(container: any, image: any): string {
   if (host.ReadonlyRootfs === true) run.push("--read-only");
 
   // Capabilities
-  (host.CapAdd ?? []).forEach((c: string) => run.push(`--cap-add ${c}`));
-  (host.CapDrop ?? []).forEach((c: string) => run.push(`--cap-drop ${c}`));
+  toArr<string>(host.CapAdd).forEach((c) => run.push(`--cap-add ${c}`));
+  toArr<string>(host.CapDrop).forEach((c) => run.push(`--cap-drop ${c}`));
 
   // Security options
-  (host.SecurityOpt ?? []).forEach((s: string) => run.push(`--security-opt ${s}`));
+  toArr<string>(host.SecurityOpt).forEach((s) => run.push(`--security-opt ${s}`));
 
   // Devices
-  (host.Devices ?? []).forEach((d: any) => {
+  toArr<any>(host.Devices).forEach((d: any) => {
     run.push(`--device ${d.PathOnHost}:${d.PathInContainer}${d.CgroupPermissions ? ":" + d.CgroupPermissions : ""}`);
   });
 
@@ -119,7 +123,7 @@ export function inspectToRunCmd(container: any, image: any): string {
     run.push(`--stop-signal ${cfg.StopSignal}`);
 
   // Extra hosts
-  (host.ExtraHosts ?? []).forEach((h: string) => run.push(`--add-host ${h}`));
+  toArr<string>(host.ExtraHosts).forEach((h) => run.push(`--add-host ${h}`));
 
   // Sysctls
   if (host.Sysctls) {
@@ -130,12 +134,16 @@ export function inspectToRunCmd(container: any, image: any): string {
   if (host.IpcMode && host.IpcMode !== (img.IpcMode || "private"))
     run.push(`--ipc ${host.IpcMode}`);
 
-  // Labels (skip compose-internal labels)
+  // Labels — skip labels that come from the image or infrastructure tooling
   if (cfg.Labels) {
     const imgLabels = img.Labels ?? {};
     for (const k in cfg.Labels) {
       if (k.startsWith("com.docker.compose.")) continue;
-      if (cfg.Labels[k] !== imgLabels[k]) run.push(`--label ${k}=${cfg.Labels[k]}`);
+      if (k.startsWith("org.opencontainers.image.")) continue;
+      if (k.startsWith("org.label-schema.")) continue;
+      if (k.startsWith("com.docker.")) continue;
+      if (cfg.Labels[k] === imgLabels[k]) continue;  // same as image default
+      run.push(`--label ${q(`${k}=${cfg.Labels[k]}`)}`);
     }
   }
 
@@ -149,7 +157,7 @@ export function inspectToRunCmd(container: any, image: any): string {
       netMode === "bridge" &&
       Object.keys(networks).length === 1 &&
       networks.bridge &&
-      !networks.bridge.IPAMConfig?.IPv4Address;
+      !networks.bridge.IPAMConfig;
     if (!onlyBridge) {
       for (const net in networks) {
         run.push(`--network ${net}`);
@@ -157,7 +165,7 @@ export function inspectToRunCmd(container: any, image: any): string {
         if (n.IPAMConfig?.IPv4Address) run.push(`--ip ${n.IPAMConfig.IPv4Address}`);
         if (n.MacAddress) run.push(`--mac-address ${n.MacAddress}`);
         const seen = new Set<string>();
-        (n.Aliases ?? []).forEach((alias: string) => {
+        toArr<string>(n.Aliases).forEach((alias) => {
           if (!seen.has(alias)) { seen.add(alias); run.push(`--network-alias ${alias}`); }
         });
       }
@@ -170,19 +178,20 @@ export function inspectToRunCmd(container: any, image: any): string {
     for (const k in host.LogConfig.Config) run.push(`--log-opt ${k}=${host.LogConfig.Config[k]}`);
   }
 
-  // Healthcheck (only if differs from image)
+  // Healthcheck — only if it differs from image defaults
   if (cfg.Healthcheck) {
     const hc = cfg.Healthcheck;
-    if (hc.Test?.length && hc.Test[0] !== "NONE")
+    const imgHc = img.Healthcheck ?? {};
+    if (hc.Test?.length && hc.Test[0] !== "NONE" && JSON.stringify(hc.Test) !== JSON.stringify(imgHc.Test))
       run.push(`--health-cmd=${q(hc.Test.slice(1).join(" "))}`);
-    if (hc.Interval > 0) run.push(`--health-interval=${hc.Interval}ns`);
-    if (hc.Timeout > 0) run.push(`--health-timeout=${hc.Timeout}ns`);
-    if (hc.StartPeriod > 0) run.push(`--health-start-period=${hc.StartPeriod}ns`);
-    if (typeof hc.Retries === "number") run.push(`--health-retries=${hc.Retries}`);
+    if (hc.Interval > 0 && hc.Interval !== imgHc.Interval) run.push(`--health-interval=${hc.Interval}ns`);
+    if (hc.Timeout > 0 && hc.Timeout !== imgHc.Timeout) run.push(`--health-timeout=${hc.Timeout}ns`);
+    if (hc.StartPeriod > 0 && hc.StartPeriod !== imgHc.StartPeriod) run.push(`--health-start-period=${hc.StartPeriod}ns`);
+    if (typeof hc.Retries === "number" && hc.Retries !== imgHc.Retries) run.push(`--health-retries=${hc.Retries}`);
   }
 
   // Ulimits
-  (host.Ulimits ?? []).forEach((u: any) =>
+  toArr<any>(host.Ulimits).forEach((u: any) =>
     run.push(`--ulimit ${u.Name}=${u.Soft}:${u.Hard}`)
   );
 

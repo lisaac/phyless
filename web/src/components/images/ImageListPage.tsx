@@ -21,9 +21,9 @@ const IBtn = (p: { title: string; onClick: () => void; loading?: boolean; danger
     title={p.title}
     disabled={p.loading}
     onClick={p.onClick}
-    class={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors disabled:opacity-30 ${
-      p.danger ? "text-zinc-400 hover:bg-red-900/40 hover:text-red-400"
-                : "text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"}`}
+    class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${
+      p.danger ? "text-zinc-400 hover:text-red-400"
+                : "text-zinc-400 hover:text-zinc-100"}`}
   >
     {p.loading ? <span class="animate-spin text-xs">↺</span> : p.children}
   </button>
@@ -38,6 +38,7 @@ export const ImageListPage: Component = () => {
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
   const [deletingId, setDeletingId] = createSignal("");
+  const [confirmDelete, setConfirmDelete] = createSignal<ImageSummary | null>(null);
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
@@ -50,10 +51,22 @@ export const ImageListPage: Component = () => {
     setShowPullLog(true);
   };
 
-  const remove = async (id: string) => {
+  const remove = async (id: string, force = false) => {
     setDeletingId(id);
-    try { await del(`/api/images/${encodeURIComponent(id)}`); await store.refresh(); }
-    catch (e) { toast.error((e as Error).message); }
+    setConfirmDelete(null);
+    try {
+      await del(`/api/images/${encodeURIComponent(id)}${force ? "?force=true" : ""}`);
+      await store.refresh();
+      toast.success("已删除");
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (!force && (msg.includes("must be forced") || msg.includes("is being used") || msg.includes("referenced"))) {
+        const img = store.items().find(i => i.Id === id) ?? null;
+        setConfirmDelete(img ?? { Id: id, RepoTags: [], Size: 0, Created: 0 });
+      } else {
+        toast.error(msg);
+      }
+    }
     finally { setDeletingId(""); }
   };
 
@@ -61,7 +74,7 @@ export const ImageListPage: Component = () => {
     const img = tagFor(); if (!img) return;
     try {
       await post(`/api/images/${encodeURIComponent(img.Id)}/tag`, { tag: tagVal() });
-      toast.info("打标签成功");
+      toast.success("打标签成功");
       setTagFor(null); setTagVal("");
       await store.refresh();
     } catch (e) { toast.error((e as Error).message); }
@@ -77,7 +90,7 @@ export const ImageListPage: Component = () => {
         <h1 class="text-xl font-semibold">镜像</h1>
         <Show when={hasRole("operator")}>
           <button
-            class="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium hover:bg-blue-500"
+            class="border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100"
             onClick={() => setShowPullInput(true)}
           >
             + 拉取镜像
@@ -99,7 +112,7 @@ export const ImageListPage: Component = () => {
         <tbody>
           <For each={store.items()}>
             {(img) => (
-              <tr class="border-b border-zinc-900 hover:bg-zinc-900/60">
+              <tr class="border-b border-zinc-800/50 hover:bg-white/[0.03] transition-colors">
                 <td class="px-2 py-2">
                   <For each={img.RepoTags ?? ["<none>"]}>
                     {(tag) => <div class="font-mono text-xs">{tag}</div>}
@@ -115,13 +128,13 @@ export const ImageListPage: Component = () => {
                     <a
                       title="导出 tar"
                       href={`/api/images/${encodeURIComponent(img.Id)}/save?token=${encodeURIComponent(getToken() ?? "")}`}
-                      class="inline-flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100"
+                      class="inline-flex h-6 w-6 items-center justify-center text-zinc-400 hover:text-zinc-100 transition-colors"
                     >
                       <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
                     </a>
                     <Show when={hasRole("operator")}>
                       {/* Tag */}
-                      <IBtn title="打标签" onClick={() => setTagFor(img)}>
+                      <IBtn title="打标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
                         <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
                       </IBtn>
                       {/* Delete */}
@@ -149,7 +162,7 @@ export const ImageListPage: Component = () => {
       {/* Pull input modal */}
       <Modal open={showPullInput()} onClose={() => setShowPullInput(false)} title="拉取镜像">
         <input
-          class="mb-3 w-full rounded border border-zinc-800 bg-zinc-800 px-3 py-2 text-sm outline-none focus:border-blue-500"
+          class="mb-3 w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-colors"
           placeholder="nginx:latest"
           value={pullRef()}
           onInput={(e) => setPullRef(e.currentTarget.value)}
@@ -175,15 +188,32 @@ export const ImageListPage: Component = () => {
 
       {/* Tag modal */}
       <Modal open={!!tagFor()} onClose={() => setTagFor(null)} title="添加标签">
+        <p class="mb-2 text-xs text-zinc-500">
+          当前：{tagFor()?.RepoTags?.[0] ?? tagFor()?.Id.replace("sha256:", "").slice(0, 12)}
+        </p>
         <input
-          class="mb-3 w-full rounded border border-zinc-800 bg-zinc-800 px-3 py-2 text-sm outline-none"
+          class="mb-3 w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-colors"
           placeholder="myrepo/app:v2"
           value={tagVal()}
           onInput={(e) => setTagVal(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === "Enter" && addTag()}
+          ref={(el: HTMLInputElement) => setTimeout(() => el?.focus(), 50)}
         />
         <div class="flex justify-end gap-2">
           <Button onClick={() => setTagFor(null)}>取消</Button>
           <Button variant="primary" onClick={addTag}>添加</Button>
+        </div>
+      </Modal>
+
+      {/* Force-delete confirmation */}
+      <Modal open={!!confirmDelete()} onClose={() => setConfirmDelete(null)} title="强制删除镜像">
+        <p class="mb-1 text-sm text-zinc-300">该镜像正被容器使用，普通删除被拒绝。</p>
+        <p class="mb-4 text-xs text-zinc-500">
+          强制删除将移除镜像，已有容器会继续运行，但无法重新拉起该版本。
+        </p>
+        <div class="flex justify-end gap-2">
+          <Button onClick={() => setConfirmDelete(null)}>取消</Button>
+          <Button variant="danger" onClick={() => void remove(confirmDelete()!.Id, true)}>强制删除</Button>
         </div>
       </Modal>
     </div>

@@ -35,7 +35,12 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text || res.statusText);
+    let msg = text || res.statusText;
+    try {
+      const j = JSON.parse(text);
+      if (j?.error) msg = j.error;
+    } catch {}
+    throw new ApiError(res.status, msg);
   }
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get("Content-Type") ?? "";

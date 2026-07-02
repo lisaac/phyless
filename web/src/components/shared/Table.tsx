@@ -19,10 +19,10 @@ export function Table<T>(props: {
     props.rows.length > 0 && props.rows.every((r) => props.selected?.has(props.rowKey(r)));
   return (
     <table class="w-full text-left text-sm">
-      <thead class="border-b border-zinc-800 text-zinc-400">
+      <thead class="border-b border-zinc-800 text-xs text-zinc-500">
         <tr>
           <Show when={props.selectable}>
-            <th class="w-8 px-2 py-2">
+            <th class="w-8 px-2 py-2 font-normal">
               <input
                 type="checkbox"
                 checked={allSelected()}
@@ -30,7 +30,7 @@ export function Table<T>(props: {
               />
             </th>
           </Show>
-          <For each={props.columns}>{(c) => <th class="px-2 py-2">{c.header}</th>}</For>
+          <For each={props.columns}>{(c) => <th class="px-2 py-2 font-normal">{c.header}</th>}</For>
         </tr>
       </thead>
       <tbody>
@@ -39,7 +39,7 @@ export function Table<T>(props: {
             const key = props.rowKey(row);
             return (
               <tr
-                class="border-b border-zinc-900 hover:bg-zinc-900"
+                class="border-b border-zinc-800/50 hover:bg-white/[0.03] transition-colors"
                 onClick={() => props.onRowClick?.(row)}
               >
                 <Show when={props.selectable}>

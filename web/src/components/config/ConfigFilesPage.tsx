@@ -40,7 +40,7 @@ export const ConfigFilesPage: Component = () => {
       });
       if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
       if (!res.ok) throw new Error(await res.text());
-      toast.info("saved");
+      toast.success("已保存");
     } catch (e) { toast.error((e as Error).message); }
   };
 

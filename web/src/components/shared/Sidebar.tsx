@@ -5,54 +5,110 @@ import { theme, toggleTheme } from "../../stores/theme";
 
 const mainLinks = [
   { to: "/containers", label: "容器" },
-  { to: "/images", label: "镜像" },
-  { to: "/compose", label: "Compose" },
-  { to: "/networks", label: "网络" },
-  { to: "/volumes", label: "存储卷" },
-  { to: "/events", label: "事件" },
-  { to: "/config", label: "配置文件" },
+  { to: "/images",     label: "镜像" },
+  { to: "/compose",    label: "Compose" },
+  { to: "/networks",   label: "网络" },
+  { to: "/volumes",    label: "存储卷" },
+  { to: "/events",     label: "事件" },
+  { to: "/config",     label: "配置文件" },
 ];
 const adminLinks = [
-  { to: "/settings/users", label: "用户管理" },
+  { to: "/settings/users",      label: "用户管理" },
   { to: "/settings/registries", label: "镜像仓库" },
-  { to: "/settings/audit", label: "审计日志" },
+  { to: "/settings/audit",      label: "审计日志" },
 ];
 
-export const Sidebar: Component = () => {
+export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
   const navigate = useNavigate();
-  const linkClass = "block rounded px-3 py-2 text-sm hover:bg-zinc-800";
-  const activeClass = "bg-zinc-800 font-medium";
+  const linkCls = "mx-2 flex items-center rounded-md px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors";
+  const activeCls = "bg-zinc-800 text-zinc-100 font-medium";
+
+  const nav = (to: string) => {
+    props.onClose?.();
+    navigate(to);
+  };
+
   return (
-    <nav class="flex w-48 flex-col border-r border-zinc-800 bg-zinc-900 p-2">
-      <div class="flex items-center justify-between px-3 py-2">
-        <span class="text-lg font-bold">phyless</span>
-        <button
-          title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
-          class="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-          onClick={toggleTheme}
-        >
-          {theme() === "dark" ? "☀" : "☽"}
-        </button>
+    <nav class="flex h-full w-52 flex-col border-r border-zinc-800 bg-zinc-900">
+      {/* Header */}
+      <div class="flex items-center justify-between px-4 py-4">
+        <div class="flex items-center gap-2">
+          <div class="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-600">
+            <span class="text-[10px] font-bold text-white">P</span>
+          </div>
+          <span class="text-sm font-semibold text-zinc-100">phyless</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <button
+            title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
+            class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+            onClick={toggleTheme}
+          >
+            {theme() === "dark" ? "☀" : "☽"}
+          </button>
+          <Show when={props.onClose}>
+            <button
+              class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+              onClick={props.onClose}
+              aria-label="关闭菜单"
+            >
+              ✕
+            </button>
+          </Show>
+        </div>
       </div>
-      <For each={mainLinks}>
-        {(l) => (
-          <A href={l.to} class={linkClass} activeClass={activeClass}>{l.label}</A>
-        )}
-      </For>
-      <Show when={hasRole("admin")}>
-        <div class="mt-3 px-3 py-1 text-xs uppercase text-zinc-500">设置</div>
-        <For each={adminLinks}>
-          {(l) => <A href={l.to} class={linkClass} activeClass={activeClass}>{l.label}</A>}
+
+      {/* Main nav */}
+      <div class="flex-1 overflow-y-auto py-1">
+        <For each={mainLinks}>
+          {(l) => (
+            <A
+              href={l.to}
+              class={linkCls}
+              activeClass={activeCls}
+              onClick={() => props.onClose?.()}
+            >
+              {l.label}
+            </A>
+          )}
         </For>
-      </Show>
-      <div class="mt-auto border-t border-zinc-800 px-3 py-2 text-xs text-zinc-400">
-        {currentUser()?.username} ({currentUser()?.role})
+
+        <Show when={hasRole("admin")}>
+          <div class="mx-4 mt-4 mb-1 border-t border-zinc-800 pt-3 text-[10px] font-medium uppercase tracking-widest text-zinc-500">
+            设置
+          </div>
+          <For each={adminLinks}>
+            {(l) => (
+              <A
+                href={l.to}
+                class={linkCls}
+                activeClass={activeCls}
+                onClick={() => props.onClose?.()}
+              >
+                {l.label}
+              </A>
+            )}
+          </For>
+        </Show>
+      </div>
+
+      {/* Footer */}
+      <div class="border-t border-zinc-800 px-4 py-3">
+        <div class="mb-2 text-xs text-zinc-300">
+          {currentUser()?.username}
+          <span class="ml-1 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">{currentUser()?.role}</span>
+        </div>
         <button
-          class="mt-1 block text-zinc-400 hover:text-zinc-100"
-          onClick={() => { doLogout(); navigate("/login", { replace: true }); }}
+          class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          onClick={() => { doLogout(); nav("/login"); }}
         >
-          退出
+          退出登录
         </button>
+        <div class="mt-2 text-[10px] text-zinc-600" title="构建时间 · commit">
+          {(globalThis as Record<string, unknown>).__BUILD_TIME__ as string}
+          {" · "}
+          {(globalThis as Record<string, unknown>).__GIT_HASH__ as string}
+        </div>
       </div>
     </nav>
   );

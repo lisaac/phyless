@@ -3,38 +3,102 @@
 @tailwind utilities;
 
 html, body, #root { height: 100%; margin: 0; }
-body { font-family: ui-sans-serif, system-ui, sans-serif; }
+body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
 
-/* ── Light mode overrides ─────────────────────────────────────────────────────
-   html.dark  = dark mode (current look)
-   html:not(.dark) = light mode
-   Specificity (0,2,1) beats Tailwind's (0,1,0), no !important needed.
-────────────────────────────────────────────────────────────────────────────── */
-html:not(.dark) body                { background: #f8fafc; color: #0f172a; }
+/* ── No rounded corners (globally) ────────────────────────────────────────── */
+*, *::before, *::after { border-radius: 0 !important; }
+/* Keep a tiny rounding on checkboxes/radios so they render correctly */
+input[type="checkbox"] { border-radius: 3px !important; }
+input[type="radio"]    { border-radius: 50% !important; }
 
-html:not(.dark) .bg-zinc-950        { background-color: #f8fafc; }
+/* ── Subtle focus (not jarring blue) ──────────────────────────────────────── */
+input:focus, select:focus, textarea:focus {
+  outline: none !important;
+  border-color: #52525b !important;   /* zinc-600 */
+  box-shadow: 0 0 0 2px rgba(82,82,91,0.18) !important;
+}
+html:not(.dark) input:focus,
+html:not(.dark) select:focus,
+html:not(.dark) textarea:focus {
+  border-color: #94a3b8 !important;   /* slate-400 */
+  box-shadow: 0 0 0 2px rgba(148,163,184,0.2) !important;
+}
+/* Override Tailwind's focus:border-* utilities */
+.focus\:border-blue-500:focus { border-color: #52525b !important; }
+html:not(.dark) .focus\:border-blue-500:focus { border-color: #94a3b8 !important; }
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3f3f46; }
+::-webkit-scrollbar-thumb:hover { background: #52525b; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: #cbd5e1; }
+html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ── Responsive table → card view on small screens ────────────────────────── */
+@media (max-width: 767px) {
+  .resp-table thead { display: none; }
+  .resp-table tbody,
+  .resp-table tr   { display: block; }
+  .resp-table td   {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    border: none;
+  }
+  .resp-table td::before {
+    content: attr(data-label);
+    color: #71717a;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-right: 8px;
+    white-space: nowrap;
+    padding-top: 2px;
+  }
+  .resp-table tr {
+    border-bottom: 1px solid #27272a;
+    padding: 8px 0;
+  }
+}
+
+/* ── Light mode overrides ─────────────────────────────────────────────────── */
+html:not(.dark) body                { background: #f1f5f9; color: #0f172a; }
+
+html:not(.dark) .bg-zinc-950        { background-color: #f1f5f9; }
 html:not(.dark) .bg-zinc-900        { background-color: #ffffff; }
-html:not(.dark) .bg-zinc-800        { background-color: #f1f5f9; }
+html:not(.dark) .bg-zinc-800        { background-color: #f8fafc; }
 html:not(.dark) .bg-zinc-700        { background-color: #e2e8f0; }
 
 html:not(.dark) .border-zinc-800    { border-color: #e2e8f0; }
 html:not(.dark) .border-zinc-900    { border-color: #f1f5f9; }
+html:not(.dark) .border-zinc-700    { border-color: #cbd5e1; }
 
 html:not(.dark) .text-zinc-100      { color: #0f172a; }
 html:not(.dark) .text-zinc-200      { color: #1e293b; }
 html:not(.dark) .text-zinc-300      { color: #334155; }
 html:not(.dark) .text-zinc-400      { color: #64748b; }
 html:not(.dark) .text-zinc-500      { color: #94a3b8; }
+html:not(.dark) .text-zinc-600      { color: #94a3b8; }
 
-html:not(.dark) .hover\:bg-zinc-800:hover  { background-color: #f1f5f9; }
-html:not(.dark) .hover\:bg-zinc-700:hover  { background-color: #e2e8f0; }
+html:not(.dark) .hover\:bg-zinc-800:hover   { background-color: #f1f5f9; }
+html:not(.dark) .hover\:bg-zinc-700:hover   { background-color: #e2e8f0; }
 html:not(.dark) .hover\:text-zinc-100:hover { color: #0f172a; }
+html:not(.dark) .hover\:text-zinc-200:hover { color: #1e293b; }
+html:not(.dark) .hover\:text-zinc-300:hover { color: #334155; }
 
-/* Sidebar active item */
-html:not(.dark) .bg-zinc-800.font-medium { background-color: #e2e8f0; }
+html:not(.dark) .bg-zinc-800.font-medium    { background-color: #e2e8f0; }
+html:not(.dark) .bg-zinc-700                { background-color: #334155; }
 
-/* Toast (info uses bg-zinc-700 which we mapped to #e2e8f0 — still needs contrast) */
-html:not(.dark) .bg-zinc-700 { background-color: #334155; }
+html:not(.dark) .divide-zinc-900 > *        { border-color: #f1f5f9; }
+html:not(.dark) .bg-zinc-900\/40            { background-color: rgba(241,245,249,.7); }
+html:not(.dark) .bg-zinc-900\/60            { background-color: rgba(241,245,249,.9); }
+html:not(.dark) .bg-zinc-950               { background-color: #f8fafc; }
 
-/* Code editor border/bg */
-html:not(.dark) .border-zinc-800.rounded { border-color: #e2e8f0; }
+html:not(.dark) ::-webkit-scrollbar-thumb  { background: #cbd5e1; }
+html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Light mode: resp-table row separator */
+html:not(.dark) .resp-table tr { border-bottom-color: #e2e8f0; }

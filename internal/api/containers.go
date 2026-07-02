@@ -1,10 +1,12 @@
 package api
 
 import (
-	"archive/tar"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -38,15 +40,30 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		CapDrop        []string          `json:"cap_drop,omitempty"`
 		Privileged     bool              `json:"privileged,omitempty"`
 		ReadonlyRootfs bool              `json:"readonly_rootfs,omitempty"`
+		Interactive    bool              `json:"interactive,omitempty"`
+		TTY            bool              `json:"tty,omitempty"`
+		AutoRemove     bool              `json:"auto_remove,omitempty"`
+		Init           bool              `json:"init,omitempty"`
+		NoHealthcheck  bool              `json:"no_healthcheck,omitempty"`
 		Memory         int64             `json:"memory,omitempty"`
+		MemorySwap     int64             `json:"memory_swap,omitempty"`
 		CPUQuota       int64             `json:"cpu_quota,omitempty"`
 		CPUPeriod      int64             `json:"cpu_period,omitempty"`
+		CPUShares      int64             `json:"cpu_shares,omitempty"`
 		PidsLimit      *int64            `json:"pids_limit,omitempty"`
 		Sysctls        map[string]string `json:"sysctls,omitempty"`
 		Labels         map[string]string `json:"labels,omitempty"`
-		Ports          []string          `json:"ports,omitempty"` // e.g. ["8080:80", "0.0.0.0:443:443/tcp"]
+		Ports          []string          `json:"ports,omitempty"`
 		Hostname       string            `json:"hostname,omitempty"`
 		WorkingDir     string            `json:"working_dir,omitempty"`
+		DNS            []string          `json:"dns,omitempty"`
+		User           string            `json:"user,omitempty"`
+		PublishAll     bool              `json:"publish_all,omitempty"`
+		Devices        []string          `json:"devices,omitempty"` // "host:container[:mode]"
+		Tmpfs          []string          `json:"tmpfs,omitempty"`   // "/path:opts"
+		LogDriver      string            `json:"log_driver,omitempty"`
+		LogOpts        map[string]string `json:"log_opts,omitempty"`
+		PullPolicy     string            `json:"pull_policy,omitempty"` // "always"|"missing"|"never"
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -98,6 +115,12 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	if body.Memory > 0 {
 		hostCfg.Memory = body.Memory
 	}
+	if body.MemorySwap != 0 {
+		hostCfg.MemorySwap = body.MemorySwap
+	}
+	if body.CPUShares > 0 {
+		hostCfg.CPUShares = body.CPUShares
+	}
 	if body.CPUQuota > 0 {
 		hostCfg.CPUQuota = body.CPUQuota
 	}
@@ -118,6 +141,21 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	hostCfg.Privileged = body.Privileged
 	hostCfg.ReadonlyRootfs = body.ReadonlyRootfs
+	hostCfg.AutoRemove = body.AutoRemove
+	if body.Init {
+		t := true
+		hostCfg.Init = &t
+	}
+	if body.Interactive {
+		cfg.OpenStdin = true
+		cfg.AttachStdin = true
+	}
+	if body.TTY {
+		cfg.Tty = true
+	}
+	if body.NoHealthcheck {
+		cfg.Healthcheck = &container.HealthConfig{Test: []string{"NONE"}}
+	}
 	if body.Sysctls != nil {
 		hostCfg.Sysctls = body.Sysctls
 	}
@@ -133,6 +171,58 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 			exposed[p] = struct{}{}
 		}
 		cfg.ExposedPorts = exposed
+	}
+	if len(body.DNS) > 0 {
+		hostCfg.DNS = body.DNS
+	}
+	if body.User != "" {
+		cfg.User = body.User
+	}
+	if body.PublishAll {
+		hostCfg.PublishAllPorts = true
+	}
+	if len(body.Devices) > 0 {
+		for _, d := range body.Devices {
+			parts := strings.SplitN(d, ":", 3)
+			dm := container.DeviceMapping{PathOnHost: parts[0], CgroupPermissions: "rwm"}
+			if len(parts) >= 2 {
+				dm.PathInContainer = parts[1]
+			} else {
+				dm.PathInContainer = parts[0]
+			}
+			if len(parts) == 3 {
+				dm.CgroupPermissions = parts[2]
+			}
+			hostCfg.Devices = append(hostCfg.Devices, dm)
+		}
+	}
+	if len(body.Tmpfs) > 0 {
+		hostCfg.Tmpfs = make(map[string]string)
+		for _, t := range body.Tmpfs {
+			parts := strings.SplitN(t, ":", 2)
+			opts := ""
+			if len(parts) == 2 {
+				opts = parts[1]
+			}
+			hostCfg.Tmpfs[parts[0]] = opts
+		}
+	}
+	if body.LogDriver != "" {
+		hostCfg.LogConfig = container.LogConfig{
+			Type:   body.LogDriver,
+			Config: body.LogOpts,
+		}
+	}
+
+	// Pull image if requested
+	if body.PullPolicy == "always" {
+		rc, err := s.docker.ImagePull(r.Context(), body.Image, image.PullOptions{})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "pull failed: "+err.Error())
+			return
+		}
+		io.Copy(io.Discard, rc)
+		rc.Close()
 	}
 
 	resp, err := s.docker.ContainerCreate(r.Context(), cfg, hostCfg, &network.NetworkingConfig{}, nil, body.Name)
@@ -255,30 +345,167 @@ func (s *Server) handleContainerDuplicate(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
 	newID, err := dockercontainer.Upgrade(r.Context(), s.docker, id, w)
 	if err != nil {
-		w.Write([]byte("\nERROR: " + err.Error())) //nolint:errcheck
+		w.Write([]byte("\n✕ 错误: " + err.Error() + "\n")) //nolint:errcheck
 		return
 	}
 	s.auditFromCtx(r, "container.upgrade", id, "ok")
-	w.Write([]byte("\nDone. New ID: " + newID)) //nolint:errcheck
+	_ = newID // output already written inside Upgrade
 }
 
 func (s *Server) handleContainerUpdateResources(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var body container.Resources
+	var body container.UpdateConfig
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	_, err := s.docker.ContainerUpdate(r.Context(), id, container.UpdateConfig{Resources: body})
+	clearMemory := body.Resources.Memory == -1
+	clearSwap := body.Resources.MemorySwap == -1
+	if clearMemory {
+		// Docker 26.1.5 ContainerUpdate rejects Memory=-1 and treats Memory=0 as no-op.
+		// Use a privileged helper to write "max" to the container's cgroup and patch
+		// hostconfig.json so the change survives restart.
+		body.Resources.Memory = 0
+		body.Resources.MemorySwap = 0
+	}
+	if _, err := s.docker.ContainerUpdate(r.Context(), id, body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if clearMemory {
+		if err := s.clearContainerMemoryLimit(r.Context(), id, clearSwap); err != nil {
+			writeError(w, http.StatusBadRequest, "内存限制清除失败: "+err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// clearContainerMemoryLimit uses a privileged busybox container to directly write
+// "max" to the target container's cgroup v2 memory.max (and optionally memory.swap.max),
+// then patches hostconfig.json so the unlimited state persists across restarts.
+//
+// ponytail: Docker 26.1.5 ContainerUpdate cannot clear memory limits (Memory=0 is
+// a no-op, Memory=-1 is rejected). This is the only reliable workaround that works
+// without stopping the container.
+func (s *Server) clearContainerMemoryLimit(ctx context.Context, id string, clearSwap bool) error {
+	info, err := s.docker.ContainerInspect(ctx, id)
+	if err != nil {
+		return err
+	}
+	fullID := info.ID
+
+	cgroupScope := fmt.Sprintf("docker-%s.scope", fullID)
+	cgroupBase := "/host-cgroup/system.slice/" + cgroupScope
+
+	// cgroup writes are best-effort: the path may not exist if the container is stopped
+	// or uses a non-standard cgroup layout. Use || true so the overall script continues.
+	script := fmt.Sprintf("echo max > %s/memory.max 2>/dev/null || true", cgroupBase)
+	if clearSwap {
+		script += fmt.Sprintf(" ; echo max > %s/memory.swap.max 2>/dev/null || true", cgroupBase)
+	}
+	// Patch hostconfig.json AFTER ContainerUpdate has already written its snapshot,
+	// so our 0-value lands as the final disk state (read on next container start).
+	script += fmt.Sprintf(
+		` ; sed -i 's/"Memory":[0-9][0-9]*/"Memory":0/g' /host-docker/containers/%s/hostconfig.json`,
+		fullID,
+	)
+	if clearSwap {
+		script += fmt.Sprintf(
+			` ; sed -i 's/"MemorySwap":-*[0-9][0-9]*/"MemorySwap":0/g' /host-docker/containers/%s/hostconfig.json`,
+			fullID,
+		)
+	}
+
+	resp, err := s.docker.ContainerCreate(ctx,
+		&container.Config{Image: "alpine", Cmd: []string{"sh", "-c", script}},
+		&container.HostConfig{
+			AutoRemove: true,
+			Privileged: true,
+			Binds: []string{
+				"/sys/fs/cgroup:/host-cgroup",
+				"/var/lib/docker:/host-docker",
+			},
+		},
+		&network.NetworkingConfig{}, nil, "",
+	)
+	if err != nil {
+		return err
+	}
+	if err := s.docker.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+	waitC, errC := s.docker.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case res := <-waitC:
+		if res.StatusCode != 0 {
+			return fmt.Errorf("helper exited %d", res.StatusCode)
+		}
+		return nil
+	case err := <-errC:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	result, err := s.docker.ContainerTop(r.Context(), id, nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleContainerDeleteFile(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	path := r.URL.Query().Get("path")
+	if path == "" || path == "/" {
+		writeError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	execResp, err := s.docker.ContainerExecCreate(r.Context(), id, container.ExecOptions{
+		Cmd: []string{"rm", "-rf", path},
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.docker.ContainerExecStart(r.Context(), execResp.ID, container.ExecStartOptions{}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleContainerRenameFile(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		OldPath string `json:"old_path"`
+		NewPath string `json:"new_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.OldPath == "" || body.NewPath == "" {
+		writeError(w, http.StatusBadRequest, "old_path and new_path required")
+		return
+	}
+	execResp, err := s.docker.ContainerExecCreate(r.Context(), id, container.ExecOptions{
+		Cmd: []string{"mv", body.OldPath, body.NewPath},
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.docker.ContainerExecStart(r.Context(), execResp.ID, container.ExecStartOptions{}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
@@ -310,31 +537,16 @@ func (s *Server) handleContainerImport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/"
+	dirPath := r.URL.Query().Get("path")
+	if dirPath == "" {
+		dirPath = "/"
 	}
-	headers, err := dockercontainer.ListFiles(r.Context(), s.docker, id, path)
+	entries, err := dockercontainer.ExecListDir(r.Context(), s.docker, id, dirPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	type fileEntry struct {
-		Name  string `json:"name"`
-		Size  int64  `json:"size"`
-		Mode  string `json:"mode"`
-		IsDir bool   `json:"is_dir"`
-	}
-	out := make([]fileEntry, len(headers))
-	for i, h := range headers {
-		out[i] = fileEntry{
-			Name:  h.Name,
-			Size:  h.Size,
-			Mode:  h.FileInfo().Mode().String(),
-			IsDir: h.Typeflag == tar.TypeDir,
-		}
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, entries)
 }
 
 func (s *Server) handleContainerDownloadFile(w http.ResponseWriter, r *http.Request) {
@@ -349,8 +561,12 @@ func (s *Server) handleContainerDownloadFile(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer rc.Close()
+	base := path[strings.LastIndex(path, "/")+1:]
+	if base == "" {
+		base = "root"
+	}
 	w.Header().Set("Content-Type", "application/x-tar")
-	w.Header().Set("Content-Disposition", `attachment; filename="download.tar"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+base+`.tar"`)
 	io.Copy(w, rc) //nolint:errcheck // ponytail: pipe the tar stream directly
 }
 

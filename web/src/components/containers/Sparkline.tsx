@@ -24,5 +24,5 @@ export const Sparkline: Component<{ data: number[]; max?: number; color?: string
   };
   onMount(draw);
   createEffect(() => { props.data; draw(); });
-  return <canvas ref={canvas} width="240" height="60" class="rounded bg-zinc-950" />;
+  return <canvas ref={canvas} width="240" height="60" class="w-full bg-zinc-950" />;
 };

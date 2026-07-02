@@ -24,7 +24,7 @@ export const RegistriesPage: Component = () => {
     catch (e) { toast.error((e as Error).message); }
   };
   const test = async (id: string) => {
-    try { const r = await post<{ status: string }>(`/api/registries/${id}/test`); toast.info(r.status); }
+    try { const r = await post<{ status: string }>(`/api/registries/${id}/test`); toast.success(r.status); }
     catch (e) { toast.error((e as Error).message); }
   };
 
@@ -52,9 +52,9 @@ export const RegistriesPage: Component = () => {
       <Table rows={store.items()} columns={columns} rowKey={(r) => r.id} />
 
       <Modal open={show()} onClose={() => setShow(false)} title="添加镜像仓库">
-        <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" placeholder="https://registry.example.com" value={form().url} onInput={(e) => set("url", e.currentTarget.value)} />
-        <input class="mb-2 w-full rounded bg-zinc-800 px-3 py-2" placeholder="用户名" value={form().username} onInput={(e) => set("username", e.currentTarget.value)} />
-        <input class="mb-3 w-full rounded bg-zinc-800 px-3 py-2" type="password" placeholder="密码" value={form().password} onInput={(e) => set("password", e.currentTarget.value)} />
+        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="https://registry.example.com" value={form().url} onInput={(e) => set("url", e.currentTarget.value)} />
+        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="用户名" value={form().username} onInput={(e) => set("username", e.currentTarget.value)} />
+        <input class="mb-3 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" type="password" placeholder="密码" value={form().password} onInput={(e) => set("password", e.currentTarget.value)} />
         <div class="flex justify-end gap-2">
           <Button onClick={() => setShow(false)}>取消</Button>
           <Button variant="primary" onClick={create}>添加</Button>

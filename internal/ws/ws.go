@@ -1,9 +1,11 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
@@ -49,6 +51,7 @@ func Logs(cli *client.Client) http.HandlerFunc {
 }
 
 // Terminal runs an exec session and pipes stdin/stdout over WebSocket.
+// Query params: cmd (space-separated, default "/bin/sh"), user (default "")
 func Terminal(cli *client.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -58,10 +61,17 @@ func Terminal(cli *client.Client) http.HandlerFunc {
 		}
 		defer conn.Close()
 
-		ctx := r.Context()
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+
+		cmdStr := r.URL.Query().Get("cmd")
+		cmd := []string{"/bin/sh"}
+		if cmdStr != "" {
+			cmd = strings.Fields(cmdStr)
+		}
 		execID, err := cli.ContainerExecCreate(ctx, id, container.ExecOptions{
 			AttachStdin: true, AttachStdout: true, AttachStderr: true,
-			Tty: true, Cmd: []string{"/bin/sh"},
+			Tty: true, Cmd: cmd, User: r.URL.Query().Get("user"),
 		})
 		if err != nil {
 			conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
@@ -73,10 +83,13 @@ func Terminal(cli *client.Client) http.HandlerFunc {
 			conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 			return
 		}
-		defer resp.Close()
+		// Close the full underlying conn (not just write side) so Docker detects
+		// the disconnect and sends SIGHUP to the exec process, killing it.
+		defer resp.Conn.Close()
 
 		// docker → websocket
 		go func() {
+			defer cancel() // unblock ReadMessage if docker side dies first
 			buf := make([]byte, 4096)
 			for {
 				n, err := resp.Reader.Read(buf)
@@ -93,6 +106,9 @@ func Terminal(cli *client.Client) http.HandlerFunc {
 		for {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
+				// WebSocket closed — send Ctrl-C + exit to terminate the shell process.
+				resp.Conn.Write([]byte{3})
+				resp.Conn.Write([]byte("exit\n"))
 				return
 			}
 			// Check if it's a resize control message: {"type":"resize","cols":80,"rows":24}

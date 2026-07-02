@@ -25,7 +25,7 @@ export const ComposeDetailPage: Component = () => {
   });
 
   const save = async () => {
-    try { await put(`/api/compose/${id()}/file`, yaml()); toast.info("saved"); }
+    try { await put(`/api/compose/${id()}/file`, yaml()); toast.success("已保存"); }
     catch (e) { toast.error((e as Error).message); }
   };
 
