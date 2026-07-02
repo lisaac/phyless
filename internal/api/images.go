@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 
 	"github.com/docker/docker/api/types/image"
@@ -30,6 +31,7 @@ func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteImage(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	log.Printf("DEBUG handleDeleteImage: URLParam=%q URL.Path=%q URL.RawPath=%q RequestURI=%q", id, r.URL.Path, r.URL.RawPath, r.RequestURI)
 	force := r.URL.Query().Get("force") == "true"
 	_, err := s.docker.ImageRemove(r.Context(), id, image.RemoveOptions{Force: force})
 	if err != nil {
