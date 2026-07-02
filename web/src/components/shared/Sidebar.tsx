@@ -105,9 +105,7 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
           退出登录
         </button>
         <div class="mt-2 text-[10px] text-zinc-600" title="构建时间 · commit">
-          {(globalThis as Record<string, unknown>).__BUILD_TIME__ as string}
-          {" · "}
-          {(globalThis as Record<string, unknown>).__GIT_HASH__ as string}
+          {__BUILD_TIME__} · {__GIT_HASH__}
         </div>
       </div>
     </nav>
