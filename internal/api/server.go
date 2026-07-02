@@ -39,6 +39,16 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		docker:    dc,
 	}
 	r := chi.NewRouter()
+	// chi routes on r.URL.RawPath when set, which leaves path params percent-encoded
+	// (e.g. image IDs like "sha256:abc" arrive as "sha256%3Aabc" and get passed
+	// straight to Docker, which rejects them). Clear it so chi matches and extracts
+	// params from the already-decoded r.URL.Path instead.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.URL.RawPath = ""
+			next.ServeHTTP(w, r)
+		})
+	})
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
