@@ -105,6 +105,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 	// Download routes — browsers can't set Authorization headers on <a href>, use query token instead
 	r.Get("/api/containers/{id}/export", wsAuth(jwtSecret, models.RoleOperator, srv.handleContainerExport))
 	r.Get("/api/containers/{id}/files/download", wsAuth(jwtSecret, models.RoleOperator, srv.handleContainerDownloadFile))
+	r.Get("/api/images/{id}/save", wsAuth(jwtSecret, models.RoleOperator, srv.handleImageSave))
 
 	distDir := "./web/dist"
 	if _, err := os.Stat(distDir); err == nil {
@@ -177,7 +178,6 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Post("/api/images/pull", s.handleImagePull)
 	r.Post("/api/images/{id}/tag", s.handleImageTag)
 	r.Delete("/api/images/{id}/tags/{tag}", s.handleImageDeleteTag)
-	r.Get("/api/images/{id}/save", s.handleImageSave)
 	r.Post("/api/images/load", s.handleImageLoad)
 
 	// Networks

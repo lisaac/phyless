@@ -3,12 +3,36 @@ package api
 import (
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
+	"net/url"
+	"strings"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/go-chi/chi/v5"
 )
+
+// imageIDParam extracts the "id" path param and percent-decodes it.
+// chi may route on the raw (still percent-encoded) URL path, so a colon in an
+// image ID like "sha256:abc" can arrive as the literal string "sha256%3Aabc";
+// passed straight to the Docker API that gets rejected as an invalid reference.
+func imageIDParam(r *http.Request) string {
+	id := chi.URLParam(r, "id")
+	if decoded, err := url.PathUnescape(id); err == nil {
+		return decoded
+	}
+	return id
+}
+
+type containerRef struct {
+	ID   string `json:"Id"`
+	Name string `json:"Name"`
+}
+
+type imageWithUsage struct {
+	image.Summary
+	UsedBy []containerRef `json:"UsedBy"`
+}
 
 func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 	imgs, err := s.docker.ImageList(r.Context(), image.ListOptions{All: true})
@@ -16,11 +40,24 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, imgs)
+	containers, _ := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	usedBy := make(map[string][]containerRef)
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		usedBy[c.ImageID] = append(usedBy[c.ImageID], containerRef{ID: c.ID, Name: name})
+	}
+	out := make([]imageWithUsage, len(imgs))
+	for i, img := range imgs {
+		out[i] = imageWithUsage{Summary: img, UsedBy: usedBy[img.ID]}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := imageIDParam(r)
 	info, _, err := s.docker.ImageInspectWithRaw(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -30,8 +67,7 @@ func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteImage(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	log.Printf("DEBUG handleDeleteImage: URLParam=%q URL.Path=%q URL.RawPath=%q RequestURI=%q", id, r.URL.Path, r.URL.RawPath, r.RequestURI)
+	id := imageIDParam(r)
 	force := r.URL.Query().Get("force") == "true"
 	_, err := s.docker.ImageRemove(r.Context(), id, image.RemoveOptions{Force: force})
 	if err != nil {
@@ -47,7 +83,7 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageHistory(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := imageIDParam(r)
 	hist, err := s.docker.ImageHistory(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -98,7 +134,7 @@ func (s *Server) registryAuth(registryID string) string {
 }
 
 func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := imageIDParam(r)
 	var body struct {
 		Tag string `json:"tag"`
 	}
@@ -111,7 +147,7 @@ func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageDeleteTag(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := imageIDParam(r)
 	tag := chi.URLParam(r, "tag")
 	ref := id + ":" + tag
 	_, err := s.docker.ImageRemove(r.Context(), ref, image.RemoveOptions{})
@@ -123,15 +159,16 @@ func (s *Server) handleImageDeleteTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageSave(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := imageIDParam(r)
 	rc, err := s.docker.ImageSave(r.Context(), []string{id})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer rc.Close()
+	filename := strings.NewReplacer(":", "_", "/", "_").Replace(id)
 	w.Header().Set("Content-Type", "application/x-tar")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+id+`.tar"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`.tar"`)
 	io.Copy(w, rc) //nolint:errcheck
 }
 

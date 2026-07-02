@@ -27,6 +27,7 @@ export interface ImageSummary {
   RepoTags: string[];
   Size: number;
   Created: number;
+  UsedBy?: { Id: string; Name: string }[];
 }
 
 export interface NetworkSummary {

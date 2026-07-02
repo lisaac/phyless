@@ -1,4 +1,5 @@
 import { Component, createSignal, onMount, onCleanup, Show, For, JSX } from "solid-js";
+import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
@@ -106,6 +107,7 @@ export const ImageListPage: Component = () => {
             <th class="px-2 py-2">标签</th>
             <th class="px-2 py-2">ID</th>
             <th class="px-2 py-2">大小</th>
+            <th class="px-2 py-2">使用容器</th>
             <th class="px-2 py-2">操作</th>
           </tr>
         </thead>
@@ -122,11 +124,26 @@ export const ImageListPage: Component = () => {
                   {img.Id.replace("sha256:", "").slice(0, 12)}
                 </td>
                 <td class="px-2 py-2 text-xs text-zinc-400">{fmtSize(img.Size)}</td>
+                <td class="px-2 py-2 text-xs">
+                  <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
+                    <div class="flex flex-col gap-0.5">
+                      <For each={img.UsedBy}>
+                        {(c) => (
+                          <A href={`/containers/${c.Id}`} class="text-indigo-400 hover:text-indigo-300 hover:underline">
+                            {c.Name}
+                          </A>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </td>
                 <td class="px-2 py-2">
                   <div class="flex items-center gap-0.5">
                     {/* Export / Save */}
                     <a
                       title="导出 tar"
+                      target="_blank"
+                      rel="noopener"
                       href={`/api/images/${encodeURIComponent(img.Id)}/save?token=${encodeURIComponent(getToken() ?? "")}`}
                       class="inline-flex h-6 w-6 items-center justify-center text-zinc-400 hover:text-zinc-100 transition-colors"
                     >

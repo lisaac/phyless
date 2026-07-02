@@ -342,10 +342,7 @@ export const ContainerDetailPage: Component = () => {
             <Btn loading={isP("kill")} danger onClick={() => void act("kill")}>✕ 强制关闭</Btn>
             <span class="text-zinc-400">│</span>
             <Btn onClick={() => {
-              const a = document.createElement("a");
-              a.href = `/api/containers/${id()}/export?token=${encodeURIComponent(getToken() ?? "")}`;
-              a.download = `${name()}.tar`;
-              a.click();
+              window.open(`/api/containers/${id()}/export?token=${encodeURIComponent(getToken() ?? "")}`, "_blank");
             }}>↓ 导出 tar</Btn>
             <Btn onClick={() => void doUpgrade()}>⇡ 升级</Btn>
             <Btn onClick={() => void openCmdModal()}>⧉ Run/Compose</Btn>
