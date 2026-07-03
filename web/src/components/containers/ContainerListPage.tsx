@@ -1,7 +1,7 @@
 import { Component, createSignal, onMount, onCleanup, Show, For, JSX, createResource } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
-import { get, post, del } from "../../api/client";
+import { get, post, del, imageInspectUrl } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { containerName } from "./containerActions";
@@ -106,7 +106,7 @@ const ViewCmdModal: Component<{ id: string; name: string; onClose: () => void }>
     const imageId = (inspect?.Image as string) ?? "";
     let imageInspect = {};
     if (imageId) {
-      try { imageInspect = await get(`/api/images/${encodeURIComponent(imageId)}/inspect`); } catch { /* ignore */ }
+      try { imageInspect = await get(imageInspectUrl(imageId)); } catch { /* ignore */ }
     }
     return inspectToRunCmd(inspect, imageInspect);
   });

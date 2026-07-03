@@ -59,6 +59,10 @@ export const post = <T>(p: string, body?: unknown) => request<T>("POST", p, body
 export const put = <T>(p: string, body?: unknown) => request<T>("PUT", p, body);
 export const del = <T>(p: string) => request<T>("DELETE", p);
 
+// Image refs (e.g. "sha256:abc", "nginx:latest") contain colons, so the id
+// travels as a query param rather than a path segment — see server.go.
+export const imageInspectUrl = (id: string) => `/api/images/inspect?id=${encodeURIComponent(id)}`;
+
 export async function login(username: string, password: string): Promise<string> {
   const out = await request<{ token: string }>("POST", "/api/auth/login", { username, password });
   setToken(out.token);

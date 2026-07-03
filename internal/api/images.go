@@ -4,25 +4,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
-	"github.com/go-chi/chi/v5"
 )
-
-// imageIDParam extracts the "id" path param and percent-decodes it.
-// chi may route on the raw (still percent-encoded) URL path, so a colon in an
-// image ID like "sha256:abc" can arrive as the literal string "sha256%3Aabc";
-// passed straight to the Docker API that gets rejected as an invalid reference.
-func imageIDParam(r *http.Request) string {
-	id := chi.URLParam(r, "id")
-	if decoded, err := url.PathUnescape(id); err == nil {
-		return decoded
-	}
-	return id
-}
 
 type containerRef struct {
 	ID   string `json:"Id"`
@@ -57,7 +43,7 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
-	id := imageIDParam(r)
+	id := r.URL.Query().Get("id")
 	info, _, err := s.docker.ImageInspectWithRaw(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -67,7 +53,7 @@ func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteImage(w http.ResponseWriter, r *http.Request) {
-	id := imageIDParam(r)
+	id := r.URL.Query().Get("id")
 	force := r.URL.Query().Get("force") == "true"
 	_, err := s.docker.ImageRemove(r.Context(), id, image.RemoveOptions{Force: force})
 	if err != nil {
@@ -83,7 +69,7 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageHistory(w http.ResponseWriter, r *http.Request) {
-	id := imageIDParam(r)
+	id := r.URL.Query().Get("id")
 	hist, err := s.docker.ImageHistory(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -134,7 +120,7 @@ func (s *Server) registryAuth(registryID string) string {
 }
 
 func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
-	id := imageIDParam(r)
+	id := r.URL.Query().Get("id")
 	var body struct {
 		Tag string `json:"tag"`
 	}
@@ -147,8 +133,8 @@ func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageDeleteTag(w http.ResponseWriter, r *http.Request) {
-	id := imageIDParam(r)
-	tag := chi.URLParam(r, "tag")
+	id := r.URL.Query().Get("id")
+	tag := r.URL.Query().Get("tag")
 	ref := id + ":" + tag
 	_, err := s.docker.ImageRemove(r.Context(), ref, image.RemoveOptions{})
 	if err != nil {
@@ -159,7 +145,7 @@ func (s *Server) handleImageDeleteTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageSave(w http.ResponseWriter, r *http.Request) {
-	id := imageIDParam(r)
+	id := r.URL.Query().Get("id")
 	rc, err := s.docker.ImageSave(r.Context(), []string{id})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

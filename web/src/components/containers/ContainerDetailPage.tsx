@@ -2,7 +2,7 @@ import {
   Component, createSignal, createResource, createEffect, For, Show, onMount, onCleanup,
 } from "solid-js";
 import { useParams, useSearchParams, useNavigate } from "@solidjs/router";
-import { get, post, del, put, getToken, setToken } from "../../api/client";
+import { get, post, del, put, getToken, setToken, imageInspectUrl } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
 import { CreateContainerModal } from "./CreateContainerModal";
@@ -204,7 +204,7 @@ export const ContainerDetailPage: Component = () => {
       const imageId = (inspect()?.Image as string) ?? "";
       let imgInspect = {};
       if (imageId) {
-        try { imgInspect = await get(`/api/images/${encodeURIComponent(imageId)}/inspect`); } catch { /**/ }
+        try { imgInspect = await get(imageInspectUrl(imageId)); } catch { /**/ }
       }
       setRunCmd(inspectToRunCmd(inspect(), imgInspect));
       setShowCmdModal(true);

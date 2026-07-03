@@ -2,7 +2,7 @@ import { Component, createSignal, createResource, createEffect, Show, For, onMou
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
-import { get, post, del } from "../../api/client";
+import { get, post, del, imageInspectUrl } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { emptyForm, formToPayload, formToRunCmd, parseRunIntoForm, type CreateForm } from "./containerForm";
 import { inspectToRunCmd } from "../../api/inspect";
@@ -154,7 +154,7 @@ export const CreateContainerModal: Component<{
       const imageId = (containerInspect?.Image as string) ?? "";
       let imageInspect = {};
       if (imageId) {
-        try { imageInspect = await get(`/api/images/${encodeURIComponent(imageId)}/inspect`); } catch { /* non-fatal */ }
+        try { imageInspect = await get(imageInspectUrl(imageId)); } catch { /* non-fatal */ }
       }
       const cmd = inspectToRunCmd(containerInspect, imageInspect);
       // Same as "查看Run命令": show clean command in CMD tab, don't auto-parse into form

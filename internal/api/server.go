@@ -105,7 +105,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 	// Download routes — browsers can't set Authorization headers on <a href>, use query token instead
 	r.Get("/api/containers/{id}/export", wsAuth(jwtSecret, models.RoleOperator, srv.handleContainerExport))
 	r.Get("/api/containers/{id}/files/download", wsAuth(jwtSecret, models.RoleOperator, srv.handleContainerDownloadFile))
-	r.Get("/api/images/{id}/save", wsAuth(jwtSecret, models.RoleOperator, srv.handleImageSave))
+	r.Get("/api/images/save", wsAuth(jwtSecret, models.RoleOperator, srv.handleImageSave))
 
 	distDir := "./web/dist"
 	if _, err := os.Stat(distDir); err == nil {
@@ -169,15 +169,19 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Delete("/api/containers/{id}/files", s.handleContainerDeleteFile)
 	r.Post("/api/containers/{id}/files/rename", s.handleContainerRenameFile)
 
-	// Images
+	// Images — id passed as ?id= (query string), not a path segment: image
+	// refs routinely contain colons ("sha256:abc", "nginx:latest"), and colons
+	// in path segments hit an unresolved chi RawPath decoding quirk that leaked
+	// literal "%3A" through to the Docker daemon. Query string decoding has no
+	// such ambiguity.
 	r.Get("/api/images", s.handleListImages)
-	r.Get("/api/images/{id}", s.handleGetImage)
-	r.Delete("/api/images/{id}", s.handleDeleteImage)
-	r.Get("/api/images/{id}/inspect", s.handleImageInspect)
-	r.Get("/api/images/{id}/history", s.handleImageHistory)
+	r.Get("/api/images/detail", s.handleGetImage)
+	r.Delete("/api/images", s.handleDeleteImage)
+	r.Get("/api/images/inspect", s.handleImageInspect)
+	r.Get("/api/images/history", s.handleImageHistory)
 	r.Post("/api/images/pull", s.handleImagePull)
-	r.Post("/api/images/{id}/tag", s.handleImageTag)
-	r.Delete("/api/images/{id}/tags/{tag}", s.handleImageDeleteTag)
+	r.Post("/api/images/tag", s.handleImageTag)
+	r.Delete("/api/images/untag", s.handleImageDeleteTag)
 	r.Post("/api/images/load", s.handleImageLoad)
 
 	// Networks

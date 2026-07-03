@@ -1,5 +1,5 @@
 import { Component, createResource, createEffect, createSignal, Show } from "solid-js";
-import { get } from "../../api/client";
+import { get, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { runToCompose, composeToRuns } from "../../api/convert";
 import { CodeEditor } from "../shared/CodeEditor";
@@ -46,7 +46,7 @@ export const BulkRunModal: Component<{ ids: string[]; onClose: () => void }> = (
           const container = await get<any>(`/api/containers/${id}/inspect`);
           let image: any = {};
           try {
-            image = await get<any>(`/api/images/${encodeURIComponent(container.Image)}/inspect`);
+            image = await get<any>(imageInspectUrl(container.Image));
           } catch {}
           return inspectToRunCmd(container, image);
         })

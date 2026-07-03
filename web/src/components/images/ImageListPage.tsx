@@ -56,7 +56,7 @@ export const ImageListPage: Component = () => {
     setDeletingId(id);
     setConfirmDelete(null);
     try {
-      await del(`/api/images/${encodeURIComponent(id)}${force ? "?force=true" : ""}`);
+      await del(`/api/images?id=${encodeURIComponent(id)}${force ? "&force=true" : ""}`);
       await store.refresh();
       toast.success("已删除");
     } catch (e) {
@@ -74,7 +74,7 @@ export const ImageListPage: Component = () => {
   const addTag = async () => {
     const img = tagFor(); if (!img) return;
     try {
-      await post(`/api/images/${encodeURIComponent(img.Id)}/tag`, { tag: tagVal() });
+      await post(`/api/images/tag?id=${encodeURIComponent(img.Id)}`, { tag: tagVal() });
       toast.success("打标签成功");
       setTagFor(null); setTagVal("");
       await store.refresh();
@@ -144,7 +144,7 @@ export const ImageListPage: Component = () => {
                       title="导出 tar"
                       target="_blank"
                       rel="noopener"
-                      href={`/api/images/${encodeURIComponent(img.Id)}/save?token=${encodeURIComponent(getToken() ?? "")}`}
+                      href={`/api/images/save?id=${encodeURIComponent(img.Id)}&token=${encodeURIComponent(getToken() ?? "")}`}
                       class="inline-flex h-6 w-6 items-center justify-center text-zinc-400 hover:text-zinc-100 transition-colors"
                     >
                       <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
