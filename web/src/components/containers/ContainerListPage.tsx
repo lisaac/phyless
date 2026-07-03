@@ -297,7 +297,7 @@ export const ContainerListPage: Component = () => {
                       </div>
                       {/* Inline actions */}
                       <Show when={hasRole("operator")}>
-                        <div class="mt-1.5 flex items-center gap-0.5">
+                        <div class="mt-1 flex items-center gap-0.5">
                           <Show when={!running() && !paused()}>
                             <IBtn title="启动" loading={isP(c.Id, "start")} onClick={() => void act(c.Id, "start")}>▶</IBtn>
                           </Show>
@@ -322,7 +322,7 @@ export const ContainerListPage: Component = () => {
                         </div>
                       </Show>
                       <Show when={!hasRole("operator")}>
-                        <div class="mt-1.5 flex gap-0.5">
+                        <div class="mt-1 flex gap-0.5">
                           <IBtn title="查看 Run/Compose 命令" onClick={() => setRunTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>⧉</IBtn>
                         </div>
                       </Show>

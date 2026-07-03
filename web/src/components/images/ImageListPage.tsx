@@ -24,10 +24,12 @@ const IBtn = (p: { title: string; onClick: () => void; loading?: boolean; danger
     disabled={p.loading}
     onClick={p.onClick}
     class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${
-      p.danger ? "text-zinc-400 hover:text-red-400"
-                : "text-zinc-400 hover:text-zinc-100"}`}
+      p.danger
+        ? "text-zinc-500 hover:bg-red-900/40 hover:text-red-400"
+        : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"
+    }`}
   >
-    {p.loading ? <span class="animate-spin text-xs">↺</span> : p.children}
+    {p.loading ? <span class="inline-block animate-spin text-xs">↺</span> : p.children}
   </button>
 );
 
@@ -227,98 +229,100 @@ export const ImageListPage: Component = () => {
 
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
 
-      <table class="w-full text-left text-sm">
-        <thead class="border-b border-zinc-800 text-xs uppercase text-zinc-500">
-          <tr>
-            <th class="px-2 py-2">标签</th>
-            <th class="px-2 py-2">大小</th>
-            <th class="px-2 py-2">使用容器</th>
-            <th class="px-2 py-2">创建时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          <For each={store.items()}>
-            {(img) => (
-              <tr class="border-b border-zinc-800/50 hover:bg-white/[0.03] transition-colors">
-                <td class="px-2 py-2">
-                  {/* Tags — editable + deletable chips */}
-                  <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;</div>}>
-                    <For each={img.RepoTags}>
-                      {(tag) => (
-                        <div>
-                          <TagChip
-                            tag={tag}
-                            img={img}
-                            onChanged={() => void store.refresh()}
-                            onConfirmLastTagDelete={setConfirmDelete}
-                          />
-                        </div>
-                      )}
-                    </For>
-                  </Show>
-                  {/* ID — click to inspect */}
-                  <button
-                    class="mt-0.5 block font-mono text-[11px] text-zinc-400 transition-colors hover:text-indigo-400"
-                    title="查看 inspect"
-                    onClick={() => setInspectFor(img)}
-                  >
-                    {img.Id.replace("sha256:", "").slice(0, 12)}
-                  </button>
-                  {/* Inline actions */}
-                  <div class="mt-0.5 flex items-center gap-0.5">
-                    <Show when={hasRole("operator")}>
-                      <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
-                        <Ico path="M12 5v14M5 12h14" />
-                      </IBtn>
-                    </Show>
-                    <a
-                      title="导出 tar"
-                      target="_blank"
-                      rel="noopener"
-                      href={`/api/images/save?id=${encodeURIComponent(img.Id)}&token=${encodeURIComponent(getToken() ?? "")}`}
-                      class="inline-flex h-6 w-6 items-center justify-center text-zinc-400 hover:text-zinc-100 transition-colors"
-                    >
-                      <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
-                    </a>
-                    <Show when={hasRole("operator")}>
-                      <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
-                        <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
-                      </IBtn>
-                      <IBtn
-                        title="删除"
-                        danger
-                        loading={deletingId() === img.Id}
-                        onClick={() => setConfirmDelete(img)}
-                      >
-                        <Ico path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-                      </IBtn>
-                    </Show>
-                  </div>
-                </td>
-                <td class="px-2 py-2 align-top text-xs text-zinc-400">{fmtSize(img.Size)}</td>
-                <td class="px-2 py-2 align-top text-xs">
-                  <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
-                    <div class="flex flex-col gap-0.5">
-                      <For each={img.UsedBy}>
-                        {(c) => (
-                          <A href={`/containers/${c.Id}`} class="text-indigo-400 hover:text-indigo-300 hover:underline">
-                            {c.Name}
-                          </A>
+      <div class="overflow-x-auto border border-zinc-800">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-zinc-800 text-xs text-zinc-500">
+            <tr>
+              <th class="px-3 py-2 font-normal">标签</th>
+              <th class="px-3 py-2 font-normal">大小</th>
+              <th class="px-3 py-2 font-normal">使用容器</th>
+              <th class="px-3 py-2 font-normal">创建时间</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-800/50">
+            <For each={store.items()}>
+              {(img) => (
+                <tr class="transition-colors hover:bg-white/[0.03]">
+                  <td class="px-3 py-2">
+                    {/* Tags — editable + deletable chips */}
+                    <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;</div>}>
+                      <For each={img.RepoTags}>
+                        {(tag) => (
+                          <div>
+                            <TagChip
+                              tag={tag}
+                              img={img}
+                              onChanged={() => void store.refresh()}
+                              onConfirmLastTagDelete={setConfirmDelete}
+                            />
+                          </div>
                         )}
                       </For>
+                    </Show>
+                    {/* ID — click to inspect */}
+                    <button
+                      class="mt-0.5 block font-mono text-[11px] text-zinc-400 transition-colors hover:text-indigo-400"
+                      title="查看 inspect"
+                      onClick={() => setInspectFor(img)}
+                    >
+                      {img.Id.replace("sha256:", "").slice(0, 12)}
+                    </button>
+                    {/* Inline actions */}
+                    <div class="mt-1 flex items-center gap-0.5">
+                      <Show when={hasRole("operator")}>
+                        <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
+                          <Ico path="M12 5v14M5 12h14" />
+                        </IBtn>
+                      </Show>
+                      <a
+                        title="导出 tar"
+                        target="_blank"
+                        rel="noopener"
+                        href={`/api/images/save?id=${encodeURIComponent(img.Id)}&token=${encodeURIComponent(getToken() ?? "")}`}
+                        class="inline-flex h-6 w-6 items-center justify-center text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                      >
+                        <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                      </a>
+                      <Show when={hasRole("operator")}>
+                        <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
+                          <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
+                        </IBtn>
+                        <IBtn
+                          title="删除"
+                          danger
+                          loading={deletingId() === img.Id}
+                          onClick={() => setConfirmDelete(img)}
+                        >
+                          <Ico path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                        </IBtn>
+                      </Show>
                     </div>
-                  </Show>
-                </td>
-                <td class="px-2 py-2 align-top text-xs text-zinc-400">{fmtDate(img.Created)}</td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
+                  </td>
+                  <td class="px-3 py-2 align-top text-xs text-zinc-400">{fmtSize(img.Size)}</td>
+                  <td class="px-3 py-2 align-top text-xs">
+                    <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
+                      <div class="flex flex-col gap-0.5">
+                        <For each={img.UsedBy}>
+                          {(c) => (
+                            <A href={`/containers/${c.Id}`} class="text-indigo-400 hover:text-indigo-300 hover:underline">
+                              {c.Name}
+                            </A>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </td>
+                  <td class="px-3 py-2 align-top text-xs text-zinc-400">{fmtDate(img.Created)}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
 
-      <Show when={store.items().length === 0 && !store.error()}>
-        <div class="py-12 text-center text-zinc-500">暂无镜像</div>
-      </Show>
+        <Show when={store.items().length === 0 && !store.error()}>
+          <div class="py-16 text-center text-zinc-400">暂无镜像</div>
+        </Show>
+      </div>
 
       {/* Pull input modal */}
       <Modal open={showPullInput()} onClose={() => setShowPullInput(false)} title="拉取镜像">
