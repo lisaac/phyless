@@ -234,8 +234,8 @@ export const ContainerListPage: Component = () => {
               <th class="w-8 px-3 py-2 text-center font-normal" />
               <th class="w-44 px-3 py-2 font-normal">容器</th>
               <th class="w-36 px-3 py-2 text-center font-normal">网络 / 端口</th>
-              <th class="px-3 py-2 text-center font-normal">挂载</th>
-              <th class="w-36 px-3 py-2 text-center font-normal">命令</th>
+              <th class="px-3 py-2 font-normal">挂载</th>
+              <th class="w-48 px-3 py-2 font-normal">命令</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-zinc-800">
@@ -331,7 +331,7 @@ export const ContainerListPage: Component = () => {
                     </td>
 
                     {/* Network + Ports */}
-                    <td class="px-3 py-2 text-center align-top">
+                    <td class="px-3 py-2 text-center align-middle">
                       <Show when={nets}>
                         <div class="mx-auto max-w-[10rem] truncate text-xs text-zinc-500" title={nets}>{nets}</div>
                       </Show>
@@ -359,12 +359,12 @@ export const ContainerListPage: Component = () => {
                     </td>
 
                     {/* Mounts — both sides simplified */}
-                    <td class="px-3 py-2 text-center align-top">
+                    <td class="px-3 py-2 align-middle">
                       <Show
                         when={c.Mounts.length > 0}
                         fallback={<span class="text-xs text-zinc-500">—</span>}
                       >
-                        <div class="flex flex-col items-center gap-0.5">
+                        <div class="flex flex-col gap-0.5">
                           <For each={c.Mounts.slice(0, 4)}>
                             {(m) => (
                               <a
@@ -390,8 +390,8 @@ export const ContainerListPage: Component = () => {
                     </td>
 
                     {/* Command */}
-                    <td class="px-3 py-2 text-center align-top">
-                      <span class="mx-auto block max-w-[9rem] truncate font-mono text-[11px] text-zinc-400" title={c.Command}>
+                    <td class="px-3 py-2 align-middle">
+                      <span class="line-clamp-3 break-all font-mono text-[11px] text-zinc-400" title={c.Command}>
                         {c.Command || "—"}
                       </span>
                     </td>
