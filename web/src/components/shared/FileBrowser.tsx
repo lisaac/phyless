@@ -241,14 +241,14 @@ export const FileBrowser: Component<{
                         <Show when={props.downloadURL}>
                           <button
                             class="text-[11px] text-zinc-400 hover:text-zinc-300"
-                            title={e.is_dir ? "下载目录 (tar)" : "下载文件"}
+                            title="下载 tar（Docker 的容器文件导出接口始终返回 tar 归档）"
                             onClick={() => {
                               const a = document.createElement("a");
                               a.href = props.downloadURL!(join(e.name));
-                              a.download = e.is_dir ? `${e.name}.tar` : e.name;
+                              a.download = `${e.name}.tar`;
                               a.click();
                             }}
-                          >{e.is_dir ? "下载 tar" : "下载"}</button>
+                          >下载 tar</button>
                         </Show>
                         <Show when={props.onDelete}>
                           <button class="text-[11px] text-red-900 hover:text-red-400" onClick={() => void doDelete(e)}>删除</button>

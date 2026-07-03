@@ -581,8 +581,19 @@ func (s *Server) handleContainerUploadFile(w http.ResponseWriter, r *http.Reques
 	if path == "" {
 		path = "/"
 	}
-	err := s.docker.CopyToContainer(r.Context(), id, path, r.Body, container.CopyToContainerOptions{})
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "missing name")
+		return
+	}
+	// Docker's CopyToContainer expects the body to be a tar archive (it's the
+	// same wire format `docker cp` uses), not the raw file bytes — wrap it.
+	content, err := io.ReadAll(r.Body)
 	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := dockercontainer.UploadFile(r.Context(), s.docker, id, path, dockercontainer.CreateTar(name, content)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

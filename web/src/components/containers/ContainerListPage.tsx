@@ -100,9 +100,13 @@ const IBtn = (p: {
 );
 
 // ── Run/Compose modal ──────────────────────────────────────────────────────────
-const ViewCmdModal: Component<{ id: string; name: string; onClose: () => void }> = (props) => {
-  const [cmd] = createResource(async () => {
-    const inspect = await get<Record<string, unknown>>(`/api/containers/${props.id}/inspect`);
+// Always mounted (open just toggles CreateContainerModal's own visibility) —
+// wrapping it in a <Show> would unmount CreateContainerModal, and with it the
+// PullStatusWidget it embeds, the instant onClose fires (e.g. right after
+// clicking "创建容器"), killing the in-flight creation before it can render.
+const ViewCmdModal: Component<{ target: { id: string; name: string } | null; onClose: () => void }> = (props) => {
+  const [cmd] = createResource(() => props.target, async (t) => {
+    const inspect = await get<Record<string, unknown>>(`/api/containers/${t.id}/inspect`);
     const imageId = (inspect?.Image as string) ?? "";
     let imageInspect = {};
     if (imageId) {
@@ -112,14 +116,12 @@ const ViewCmdModal: Component<{ id: string; name: string; onClose: () => void }>
   });
 
   return (
-    <Show when={!cmd.loading} fallback={null}>
-      <CreateContainerModal
-        open
-        onClose={props.onClose}
-        onCreated={props.onClose}
-        initialRun={cmd() ?? ""}
-      />
-    </Show>
+    <CreateContainerModal
+      open={!!props.target && !cmd.loading}
+      onClose={props.onClose}
+      onCreated={props.onClose}
+      initialRun={cmd() ?? ""}
+    />
   );
 };
 
@@ -236,7 +238,7 @@ export const ContainerListPage: Component = () => {
               <th class="w-36 px-3 py-2 font-normal">命令</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-zinc-800/50">
+          <tbody class="divide-y divide-zinc-800">
             <For each={store.items()}>
               {(c) => {
                 const name = containerName(c);
@@ -406,9 +408,7 @@ export const ContainerListPage: Component = () => {
       </div>
 
       {/* ── Run/Compose modal ───────────────────────────────────────────────── */}
-      <Show when={runTarget()}>
-        {(t) => <ViewCmdModal id={t().id} name={t().name} onClose={() => setRunTarget(null)} />}
-      </Show>
+      <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <Show when={bulkRunIds()}>
         {(ids) => <BulkRunModal ids={ids()} onClose={() => setBulkRunIds(null)} />}
       </Show>

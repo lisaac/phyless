@@ -239,7 +239,7 @@ export const ImageListPage: Component = () => {
               <th class="px-3 py-2 font-normal">创建时间</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-zinc-800/50">
+          <tbody class="divide-y divide-zinc-800">
             <For each={store.items()}>
               {(img) => (
                 <tr class="transition-colors hover:bg-white/[0.03]">
@@ -403,17 +403,15 @@ export const ImageListPage: Component = () => {
         </Show>
       </Modal>
 
-      {/* Create container from this image */}
-      <Show when={createFrom()}>
-        {(img) => (
-          <CreateContainerModal
-            open
-            onClose={() => setCreateFrom(null)}
-            onCreated={() => setCreateFrom(null)}
-            initialRun={`docker run -d --name ${suggestName(imgLabel(img()))} ${imgLabel(img())}`}
-          />
-        )}
-      </Show>
+      {/* Create container from this image — always mounted; wrapping in <Show>
+          would unmount CreateContainerModal (and its embedded PullStatusWidget)
+          the instant onClose fires. */}
+      <CreateContainerModal
+        open={!!createFrom()}
+        onClose={() => setCreateFrom(null)}
+        onCreated={() => setCreateFrom(null)}
+        initialRun={createFrom() ? `docker run -d --name ${suggestName(imgLabel(createFrom()!))} ${imgLabel(createFrom()!)}` : ""}
+      />
     </div>
   );
 };

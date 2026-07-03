@@ -249,7 +249,7 @@ export const ContainerDetailPage: Component = () => {
   const downloadURL = (sub: string) =>
     `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`;
   const uploadFile = async (sub: string, file: File) => {
-    const res = await fetch(`/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}`, {
+    const res = await fetch(`/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`, {
       method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: file,
     });
     if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
@@ -685,15 +685,15 @@ export const ContainerDetailPage: Component = () => {
         </pre>
       </Show>
 
-      {/* ── Run/Compose modal (reuse CreateContainerModal) ────────────────── */}
-      <Show when={showCmdModal()}>
-        <CreateContainerModal
-          open
-          onClose={() => setShowCmdModal(false)}
-          onCreated={() => { setShowCmdModal(false); void refetch(); }}
-          initialRun={runCmd()}
-        />
-      </Show>
+      {/* ── Run/Compose modal (reuse CreateContainerModal) ──────────────────
+          Always mounted — wrapping in <Show> would unmount CreateContainerModal
+          (and its embedded PullStatusWidget) the instant onClose fires. */}
+      <CreateContainerModal
+        open={showCmdModal()}
+        onClose={() => setShowCmdModal(false)}
+        onCreated={() => { setShowCmdModal(false); void refetch(); }}
+        initialRun={runCmd()}
+      />
 
       {/* ── Upgrade progress — non-blocking floating card ────────────────── */}
       <PullStatusWidget
