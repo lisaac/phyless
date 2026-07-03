@@ -129,10 +129,10 @@ export const PullStatusWidget: Component<{
           </div>
           <div class="flex shrink-0 items-center gap-0.5">
             <button
-              class="p-1 text-zinc-500 transition-colors hover:text-zinc-200"
+              class="w-4 p-1 text-center text-xs leading-none text-zinc-500 transition-colors hover:text-zinc-200"
               title={collapsed() ? "展开" : "收起"}
               onClick={() => setCollapsed((c) => !c)}
-            >{collapsed() ? "▸" : "▾"}</button>
+            >{collapsed() ? "+" : "−"}</button>
             <button
               class="p-1 text-zinc-500 transition-colors hover:text-zinc-200"
               title="关闭"

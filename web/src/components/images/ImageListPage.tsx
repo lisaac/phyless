@@ -234,9 +234,9 @@ export const ImageListPage: Component = () => {
           <thead class="border-b border-zinc-800 text-xs text-zinc-500">
             <tr>
               <th class="px-3 py-2 font-normal">标签</th>
-              <th class="px-3 py-2 font-normal">大小</th>
-              <th class="px-3 py-2 font-normal">使用容器</th>
-              <th class="px-3 py-2 font-normal">创建时间</th>
+              <th class="px-3 py-2 text-center font-normal">大小</th>
+              <th class="px-3 py-2 text-center font-normal">使用容器</th>
+              <th class="px-3 py-2 text-center font-normal">创建时间</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-zinc-800">
@@ -298,10 +298,10 @@ export const ImageListPage: Component = () => {
                       </Show>
                     </div>
                   </td>
-                  <td class="px-3 py-2 align-top text-xs text-zinc-400">{fmtSize(img.Size)}</td>
-                  <td class="px-3 py-2 align-top text-xs">
+                  <td class="px-3 py-2 align-top text-center text-xs text-zinc-400">{fmtSize(img.Size)}</td>
+                  <td class="px-3 py-2 align-top text-center text-xs">
                     <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
-                      <div class="flex flex-col gap-0.5">
+                      <div class="flex flex-col items-center gap-0.5">
                         <For each={img.UsedBy}>
                           {(c) => (
                             <A href={`/containers/${c.Id}`} class="text-indigo-400 hover:text-indigo-300 hover:underline">
@@ -312,7 +312,7 @@ export const ImageListPage: Component = () => {
                       </div>
                     </Show>
                   </td>
-                  <td class="px-3 py-2 align-top text-xs text-zinc-400">{fmtDate(img.Created)}</td>
+                  <td class="px-3 py-2 align-top text-center text-xs text-zinc-400">{fmtDate(img.Created)}</td>
                 </tr>
               )}
             </For>
