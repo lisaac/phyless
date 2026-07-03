@@ -1,5 +1,6 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
+import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { get, post, del, imageInspectUrl } from "../../api/client";
@@ -57,6 +58,9 @@ export const CreateContainerModal: Component<{
   const [liveRun, setLiveRun] = createSignal(runCmd());
   const [savingTpl, setSavingTpl] = createSignal(false);
   const [tplName, setTplName] = createSignal("");
+  const [creating, setCreating] = createSignal(false);
+  const [createTitle, setCreateTitle] = createSignal("");
+  const [createBody, setCreateBody] = createSignal<unknown>(undefined);
 
   // Keep select boxes on the user's choice (not auto-reset)
   const [selectedTplId, setSelectedTplId] = createSignal("");
@@ -125,18 +129,17 @@ export const CreateContainerModal: Component<{
     setTab(newTab);
   };
 
-  const submit = async () => {
+  // Creation streams progress via PullStatusWidget (non-blocking), so close
+  // this form immediately and hand off to the floating widget below.
+  const submit = () => {
     if (!form().image.trim()) { toast.error("请填写镜像名称"); return; }
-    try {
-      const out = await post<{ id: string }>("/api/containers", formToPayload(form()));
-      toast.success(`已创建 ${out.id.slice(0, 12)}`);
-      setForm(emptyForm());
-      setSelectedTplId("");
-      setSelectedContainerId("");
-      props.onCreated();
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
+    setCreateTitle(`创建 ${form().name || form().image}`);
+    setCreateBody(formToPayload(form()));
+    setCreating(true);
+    setForm(emptyForm());
+    setSelectedTplId("");
+    setSelectedContainerId("");
+    props.onClose();
   };
 
   const loadTemplate = (cmd: string) => {
@@ -279,6 +282,7 @@ export const CreateContainerModal: Component<{
   );
 
   return (
+    <>
     <Modal open={props.open} onClose={props.onClose} title="新建容器" wide noBackdropClose>
 
       {/* ── Quick selectors ────────────────────────────────────────────────── */}
@@ -597,5 +601,14 @@ export const CreateContainerModal: Component<{
         </div>
       </Show>
     </Modal>
+    <PullStatusWidget
+      active={creating()}
+      onClose={() => setCreating(false)}
+      title={createTitle()}
+      url="/api/containers"
+      body={createBody()}
+      onDone={() => { setCreating(false); props.onCreated(); }}
+    />
+    </>
   );
 };

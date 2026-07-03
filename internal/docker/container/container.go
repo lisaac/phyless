@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -17,6 +18,24 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 )
+
+// streamEvent is one line of a newline-delimited JSON progress stream — the
+// same {stream}/{error} shape docker load already uses, so a single frontend
+// widget can render pull, load, create, and upgrade progress uniformly.
+type streamEvent struct {
+	Stream string `json:"stream,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// EmitStream writes one formatted status line to a progress stream.
+func EmitStream(w io.Writer, format string, a ...any) {
+	json.NewEncoder(w).Encode(streamEvent{Stream: fmt.Sprintf(format, a...)}) //nolint:errcheck
+}
+
+// EmitError writes a terminal error line to a progress stream.
+func EmitError(w io.Writer, err error) {
+	json.NewEncoder(w).Encode(streamEvent{Error: err.Error()}) //nolint:errcheck
+}
 
 // FileEntry is a directory listing entry returned by ExecListDir.
 type FileEntry struct {
@@ -231,7 +250,7 @@ func Upgrade(ctx context.Context, cli *client.Client, containerID string, w io.W
 		return "", err
 	}
 
-	fmt.Fprintf(w, "正在拉取镜像 %s …\n", info.Config.Image) //nolint:errcheck
+	EmitStream(w, "正在拉取镜像 %s …", info.Config.Image)
 
 	rc, err := cli.ImagePull(ctx, info.Config.Image, image.PullOptions{})
 	if err != nil {
@@ -245,14 +264,14 @@ func Upgrade(ctx context.Context, cli *client.Client, containerID string, w io.W
 		return "", fmt.Errorf("无法检查新镜像: %w", err)
 	}
 
-	fmt.Fprintf(w, "\n当前镜像 ID : %s\n新镜像 ID   : %s\n", shortID(info.Image), shortID(newImg.ID)) //nolint:errcheck
+	EmitStream(w, "当前镜像 ID: %s ｜ 新镜像 ID: %s", shortID(info.Image), shortID(newImg.ID))
 
 	if newImg.ID == info.Image {
-		fmt.Fprintf(w, "\n✓ 已是最新版本，无需升级。\n") //nolint:errcheck
+		EmitStream(w, "✓ 已是最新版本，无需升级。")
 		return "", nil
 	}
 
-	fmt.Fprintf(w, "\n检测到新版本，开始重建容器…\n") //nolint:errcheck
+	EmitStream(w, "检测到新版本，开始重建容器…")
 
 	cli.ContainerStop(ctx, containerID, container.StopOptions{})               //nolint:errcheck
 	cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}) //nolint:errcheck
@@ -265,7 +284,7 @@ func Upgrade(ctx context.Context, cli *client.Client, containerID string, w io.W
 		return "", fmt.Errorf("启动容器失败: %w", err)
 	}
 
-	fmt.Fprintf(w, "✓ 升级完成，新容器 ID: %s\n", shortID(resp.ID)) //nolint:errcheck
+	EmitStream(w, "✓ 升级完成，新容器 ID: %s", shortID(resp.ID))
 	return resp.ID, nil
 }
 

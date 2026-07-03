@@ -20,15 +20,17 @@ const STATUS_STYLE: Record<string, string> = {
   Verifying: "text-zinc-400",
 };
 
-// Non-blocking floating status card for `docker pull` progress — unlike a
-// modal, the rest of the page (deleting/tagging other images) stays usable
-// while a pull runs. Parses Docker's newline-delimited JSON progress stream
-// into a per-layer list, same shape `docker pull` shows in a terminal.
+// Non-blocking floating status card for streaming Docker operations (pull,
+// load, and anything else that emits newline-delimited JSON progress) —
+// unlike a modal, the rest of the page stays usable while it runs. Parses
+// per-layer {id, status, progressDetail} events (docker pull) as well as
+// plain {stream: "..."} log lines (docker load) into one status list.
 export const PullStatusWidget: Component<{
   active: boolean;
   title: string;
   url: string;
   body?: unknown;
+  file?: File;
   onDone?: () => void;
   onClose: () => void;
 }> = (props) => {
@@ -56,6 +58,8 @@ export const PullStatusWidget: Component<{
       setLayers([...layerMap.values()]);
     } else if (evt.status) {
       setNotes((n) => [...n, evt.status]);
+    } else if (evt.stream) {
+      setNotes((n) => [...n, String(evt.stream).trim()]);
     } else if (evt.error) {
       setErr(evt.error);
     }
@@ -70,15 +74,16 @@ export const PullStatusWidget: Component<{
     const c = ctrl;
     void (async () => {
       try {
-        const res = await fetch(props.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${getToken()}`,
-          },
-          body: props.body ? JSON.stringify(props.body) : undefined,
-          signal: c.signal,
-        });
+        const headers: Record<string, string> = { Authorization: `Bearer ${getToken()}` };
+        let body: BodyInit | undefined;
+        if (props.file) {
+          headers["Content-Type"] = "application/x-tar";
+          body = props.file;
+        } else if (props.body) {
+          headers["Content-Type"] = "application/json";
+          body = JSON.stringify(props.body);
+        }
+        const res = await fetch(props.url, { method: "POST", headers, body, signal: c.signal });
         if (!res.ok) {
           setErr(await res.text());
           setDone(true);

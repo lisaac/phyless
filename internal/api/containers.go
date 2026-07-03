@@ -214,24 +214,29 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pull image if requested
+	// From here on, stream progress as NDJSON lines (same shape as image
+	// pull/load) so the frontend can show it in the same progress widget.
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Accel-Buffering", "no")
+
 	if body.PullPolicy == "always" {
+		dockercontainer.EmitStream(w, "正在拉取镜像 %s …", body.Image)
 		rc, err := s.docker.ImagePull(r.Context(), body.Image, image.PullOptions{})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "pull failed: "+err.Error())
+			dockercontainer.EmitError(w, fmt.Errorf("pull failed: %w", err))
 			return
 		}
-		io.Copy(io.Discard, rc)
+		io.Copy(w, rc) //nolint:errcheck
 		rc.Close()
 	}
 
 	resp, err := s.docker.ContainerCreate(r.Context(), cfg, hostCfg, &network.NetworkingConfig{}, nil, body.Name)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		dockercontainer.EmitError(w, err)
 		return
 	}
 	s.auditFromCtx(r, "container.create", body.Name, "ok")
-	writeJSON(w, http.StatusCreated, map[string]string{"id": resp.ID})
+	dockercontainer.EmitStream(w, "✓ 创建完成，容器 ID: %s", resp.ID[:12])
 }
 
 func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
@@ -349,7 +354,7 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("X-Accel-Buffering", "no")
 	newID, err := dockercontainer.Upgrade(r.Context(), s.docker, id, w)
 	if err != nil {
-		w.Write([]byte("\n✕ 错误: " + err.Error() + "\n")) //nolint:errcheck
+		dockercontainer.EmitError(w, err)
 		return
 	}
 	s.auditFromCtx(r, "container.upgrade", id, "ok")

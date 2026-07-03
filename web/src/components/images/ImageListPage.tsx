@@ -4,6 +4,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -31,6 +32,13 @@ const IBtn = (p: { title: string; onClick: () => void; loading?: boolean; danger
 );
 
 const imgLabel = (img: ImageSummary) => img.RepoTags?.[0] ?? img.Id.replace("sha256:", "").slice(0, 12);
+
+// "myrepo/app:v2" → "app" — a reasonable default --name for a fresh container
+function suggestName(ref: string): string {
+  const last = ref.split("/").pop() ?? ref;
+  const base = last.split(":")[0];
+  return base.replace(/[^a-zA-Z0-9_.-]/g, "-") || "container";
+}
 
 function fmtDate(unix: number): string {
   if (!unix) return "—";
@@ -107,14 +115,20 @@ export const ImageListPage: Component = () => {
   const store = createResourceStore<ImageSummary>("/api/images");
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
-  const [pullActive, setPullActive] = createSignal(false);
-  const [pullBody, setPullBody] = createSignal<{ image: string }>({ image: "" });
+  // Shared streaming-task state — drives PullStatusWidget for both pull (JSON
+  // body) and import (raw tar file body).
+  const [taskActive, setTaskActive] = createSignal(false);
+  const [taskTitle, setTaskTitle] = createSignal("");
+  const [taskUrl, setTaskUrl] = createSignal("");
+  const [taskBody, setTaskBody] = createSignal<unknown>(undefined);
+  const [taskFile, setTaskFile] = createSignal<File | undefined>(undefined);
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
   const [deletingId, setDeletingId] = createSignal("");
   const [confirmDelete, setConfirmDelete] = createSignal<ImageSummary | null>(null);
   const [forceDelete, setForceDelete] = createSignal<ImageSummary | null>(null);
   const [inspectFor, setInspectFor] = createSignal<ImageSummary | null>(null);
+  const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [inspectData] = createResource(inspectFor, (img) => get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`));
 
@@ -124,9 +138,20 @@ export const ImageListPage: Component = () => {
   const startPull = () => {
     const ref = pullRef().trim();
     if (!ref) return;
-    setPullBody({ image: ref });
+    setTaskTitle(`拉取 ${ref}`);
+    setTaskUrl("/api/images/pull");
+    setTaskBody({ image: ref });
+    setTaskFile(undefined);
     setShowPullInput(false);
-    setPullActive(true);
+    setTaskActive(true);
+  };
+
+  const startImport = (file: File) => {
+    setTaskTitle(`导入 ${file.name}`);
+    setTaskUrl("/api/images/load");
+    setTaskBody(undefined);
+    setTaskFile(file);
+    setTaskActive(true);
   };
 
   const remove = async (id: string, force = false) => {
@@ -168,14 +193,35 @@ export const ImageListPage: Component = () => {
       <div class="mb-3 flex items-center justify-between">
         <h1 class="text-xl font-semibold">镜像</h1>
         <Show when={hasRole("operator")}>
-          <button
-            class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
-            disabled={pullActive()}
-            title={pullActive() ? "已有拉取任务进行中" : undefined}
-            onClick={() => setShowPullInput(true)}
-          >
-            + 拉取镜像
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+              disabled={taskActive()}
+              title={taskActive() ? "已有任务进行中" : undefined}
+              onClick={() => setShowPullInput(true)}
+            >
+              + 拉取镜像
+            </button>
+            <label
+              class={`rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 ${
+                taskActive() ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+              }`}
+              title={taskActive() ? "已有任务进行中" : "导入 .tar 镜像文件"}
+            >
+              + 导入镜像
+              <input
+                type="file"
+                accept=".tar,.tar.gz,.tgz"
+                class="hidden"
+                disabled={taskActive()}
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = "";
+                  if (file) startImport(file);
+                }}
+              />
+            </label>
+          </div>
         </Show>
       </div>
 
@@ -219,7 +265,12 @@ export const ImageListPage: Component = () => {
                     {img.Id.replace("sha256:", "").slice(0, 12)}
                   </button>
                   {/* Inline actions */}
-                  <div class="mt-1 flex items-center gap-0.5">
+                  <div class="mt-0.5 flex items-center gap-0.5">
+                    <Show when={hasRole("operator")}>
+                      <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
+                        <Ico path="M12 5v14M5 12h14" />
+                      </IBtn>
+                    </Show>
                     <a
                       title="导出 tar"
                       target="_blank"
@@ -286,13 +337,14 @@ export const ImageListPage: Component = () => {
         </div>
       </Modal>
 
-      {/* Pull progress — non-blocking floating card, rest of the page stays usable */}
+      {/* Pull/import progress — non-blocking floating card, rest of the page stays usable */}
       <PullStatusWidget
-        active={pullActive()}
-        onClose={() => { setPullActive(false); setPullRef(""); }}
-        title={`拉取 ${pullBody().image}`}
-        url="/api/images/pull"
-        body={pullBody()}
+        active={taskActive()}
+        onClose={() => { setTaskActive(false); setPullRef(""); }}
+        title={taskTitle()}
+        url={taskUrl()}
+        body={taskBody()}
+        file={taskFile()}
         onDone={() => void store.refresh()}
       />
 
@@ -346,6 +398,18 @@ export const ImageListPage: Component = () => {
           </pre>
         </Show>
       </Modal>
+
+      {/* Create container from this image */}
+      <Show when={createFrom()}>
+        {(img) => (
+          <CreateContainerModal
+            open
+            onClose={() => setCreateFrom(null)}
+            onCreated={() => setCreateFrom(null)}
+            initialRun={`docker run -d --name ${suggestName(imgLabel(img()))} ${imgLabel(img())}`}
+          />
+        )}
+      </Show>
     </div>
   );
 };

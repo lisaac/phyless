@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useNavigate } from "@solidjs/router";
 import { get, post, del, put, getToken, setToken, imageInspectUrl } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
+import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ContainerLogs } from "./ContainerLogs";
 import { ContainerTerminal } from "./ContainerTerminal";
@@ -171,10 +172,7 @@ export const ContainerDetailPage: Component = () => {
   const [networks] = createResource(() => get<NetworkSummary[]>("/api/networks"));
   const [runCmd, setRunCmd] = createSignal<string>("");
   const [showCmdModal, setShowCmdModal] = createSignal(false);
-  const [showUpgrade, setShowUpgrade] = createSignal(false);
-  const [upgradeLog, setUpgradeLog] = createSignal("");
   const [upgrading, setUpgrading] = createSignal(false);
-  let upgradeLogEl: HTMLPreElement | undefined;
 
   const cfg  = () => inspect()?.Config ?? {};
   const host = () => inspect()?.HostConfig ?? {};
@@ -211,28 +209,7 @@ export const ContainerDetailPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  const doUpgrade = async () => {
-    setUpgradeLog(""); setUpgrading(true); setShowUpgrade(true);
-    try {
-      const resp = await fetch(`/api/containers/${id()}/upgrade`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      const reader = resp.body!.getReader();
-      const dec = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        setUpgradeLog((l) => l + dec.decode(value));
-        if (upgradeLogEl) upgradeLogEl.scrollTop = upgradeLogEl.scrollHeight;
-      }
-      await refetch();
-    } catch (e) {
-      setUpgradeLog((l) => l + "\nERROR: " + (e as Error).message);
-    } finally {
-      setUpgrading(false);
-    }
-  };
+  const doUpgrade = () => setUpgrading(true);
 
   // ── Inline resource save ──────────────────────────────────────────────────────
   const saveResources = async (patch: Record<string, unknown>) => {
@@ -718,19 +695,14 @@ export const ContainerDetailPage: Component = () => {
         />
       </Show>
 
-      {/* ── Upgrade modal ─────────────────────────────────────────────────── */}
-      <Show when={showUpgrade()}>
-        <Modal open title={`升级 — ${name()}`} onClose={() => { if (!upgrading()) setShowUpgrade(false); }}>
-          <pre
-            ref={upgradeLogEl}
-            class="max-h-[60vh] min-h-[8rem] overflow-auto rounded-md bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-300 whitespace-pre-wrap"
-          >{upgradeLog() || "准备中…"}</pre>
-          <div class="mt-3 flex items-center justify-between">
-            <span class="text-xs text-zinc-500">{upgrading() ? "升级中，请稍候…" : "已完成"}</span>
-            <Btn onClick={() => setShowUpgrade(false)} disabled={upgrading()}>关闭</Btn>
-          </div>
-        </Modal>
-      </Show>
+      {/* ── Upgrade progress — non-blocking floating card ────────────────── */}
+      <PullStatusWidget
+        active={upgrading()}
+        onClose={() => setUpgrading(false)}
+        title={`升级 — ${name()}`}
+        url={`/api/containers/${id()}/upgrade`}
+        onDone={() => void refetch()}
+      />
     </div>
   );
 };
