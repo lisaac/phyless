@@ -5,8 +5,8 @@ import { theme, toggleTheme } from "../../stores/theme";
 
 const mainLinks = [
   { to: "/containers", label: "容器" },
-  { to: "/images",     label: "镜像" },
   { to: "/compose",    label: "Compose" },
+  { to: "/images",     label: "镜像" },
   { to: "/networks",   label: "网络" },
   { to: "/volumes",    label: "存储卷" },
   { to: "/events",     label: "事件" },

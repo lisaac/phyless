@@ -3,7 +3,8 @@ import { getToken } from "./client";
 export function wsURL(path: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const token = getToken() ?? "";
-  return `${proto}//${location.host}${path}?token=${encodeURIComponent(token)}`;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${proto}//${location.host}${path}${sep}token=${encodeURIComponent(token)}`;
 }
 
 // connectWS opens a socket and wires handlers; returns the socket so callers can close it.

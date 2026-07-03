@@ -27,12 +27,30 @@ export const ComposeListPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (id: string) => {
-    try { await del(`/api/compose/${id}`); await store.refresh(); }
+    try { await del(`/api/compose?id=${encodeURIComponent(id)}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
 
   const columns: Column<ComposeProject>[] = [
-    { header: "名称", cell: (p) => <span class="font-medium">{p.name}</span> },
+    {
+      header: "名称",
+      cell: (p) => (
+        <span class="flex items-center gap-1.5">
+          <span class="font-medium">{p.name}</span>
+          <Show when={p.discovered}>
+            <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" title="根据容器上的 compose 标签自动发现，非手动注册">自动发现</span>
+          </Show>
+        </span>
+      ),
+    },
+    {
+      header: "状态",
+      cell: (p) => (
+        <span class={`text-xs ${(p.running ?? 0) > 0 ? "text-emerald-400" : "text-zinc-500"}`}>
+          {p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}
+        </span>
+      ),
+    },
     { header: "目录", cell: (p) => <span class="text-xs text-zinc-400">{p.base_dir}</span> },
     { header: "文件", cell: (p) => <span class="text-xs text-zinc-400">{p.compose_file}</span> },
     {
@@ -40,7 +58,7 @@ export const ComposeListPage: Component = () => {
       cell: (p) => (
         <div class="flex gap-1">
           <Button onClick={() => navigate(`/compose/${p.id}`)}>详情</Button>
-          <Show when={hasRole("operator")}>
+          <Show when={hasRole("operator") && !p.discovered}>
             <Button variant="danger" onClick={() => remove(p.id)}>删除</Button>
           </Show>
         </div>

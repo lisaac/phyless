@@ -19,13 +19,13 @@ export const ComposeDetailPage: Component = () => {
 
   // load yaml (file endpoint returns text/plain)
   createResource(id, async (i) => {
-    const text = await get<string>(`/api/compose/${i}/file`);
+    const text = await get<string>(`/api/compose/file?id=${encodeURIComponent(i)}`);
     setYaml(text);
     return text;
   });
 
   const save = async () => {
-    try { await put(`/api/compose/${id()}/file`, yaml()); toast.success("已保存"); }
+    try { await put(`/api/compose/file?id=${encodeURIComponent(id())}`, yaml()); toast.success("已保存"); }
     catch (e) { toast.error((e as Error).message); }
   };
 
@@ -33,7 +33,7 @@ export const ComposeDetailPage: Component = () => {
   const runCmd = async (verb: "up" | "down" | "pull" | "restart") => {
     try {
       setOutput("");
-      const res = await fetch(`/api/compose/${id()}/${verb}`, {
+      const res = await fetch(`/api/compose/${verb}?id=${encodeURIComponent(id())}`, {
         method: "POST", headers: { Authorization: `Bearer ${getToken()}` },
       });
       if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
@@ -52,7 +52,7 @@ export const ComposeDetailPage: Component = () => {
     logWs?.close();
     setOutput("");
     const dec = new TextDecoder();
-    logWs = connectWS(`/ws/compose/${id()}/logs`, {
+    logWs = connectWS(`/ws/compose/logs?id=${encodeURIComponent(id())}`, {
       onMessage: (ev) => {
         const chunk = typeof ev.data === "string" ? ev.data : dec.decode(ev.data as ArrayBuffer);
         setOutput((o) => (o + chunk).slice(-100_000));

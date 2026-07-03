@@ -100,7 +100,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 	r.Get("/ws/containers/{id}/terminal", wsAuth(jwtSecret, models.RoleOperator, ws.Terminal(dc)))
 	r.Get("/ws/containers/{id}/stats", wsAuth(jwtSecret, models.RoleViewer, ws.Stats(dc)))
 	r.Get("/ws/events", wsAuth(jwtSecret, models.RoleViewer, ws.Events(dc)))
-	r.Get("/ws/compose/{id}/logs", wsAuth(jwtSecret, models.RoleViewer, srv.handleComposeLogsWS))
+	r.Get("/ws/compose/logs", wsAuth(jwtSecret, models.RoleViewer, srv.handleComposeLogsWS))
 
 	// Download routes — browsers can't set Authorization headers on <a href>, use query token instead
 	r.Get("/api/containers/{id}/export", wsAuth(jwtSecret, models.RoleOperator, srv.handleContainerExport))
