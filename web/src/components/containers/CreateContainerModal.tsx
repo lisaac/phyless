@@ -616,7 +616,7 @@ export const CreateContainerModal: Component<{
       title={createTitle()}
       url="/api/containers"
       body={createBody()}
-      onDone={() => { setCreating(false); props.onCreated(); }}
+      onDone={() => props.onCreated()}
     />
     </>
   );
