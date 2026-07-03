@@ -1,5 +1,6 @@
 import { Component, createSignal, createEffect, onCleanup, Show, For } from "solid-js";
 import { getToken } from "../../api/client";
+import { useFloatingSlot } from "../../stores/floatingStack";
 
 interface LayerProgress { id: string; status: string; current?: number; total?: number; }
 
@@ -39,6 +40,7 @@ export const PullStatusWidget: Component<{
   const [done, setDone] = createSignal(false);
   const [err, setErr] = createSignal("");
   const [collapsed, setCollapsed] = createSignal(false);
+  const { setRef, offset } = useFloatingSlot(() => props.active);
   let ctrl: AbortController | undefined;
   let buf = "";
   const layerMap = new Map<string, LayerProgress>();
@@ -113,7 +115,11 @@ export const PullStatusWidget: Component<{
 
   return (
     <Show when={props.active}>
-      <div class="fixed bottom-4 left-4 z-50 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-zinc-700/50 bg-zinc-900 shadow-2xl">
+      <div
+        ref={setRef}
+        class="fixed left-4 z-50 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-zinc-700/50 bg-zinc-900 shadow-2xl transition-[bottom] duration-200"
+        style={{ bottom: `${offset()}px` }}
+      >
         <div class="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
           <div class="flex min-w-0 items-center gap-2">
             <span class={`h-2 w-2 shrink-0 rounded-full ${
