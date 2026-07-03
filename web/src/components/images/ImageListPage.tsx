@@ -3,7 +3,7 @@ import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { StreamingLogModal } from "../shared/StreamingLogModal";
+import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -42,7 +42,13 @@ function fmtDate(unix: number): string {
 // Editable + deletable tag chip — click to rename inline (like the container
 // detail page's Memory field), × to untag. Renaming = tag the new ref, then
 // untag the old one (Docker has no atomic rename).
-const TagChip: Component<{ tag: string; imageId: string; onChanged: () => void }> = (p) => {
+// Untagging the LAST tag is equivalent to deleting the image (Docker removes
+// the underlying image once no reference points to it), so that case routes
+// through the same confirm dialog as the image delete button instead of
+// untagging immediately.
+const TagChip: Component<{
+  tag: string; img: ImageSummary; onChanged: () => void; onConfirmLastTagDelete: (img: ImageSummary) => void;
+}> = (p) => {
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal(p.tag);
 
@@ -51,7 +57,7 @@ const TagChip: Component<{ tag: string; imageId: string; onChanged: () => void }
     const next = draft().trim();
     if (!next || next === p.tag) return;
     try {
-      await post(`/api/images/tag?id=${encodeURIComponent(p.imageId)}`, { tag: next });
+      await post(`/api/images/tag?id=${encodeURIComponent(p.img.Id)}`, { tag: next });
       await del(`/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
       toast.success("已重命名标签");
       p.onChanged();
@@ -60,6 +66,10 @@ const TagChip: Component<{ tag: string; imageId: string; onChanged: () => void }
 
   const untag = async (e: MouseEvent) => {
     e.stopPropagation();
+    if ((p.img.RepoTags?.length ?? 0) <= 1) {
+      p.onConfirmLastTagDelete(p.img);
+      return;
+    }
     try {
       await del(`/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
       p.onChanged();
@@ -97,7 +107,7 @@ export const ImageListPage: Component = () => {
   const store = createResourceStore<ImageSummary>("/api/images");
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
-  const [showPullLog, setShowPullLog] = createSignal(false);
+  const [pullActive, setPullActive] = createSignal(false);
   const [pullBody, setPullBody] = createSignal<{ image: string }>({ image: "" });
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
@@ -116,7 +126,7 @@ export const ImageListPage: Component = () => {
     if (!ref) return;
     setPullBody({ image: ref });
     setShowPullInput(false);
-    setShowPullLog(true);
+    setPullActive(true);
   };
 
   const remove = async (id: string, force = false) => {
@@ -159,7 +169,9 @@ export const ImageListPage: Component = () => {
         <h1 class="text-xl font-semibold">镜像</h1>
         <Show when={hasRole("operator")}>
           <button
-            class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
+            class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+            disabled={pullActive()}
+            title={pullActive() ? "已有拉取任务进行中" : undefined}
             onClick={() => setShowPullInput(true)}
           >
             + 拉取镜像
@@ -188,7 +200,12 @@ export const ImageListPage: Component = () => {
                     <For each={img.RepoTags}>
                       {(tag) => (
                         <div>
-                          <TagChip tag={tag} imageId={img.Id} onChanged={() => void store.refresh()} />
+                          <TagChip
+                            tag={tag}
+                            img={img}
+                            onChanged={() => void store.refresh()}
+                            onConfirmLastTagDelete={setConfirmDelete}
+                          />
                         </div>
                       )}
                     </For>
@@ -269,10 +286,10 @@ export const ImageListPage: Component = () => {
         </div>
       </Modal>
 
-      {/* Pull streaming log */}
-      <StreamingLogModal
-        open={showPullLog()}
-        onClose={() => { setShowPullLog(false); setPullRef(""); }}
+      {/* Pull progress — non-blocking floating card, rest of the page stays usable */}
+      <PullStatusWidget
+        active={pullActive()}
+        onClose={() => { setPullActive(false); setPullRef(""); }}
         title={`拉取 ${pullBody().image}`}
         url="/api/images/pull"
         body={pullBody()}
