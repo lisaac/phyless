@@ -1,13 +1,12 @@
-import { Component, createSignal, onMount, onCleanup, Show, For, JSX } from "solid-js";
+import { Component, createSignal, createResource, onMount, onCleanup, Show, For, JSX } from "solid-js";
 import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { StreamingLogModal } from "../shared/StreamingLogModal";
-import { del, getToken, post } from "../../api/client";
+import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
-import { fmtRelTime } from "../containers/ContainerListPage";
 import type { ImageSummary } from "../../types";
 
 // Tiny icon SVG
@@ -33,6 +32,67 @@ const IBtn = (p: { title: string; onClick: () => void; loading?: boolean; danger
 
 const imgLabel = (img: ImageSummary) => img.RepoTags?.[0] ?? img.Id.replace("sha256:", "").slice(0, 12);
 
+function fmtDate(unix: number): string {
+  if (!unix) return "—";
+  return new Date(unix * 1000).toLocaleString("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+// Editable + deletable tag chip — click to rename inline (like the container
+// detail page's Memory field), × to untag. Renaming = tag the new ref, then
+// untag the old one (Docker has no atomic rename).
+const TagChip: Component<{ tag: string; imageId: string; onChanged: () => void }> = (p) => {
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal(p.tag);
+
+  const rename = async () => {
+    setEditing(false);
+    const next = draft().trim();
+    if (!next || next === p.tag) return;
+    try {
+      await post(`/api/images/tag?id=${encodeURIComponent(p.imageId)}`, { tag: next });
+      await del(`/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
+      toast.success("已重命名标签");
+      p.onChanged();
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  const untag = async (e: MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await del(`/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
+      p.onChanged();
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  return (
+    <Show when={editing()} fallback={
+      <span class="inline-flex items-baseline gap-1">
+        <span
+          class="cursor-text font-mono text-xs text-zinc-100 border-b border-dashed border-zinc-600 hover:border-zinc-400 transition-colors"
+          title="点击编辑，回车保存"
+          onClick={() => { setDraft(p.tag); setEditing(true); }}
+        >{p.tag}</span>
+        <button
+          class="text-[10px] leading-none text-zinc-600 transition-colors hover:text-red-400"
+          title="删除标签"
+          onClick={untag}
+        >×</button>
+      </span>
+    }>
+      <input
+        class="w-full max-w-xs border border-indigo-500/60 bg-zinc-900 px-1.5 py-0.5 font-mono text-xs text-zinc-100 outline-none"
+        value={draft()}
+        onInput={(e) => setDraft(e.currentTarget.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") void rename(); if (e.key === "Escape") setEditing(false); }}
+        onBlur={() => setEditing(false)}
+        ref={(el) => setTimeout(() => el?.select(), 0)}
+      />
+    </Show>
+  );
+};
+
 export const ImageListPage: Component = () => {
   const store = createResourceStore<ImageSummary>("/api/images");
   const [pullRef, setPullRef] = createSignal("");
@@ -44,6 +104,9 @@ export const ImageListPage: Component = () => {
   const [deletingId, setDeletingId] = createSignal("");
   const [confirmDelete, setConfirmDelete] = createSignal<ImageSummary | null>(null);
   const [forceDelete, setForceDelete] = createSignal<ImageSummary | null>(null);
+  const [inspectFor, setInspectFor] = createSignal<ImageSummary | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [inspectData] = createResource(inspectFor, (img) => get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`));
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
@@ -111,8 +174,8 @@ export const ImageListPage: Component = () => {
           <tr>
             <th class="px-2 py-2">标签</th>
             <th class="px-2 py-2">大小</th>
-            <th class="px-2 py-2">创建时间</th>
             <th class="px-2 py-2">使用容器</th>
+            <th class="px-2 py-2">创建时间</th>
           </tr>
         </thead>
         <tbody>
@@ -120,16 +183,26 @@ export const ImageListPage: Component = () => {
             {(img) => (
               <tr class="border-b border-zinc-800/50 hover:bg-white/[0.03] transition-colors">
                 <td class="px-2 py-2">
-                  {/* Tags */}
-                  <For each={img.RepoTags ?? ["<none>"]}>
-                    {(tag) => <div class="font-mono text-xs">{tag}</div>}
-                  </For>
-                  {/* ID */}
-                  <div class="mt-0.5 font-mono text-[11px] text-zinc-400">
+                  {/* Tags — editable + deletable chips */}
+                  <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;</div>}>
+                    <For each={img.RepoTags}>
+                      {(tag) => (
+                        <div>
+                          <TagChip tag={tag} imageId={img.Id} onChanged={() => void store.refresh()} />
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                  {/* ID — click to inspect */}
+                  <button
+                    class="mt-0.5 block font-mono text-[11px] text-zinc-400 transition-colors hover:text-indigo-400"
+                    title="查看 inspect"
+                    onClick={() => setInspectFor(img)}
+                  >
                     {img.Id.replace("sha256:", "").slice(0, 12)}
-                  </div>
+                  </button>
                   {/* Inline actions */}
-                  <div class="mt-1.5 flex items-center gap-0.5">
+                  <div class="mt-1 flex items-center gap-0.5">
                     <a
                       title="导出 tar"
                       target="_blank"
@@ -140,7 +213,7 @@ export const ImageListPage: Component = () => {
                       <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
                     </a>
                     <Show when={hasRole("operator")}>
-                      <IBtn title="打标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
+                      <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
                         <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
                       </IBtn>
                       <IBtn
@@ -155,7 +228,6 @@ export const ImageListPage: Component = () => {
                   </div>
                 </td>
                 <td class="px-2 py-2 align-top text-xs text-zinc-400">{fmtSize(img.Size)}</td>
-                <td class="px-2 py-2 align-top text-xs text-zinc-400">{fmtRelTime(img.Created)}</td>
                 <td class="px-2 py-2 align-top text-xs">
                   <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
                     <div class="flex flex-col gap-0.5">
@@ -169,6 +241,7 @@ export const ImageListPage: Component = () => {
                     </div>
                   </Show>
                 </td>
+                <td class="px-2 py-2 align-top text-xs text-zinc-400">{fmtDate(img.Created)}</td>
               </tr>
             )}
           </For>
@@ -246,6 +319,15 @@ export const ImageListPage: Component = () => {
           <Button onClick={() => setForceDelete(null)}>取消</Button>
           <Button variant="danger" onClick={() => void remove(forceDelete()!.Id, true)}>强制删除</Button>
         </div>
+      </Modal>
+
+      {/* Inspect modal */}
+      <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor() ? imgLabel(inspectFor()!) : ""}`} wide>
+        <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
+            {JSON.stringify(inspectData(), null, 2)}
+          </pre>
+        </Show>
       </Modal>
     </div>
   );

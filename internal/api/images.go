@@ -132,10 +132,11 @@ func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleImageDeleteTag removes a single repo:tag reference (untag). The ref
+// itself (e.g. "nginx:latest") is the complete reference Docker needs — it is
+// unrelated to the image's content digest/ID.
 func (s *Server) handleImageDeleteTag(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	tag := r.URL.Query().Get("tag")
-	ref := id + ":" + tag
+	ref := r.URL.Query().Get("ref")
 	_, err := s.docker.ImageRemove(r.Context(), ref, image.RemoveOptions{})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

@@ -134,13 +134,13 @@ export const StreamingLogModal: Component<{
           <div class="flex flex-col gap-1">
             <For each={layers()}>
               {(l) => (
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 py-0.5">
                   <span class="w-20 shrink-0 text-zinc-500">{l.id}</span>
-                  <span class={`w-32 shrink-0 ${STATUS_STYLE[l.status] ?? "text-zinc-400"}`}>{l.status}</span>
+                  <span class={`w-28 shrink-0 ${STATUS_STYLE[l.status] ?? "text-zinc-400"}`}>{l.status}</span>
                   <Show when={l.total}>
-                    <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
+                    <div class="h-2.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
                       <div
-                        class="h-full rounded-full bg-indigo-500 transition-all duration-200"
+                        class="h-full rounded-full bg-indigo-600 transition-all duration-200"
                         style={{ width: `${Math.min(100, ((l.current ?? 0) / (l.total ?? 1)) * 100)}%` }}
                       />
                     </div>
