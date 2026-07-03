@@ -56,6 +56,22 @@ export interface ComposeProject {
   total?: number;
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  color?: string;
+  count?: number; // present on list responses
+}
+
+export interface TaggedResource {
+  resource_type: "container" | "image";
+  resource_id: string;
+  name: string;
+  state?: string;
+  repo_tags?: string[];
+  missing: boolean;
+}
+
 export interface Registry {
   id: string;
   url: string;

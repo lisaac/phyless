@@ -4,6 +4,7 @@ import { currentUser, loadSession } from "./stores/auth";
 import { Layout } from "./components/shared/Layout";
 import { ToastHost } from "./components/shared/Toast";
 import { LoginPage } from "./components/auth/LoginPage";
+import { TagsPage } from "./components/tags/TagsPage";
 import { ContainerListPage } from "./components/containers/ContainerListPage";
 import { ContainerDetailPage } from "./components/containers/ContainerDetailPage";
 import { ImageListPage } from "./components/images/ImageListPage";
@@ -44,6 +45,7 @@ export const App: Component = () => {
         <Route path="/login" component={LoginPage} />
         <Route path="/" component={Guard}>
           <Route path="/" component={() => <Navigate href="/containers" />} />
+          <Route path="/tags" component={TagsPage} />
           <Route path="/containers" component={ContainerListPage} />
           <Route path="/containers/:id" component={ContainerDetailPage} />
           <Route path="/images" component={ImageListPage} />

@@ -5,6 +5,7 @@ import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
+import { TagPicker } from "../tags/TagPicker";
 import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -131,6 +132,7 @@ export const ImageListPage: Component = () => {
   const [forceDelete, setForceDelete] = createSignal<ImageSummary | null>(null);
   const [inspectFor, setInspectFor] = createSignal<ImageSummary | null>(null);
   const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
+  const [tagTarget, setTagTarget] = createSignal<ImageSummary | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [inspectData] = createResource(inspectFor, (img) => get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`));
 
@@ -284,9 +286,10 @@ export const ImageListPage: Component = () => {
                         <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
                       </a>
                       <Show when={hasRole("operator")}>
-                        <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
+                        <IBtn title="新增 Docker 标签 (repo:tag)" onClick={() => { setTagFor(img); setTagVal(""); }}>
                           <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
                         </IBtn>
+                        <IBtn title="分类标签" onClick={() => setTagTarget(img)}>#</IBtn>
                         <IBtn
                           title="删除"
                           danger
@@ -411,6 +414,15 @@ export const ImageListPage: Component = () => {
         onClose={() => setCreateFrom(null)}
         onCreated={() => setCreateFrom(null)}
         initialRun={createFrom() ? `docker run -d --name ${suggestName(imgLabel(createFrom()!))} ${imgLabel(createFrom()!)}` : ""}
+      />
+
+      {/* Tag picker */}
+      <TagPicker
+        open={!!tagTarget()}
+        onClose={() => setTagTarget(null)}
+        resourceType="image"
+        resourceId={tagTarget()?.Id ?? ""}
+        resourceName={tagTarget() ? imgLabel(tagTarget()!) : ""}
       />
     </div>
   );

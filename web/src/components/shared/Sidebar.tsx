@@ -4,6 +4,7 @@ import { currentUser, doLogout, hasRole } from "../../stores/auth";
 import { theme, toggleTheme } from "../../stores/theme";
 
 const mainLinks = [
+  { to: "/tags",       label: "标签" },
   { to: "/containers", label: "容器" },
   { to: "/compose",    label: "Compose" },
   { to: "/images",     label: "镜像" },
