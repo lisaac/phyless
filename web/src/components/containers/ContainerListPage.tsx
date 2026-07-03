@@ -11,7 +11,7 @@ import { BulkRunModal } from "./BulkRunModal";
 import type { ContainerSummary } from "../../types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-function fmtRelTime(unix: number): string {
+export function fmtRelTime(unix: number): string {
   const diff = Date.now() - unix * 1000;
   const m = Math.floor(diff / 60000);
   const h = Math.floor(diff / 3600000);
