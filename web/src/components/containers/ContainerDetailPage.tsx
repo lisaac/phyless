@@ -6,6 +6,7 @@ import { get, post, del, put, getToken, setToken, imageInspectUrl } from "../../
 import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { UploadStatusWidget } from "../shared/UploadStatusWidget";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ContainerLogs } from "./ContainerLogs";
 import { ContainerTerminal } from "./ContainerTerminal";
@@ -173,6 +174,7 @@ export const ContainerDetailPage: Component = () => {
   const [runCmd, setRunCmd] = createSignal<string>("");
   const [showCmdModal, setShowCmdModal] = createSignal(false);
   const [upgrading, setUpgrading] = createSignal(false);
+  const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
 
   const cfg  = () => inspect()?.Config ?? {};
   const host = () => inspect()?.HostConfig ?? {};
@@ -248,13 +250,38 @@ export const ContainerDetailPage: Component = () => {
     get<FileEntry[]>(`/api/containers/${id()}/files?path=${encodeURIComponent(sub)}`);
   const downloadURL = (sub: string) =>
     `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`;
-  const uploadFile = async (sub: string, file: File) => {
-    const res = await fetch(`/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`, {
-      method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: file,
-    });
-    if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
-    if (!res.ok) throw new Error(await res.text());
-  };
+  // fetch() exposes no upload-progress events, so use XHR to drive the widget.
+  const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
+    setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        setToken(null);
+        window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
+        reject(new Error("unauthorized"));
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setUploadState((s) => ({ ...s, progress: 100, done: true }));
+        resolve();
+      } else {
+        const msg = xhr.responseText || `上传失败 (${xhr.status})`;
+        setUploadState((s) => ({ ...s, done: true, error: msg }));
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => {
+      setUploadState((s) => ({ ...s, done: true, error: "网络错误" }));
+      reject(new Error("network error"));
+    };
+    xhr.send(file);
+  });
   const deleteFile = async (path: string) => {
     await del(`/api/containers/${id()}/files?path=${encodeURIComponent(path)}`);
   };
@@ -702,6 +729,16 @@ export const ContainerDetailPage: Component = () => {
         title={`升级 — ${name()}`}
         url={`/api/containers/${id()}/upgrade`}
         onDone={() => void refetch()}
+      />
+
+      {/* ── Upload progress — non-blocking floating card ─────────────────── */}
+      <UploadStatusWidget
+        active={uploadState().active}
+        filename={uploadState().filename}
+        progress={uploadState().progress}
+        done={uploadState().done}
+        error={uploadState().error}
+        onClose={() => setUploadState((s) => ({ ...s, active: false }))}
       />
     </div>
   );

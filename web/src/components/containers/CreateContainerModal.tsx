@@ -66,9 +66,18 @@ export const CreateContainerModal: Component<{
   const [selectedTplId, setSelectedTplId] = createSignal("");
   const [selectedContainerId, setSelectedContainerId] = createSignal("");
 
-  // Reset all state each time the modal opens fresh (not when used as a view-only cmd viewer)
+  // Sync state whenever the modal opens (or initialRun changes while already
+  // open — e.g. clicking Run/Compose on a different container). The modal
+  // stays mounted across opens now (so PullStatusWidget survives past
+  // onClose), so this can no longer rely on remount-time signal init.
   createEffect(() => {
-    if (!props.open || props.initialRun) return;
+    if (!props.open) return;
+    if (props.initialRun) {
+      setRunCmd(props.initialRun);
+      setLiveRun(props.initialRun);
+      setTab("cmd");
+      return;
+    }
     setForm(emptyForm());
     setRunCmd(DEFAULT_RUN);
     setLiveRun(DEFAULT_RUN);
