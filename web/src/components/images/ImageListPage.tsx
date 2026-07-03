@@ -96,7 +96,7 @@ export const ImageListPage: Component = () => {
         <h1 class="text-xl font-semibold">镜像</h1>
         <Show when={hasRole("operator")}>
           <button
-            class="border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100"
+            class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
             onClick={() => setShowPullInput(true)}
           >
             + 拉取镜像
@@ -111,6 +111,7 @@ export const ImageListPage: Component = () => {
           <tr>
             <th class="px-2 py-2">标签</th>
             <th class="px-2 py-2">大小</th>
+            <th class="px-2 py-2">创建时间</th>
             <th class="px-2 py-2">使用容器</th>
           </tr>
         </thead>
@@ -127,8 +128,6 @@ export const ImageListPage: Component = () => {
                   <div class="mt-0.5 font-mono text-[11px] text-zinc-400">
                     {img.Id.replace("sha256:", "").slice(0, 12)}
                   </div>
-                  {/* Created time */}
-                  <div class="mt-0.5 text-[11px] text-zinc-400">创建 {fmtRelTime(img.Created)}</div>
                   {/* Inline actions */}
                   <div class="mt-1.5 flex items-center gap-0.5">
                     <a
@@ -156,6 +155,7 @@ export const ImageListPage: Component = () => {
                   </div>
                 </td>
                 <td class="px-2 py-2 align-top text-xs text-zinc-400">{fmtSize(img.Size)}</td>
+                <td class="px-2 py-2 align-top text-xs text-zinc-400">{fmtRelTime(img.Created)}</td>
                 <td class="px-2 py-2 align-top text-xs">
                   <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
                     <div class="flex flex-col gap-0.5">
