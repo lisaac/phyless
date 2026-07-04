@@ -7,7 +7,7 @@ import { post, del } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions } from "../containers/containerActions";
-import { ContainerRow, ContainerRowHeader } from "../containers/ContainerRow";
+import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
@@ -93,10 +93,9 @@ export const ComposeListPage: Component = () => {
                   </div>
                 </div>
                 <Show when={isOpen()}>
-                  <div class="border-t border-zinc-800 bg-zinc-950/40">
+                  <div class="border-t border-zinc-800">
                     <Show when={cs().length > 0} fallback={<div class="px-8 py-3 text-xs text-zinc-500">无容器</div>}>
-                      <ContainerRowHeader />
-                      <div class="divide-y divide-zinc-800/60">
+                      <div class="divide-y divide-zinc-800">
                         <For each={cs()}>
                           {(c) => (
                             <ContainerRow
