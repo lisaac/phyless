@@ -210,7 +210,9 @@ export const ContainerListPage: Component = () => {
           <button title="强制关闭 (SIGKILL)" class="px-2 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 transition-colors"
             disabled={n() === 0} onClick={() => void bulk("kill")}>✕ 强制关闭</button>
           <button title="删除选中容器" class="px-2 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-            disabled={n() === 0} onClick={() => void bulk("delete")}>⊖ 删除</button>
+            disabled={n() === 0}
+            onClick={() => { if (confirm(`删除选中的 ${n()} 个容器？`)) void bulk("delete"); }}
+          >⊖ 删除</button>
         </Show>
 
         <span class="text-zinc-400">│</span>
@@ -325,7 +327,7 @@ export const ContainerListPage: Component = () => {
 
                           <Show when={!running()}>
                             <span class="mx-0.5 text-zinc-400">│</span>
-                            <IBtn title="删除容器" danger loading={isP(c.Id, "delete")} onClick={() => void act(c.Id, "delete")}>⊖</IBtn>
+                            <IBtn title="删除容器" danger loading={isP(c.Id, "delete")} onClick={() => { if (confirm(`删除容器 ${name || c.Id.slice(0, 8)}？`)) void act(c.Id, "delete"); }}>⊖</IBtn>
                           </Show>
                         </div>
                       </Show>
