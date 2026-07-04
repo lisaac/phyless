@@ -9,6 +9,21 @@ import type { ContainerSummary } from "../../types";
 // Copies a file/dir from one container's filesystem straight into another's,
 // via the backend's copy-to endpoint (CopyFromContainer piped into
 // CopyToContainer — the same two calls `docker cp` makes between containers).
+//
+// Docker's CopyToContainer takes a destination *directory* to extract the tar
+// entry into (the entry itself already carries the file's own name) — it is
+// not a full destination file path. Defaulting the target field to the
+// source's full path (e.g. "/install_base.sh") makes Docker try to extract
+// into a directory of that name, which doesn't exist, and fails with the
+// same "could not find the file" wording used for a missing source — easy to
+// misread as the wrong container being targeted. Default to the source's
+// *directory* instead.
+function dirOf(p: string): string {
+  const idx = p.lastIndexOf("/");
+  if (idx <= 0) return "/";
+  return p.slice(0, idx);
+}
+
 export const CopyToContainerModal: Component<{
   source: { containerId: string; path: string } | null;
   onClose: () => void;
@@ -21,7 +36,7 @@ export const CopyToContainerModal: Component<{
   createEffect(() => {
     if (props.source) {
       setTargetId("");
-      setTargetPath(props.source.path);
+      setTargetPath(dirOf(props.source.path));
     }
   });
 
@@ -54,12 +69,12 @@ export const CopyToContainerModal: Component<{
             </select>
           </label>
           <label class="flex flex-col gap-1">
-            <span class="text-xs text-zinc-400">目标路径</span>
+            <span class="text-xs text-zinc-400">目标目录（不含文件名，将保留原文件名写入此目录）</span>
             <input
               class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500"
               value={targetPath()}
               onInput={(e) => setTargetPath(e.currentTarget.value)}
-              placeholder="/path/in/target"
+              placeholder="/path/to/dir"
             />
           </label>
         </div>

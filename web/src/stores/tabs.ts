@@ -3,21 +3,13 @@ import { mainLinks, adminLinks } from "../components/shared/Sidebar";
 
 export interface PageTab { path: string; label: string; }
 
-const STORAGE_KEY = "phyless_tabs";
-const stored = (() => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as PageTab[]) : [];
-  } catch {
-    return [];
-  }
-})();
-
-export const [tabs, setTabs] = createSignal<PageTab[]>(stored);
-
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs()));
-}
+// In-memory only, not persisted to localStorage — this is a per-origin store
+// shared by ALL same-origin browser tabs/windows via localStorage last-write-
+// wins, so having the app open in more than one real browser tab (easy to do
+// once there's an in-app tab strip to click "open in new tab" from) corrupted
+// each other's tab lists on reload. Session-scoped (resets on full reload) is
+// simpler and avoids that entirely.
+export const [tabs, setTabs] = createSignal<PageTab[]>([]);
 
 const STATIC_LABELS: Record<string, string> = Object.fromEntries(
   [...mainLinks, ...adminLinks].map((l) => [l.to, l.label]),
@@ -40,12 +32,10 @@ export function labelFor(path: string): string {
 export function openOrActivate(path: string, label: string) {
   if (tabs().some((t) => t.path === path)) return;
   setTabs((t) => [...t, { path, label }]);
-  persist();
 }
 
 export function setTabLabel(path: string, label: string) {
   setTabs((t) => t.map((x) => (x.path === path ? { ...x, label } : x)));
-  persist();
 }
 
 // Returns the path to navigate to after closing (a neighboring tab, or
@@ -55,7 +45,6 @@ export function closeTab(path: string): string {
   const idx = list.findIndex((t) => t.path === path);
   const next = list.filter((t) => t.path !== path);
   setTabs(next);
-  persist();
   if (next.length === 0) return "/containers";
   return next[Math.min(idx, next.length - 1)].path;
 }
