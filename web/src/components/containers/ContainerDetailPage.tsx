@@ -10,12 +10,13 @@ import { UploadStatusWidget } from "../shared/UploadStatusWidget";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { CopyToContainerModal } from "./CopyToContainerModal";
-import { ContainerLogs } from "./ContainerLogs";
+import { LogsView } from "../shared/LogsView";
 import { ContainerStats } from "./ContainerStats";
 import { FileBrowser } from "../shared/FileBrowser";
 import { inspectToRunCmd } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
 import { setTabLabel, removeTab } from "../../stores/tabs";
+import { KV, Sec } from "../shared/KV";
 import type { FileEntry, NetworkSummary } from "../../types";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -45,14 +46,6 @@ const TABS: { key: Tab; label: string; requiresRunning?: true }[] = [
   { key: "logs",    label: "日志"   },
   { key: "inspect", label: "Inspect" },
 ];
-
-// ── Shared field components ────────────────────────────────────────────────────
-const KV: Component<{ k: string; children: any }> = (p) => (
-  <div class="flex min-h-[1.75rem] items-start gap-3 py-0.5">
-    <dt class="w-28 shrink-0 pt-px text-[10px] uppercase tracking-widest text-zinc-400">{p.k}</dt>
-    <dd class="min-w-0 flex-1 font-mono text-xs text-zinc-200">{p.children}</dd>
-  </div>
-);
 
 // Editable text field: shows value, click → input, enter/blur → onSave
 const EditableKV: Component<{
@@ -103,14 +96,6 @@ const EditableKV: Component<{
     </div>
   );
 };
-
-// ── Section heading — aligns with KV dt column ────────────────────────────────
-const Sec: Component<{ children: string; noLine?: boolean }> = (p) => (
-  <div class="flex items-center gap-3 pt-3 pb-0.5 first:pt-0">
-    <span class="w-28 shrink-0 text-[10px] font-semibold uppercase tracking-widest text-zinc-600">{p.children}</span>
-    <Show when={!p.noLine}><span class="flex-1 border-t border-zinc-800" /></Show>
-  </div>
-);
 
 // ── Action button ─────────────────────────────────────────────────────────────
 const Btn: Component<{
@@ -738,7 +723,7 @@ export const ContainerDetailPage: Component = () => {
 
       {/* ── Tab: 日志 ──────────────────────────────────────────────────────── */}
       <Show when={tab() === "logs"}>
-        <ContainerLogs id={id()} running={running()} />
+        <LogsView wsUrl={`/ws/containers/${id()}/logs`} startPaused={!running()} />
       </Show>
 
       {/* ── Tab: Inspect ──────────────────────────────────────────────────── */}

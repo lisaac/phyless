@@ -36,8 +36,7 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Post("/api/compose/down", s.handleComposeDown)
 	r.Post("/api/compose/pull", s.handleComposePull)
 	r.Post("/api/compose/restart", s.handleComposeRestart)
-	r.Get("/api/compose/file", s.handleGetComposeFile)
-	r.Put("/api/compose/file", s.handlePutComposeFile)
+	r.Get("/api/compose/config", s.handleComposeResolvedConfig)
 	r.Get("/api/compose/files", s.handleComposeListFiles)
 	r.Get("/api/compose/files/content", s.handleComposeGetFileContent)
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
@@ -253,38 +252,30 @@ func (s *Server) runComposeCmd(w http.ResponseWriter, r *http.Request, args ...s
 	dockercontainer.EmitStream(w, "✓ 完成")
 }
 
-func (s *Server) handleGetComposeFile(w http.ResponseWriter, r *http.Request) {
+// handleComposeResolvedConfig runs `docker compose config`, which merges every
+// -f/override file, resolves `extends`, and substitutes environment variables
+// into a single flat YAML — the same effective config `up` would actually
+// deploy. Both the list and detail pages derive their "docker run" preview
+// from this instead of the raw compose file, since a naive parse of the raw
+// file can't account for env interpolation, extends, or multi-file overrides.
+func (s *Server) handleComposeResolvedConfig(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	data, err := os.ReadFile(p.ComposeFile)
+	cmd := exec.CommandContext(r.Context(), "docker", "compose", "-f", p.ComposeFile, "config")
+	cmd.Dir = p.BaseDir
+	if p.EnvFile != "" {
+		cmd.Env = append(os.Environ(), "COMPOSE_ENV_FILES="+p.EnvFile)
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write(data) //nolint:errcheck
-}
-
-func (s *Server) handlePutComposeFile(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10MB limit
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := os.WriteFile(p.ComposeFile, data, 0644); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.auditFromCtx(r, "compose.file.update", p.Name, "ok")
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(out) //nolint:errcheck
 }
 
 // handleComposeListFiles/handleComposeGetFileContent/handleComposePutFileContent
@@ -310,6 +301,13 @@ func (s *Server) handleComposeListFiles(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// maxComposeFileContent caps how much of a file the editor ever loads —
+// without it, opening something huge (a log file dropped in the project
+// directory, say) would try to pull the whole thing into the browser. The
+// frontend refuses to save back when X-Truncated is set, since writing a
+// truncated buffer over the real file would destroy the rest of it.
+const maxComposeFileContent = 2 << 20 // 2MB
+
 func (s *Server) handleComposeGetFileContent(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
 	if !ok {
@@ -321,10 +319,24 @@ func (s *Server) handleComposeGetFileContent(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	data, err := os.ReadFile(fullPath)
+	f, err := os.Open(fullPath)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxComposeFileContent))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if info.Size() > maxComposeFileContent {
+		w.Header().Set("X-Truncated", "true")
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data) //nolint:errcheck

@@ -1,4 +1,8 @@
-import { Component, JSX } from "solid-js";
+import { Component, JSX, createResource, For, Show } from "solid-js";
+import { get } from "../../api/client";
+import { composeToRuns } from "../../api/convert";
+import { Modal } from "../shared/Modal";
+import { Button } from "../shared/Button";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 export const LABEL_PROJECT = "com.docker.compose.project";
@@ -47,3 +51,32 @@ export const ActBtn: Component<{ title: string; onClick: () => void; danger?: bo
     }`}
   >{p.children}</button>
 );
+
+// "Run/Compose" modal shared by the list and detail page — derives docker run
+// commands from `docker compose config`'s fully-resolved output (env vars
+// substituted, extends/overrides merged) instead of parsing the raw compose
+// file, so it works the same whether or not the project is deployed and
+// doesn't choke on interpolation the raw file alone can't resolve.
+export const ComposeRunModal: Component<{ project: { id: string; name: string } | null; onClose: () => void }> = (props) => {
+  const [runs] = createResource(() => props.project?.id, async (id) => {
+    const resolved = await get<string>(`/api/compose/config?id=${encodeURIComponent(id)}`);
+    try { return composeToRuns(resolved); } catch { return []; }
+  });
+
+  return (
+    <Modal open={!!props.project} onClose={props.onClose} title={`docker run 集合 — ${props.project?.name ?? ""}`} wide>
+      <Show when={!runs.loading} fallback={<p class="text-sm text-zinc-400">加载中…</p>}>
+        <div class="space-y-2">
+          <For each={runs() ?? []} fallback={<p class="text-sm text-zinc-400">无法转换或无服务</p>}>
+            {(r) => (
+              <div class="flex items-center gap-2">
+                <code class="flex-1 overflow-auto rounded bg-zinc-950 p-2 text-xs">{r}</code>
+                <Button onClick={() => navigator.clipboard.writeText(r)}>复制</Button>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </Modal>
+  );
+};

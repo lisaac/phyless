@@ -11,8 +11,7 @@ import { createContainerActions, fmtContainerStatus, fmtRelTime } from "../conta
 import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
-import { BulkRunModal } from "../containers/BulkRunModal";
-import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb, VERB_LABEL } from "./composeShared";
+import { containersOf, representative, ActBtn, ComposeIcon, ComposeRunModal, type ComposeVerb, VERB_LABEL } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 export const ComposeListPage: Component = () => {
@@ -24,7 +23,7 @@ export const ComposeListPage: Component = () => {
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [composeAction, setComposeAction] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
-  const [bulkRunIds, setBulkRunIds] = createSignal<string[] | null>(null);
+  const [runProject, setRunProject] = createSignal<{ id: string; name: string } | null>(null);
   const [show, setShow] = createSignal(false);
   const [form, setForm] = createSignal({ name: "", base_dir: "", compose_file: "", env_file: "" });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -103,8 +102,8 @@ export const ComposeListPage: Component = () => {
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <ActBtn
-                      title="查看该项目容器的 docker run / compose 命令"
-                      onClick={() => { const ids = cs().map((c) => c.Id); if (ids.length) setBulkRunIds(ids); }}
+                      title="查看 docker compose config 反推出的 docker run 命令"
+                      onClick={() => setRunProject({ id: p.id, name: p.name })}
                     >⧉ Run/Compose</ActBtn>
                     <ActBtn title="查看详情" onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>ⓘ 详情</ActBtn>
                     <Show when={hasRole("operator") && !p.discovered}>
@@ -161,9 +160,7 @@ export const ComposeListPage: Component = () => {
 
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
-      <Show when={bulkRunIds()}>
-        {(ids) => <BulkRunModal ids={ids()} onClose={() => setBulkRunIds(null)} />}
-      </Show>
+      <ComposeRunModal project={runProject()} onClose={() => setRunProject(null)} />
 
       <PullStatusWidget
         active={!!composeAction()}

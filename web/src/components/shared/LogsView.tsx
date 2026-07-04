@@ -1,10 +1,14 @@
-import { Component, onMount, onCleanup, createSignal } from "solid-js";
+import { Component, onMount, onCleanup, createEffect, createSignal } from "solid-js";
 import { connectWS } from "../../api/ws";
 
-export const ContainerLogs: Component<{ id: string; running?: boolean }> = (props) => {
+// Generic log-stream viewer — pause/resume, auto-scroll, clear, buffered
+// flush (throttled so a fast-scrolling log doesn't thrash layout). Driven
+// entirely by a websocket URL so both a single container's logs and a whole
+// compose project's `docker compose logs -f` stream can share it.
+export const LogsView: Component<{ wsUrl: string; startPaused?: boolean }> = (props) => {
   const [text, setText] = createSignal("");
   const [autoScroll, setAutoScroll] = createSignal(true);
-  const [paused, setPaused] = createSignal(!props.running);
+  const [paused, setPaused] = createSignal(!!props.startPaused);
   let box!: HTMLPreElement;
   let ws: WebSocket | undefined;
   let buf = "";
@@ -19,15 +23,25 @@ export const ContainerLogs: Component<{ id: string; running?: boolean }> = (prop
     buf = "";
   };
 
-  onMount(() => {
+  const connect = () => {
+    ws?.close();
+    setText("");
     const decoder = new TextDecoder();
-    ws = connectWS(`/ws/containers/${props.id}/logs`, {
+    ws = connectWS(props.wsUrl, {
       onMessage: (ev) => {
         buf += typeof ev.data === "string" ? ev.data : decoder.decode(ev.data as ArrayBuffer);
         clearTimeout(flushTimer);
         flushTimer = setTimeout(flush, 80); // ponytail: 80ms throttle prevents layout thrash
       },
     });
+  };
+
+  onMount(connect);
+  // Reconnect if the URL changes under us (e.g. switching projects/containers
+  // on a page that isn't remounted across a route param change).
+  createEffect((prev) => {
+    if (prev !== undefined && prev !== props.wsUrl) connect();
+    return props.wsUrl;
   });
   onCleanup(() => { ws?.close(); clearTimeout(flushTimer); });
 
