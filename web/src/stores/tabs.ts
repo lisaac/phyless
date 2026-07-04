@@ -38,15 +38,18 @@ export function setTabLabel(path: string, label: string) {
   setTabs((t) => t.map((x) => (x.path === path ? { ...x, label } : x)));
 }
 
-// Returns the path to navigate to after closing (a neighboring tab, or
-// "/overview" as the default landing page if none remain). Looks up the
-// neighbor directly in the pre-removal list (list[idx+1] ?? list[idx-1])
-// rather than re-deriving an index into the filtered list, so there's no
-// arithmetic that could point at the wrong entry after removal.
-export function closeTab(path: string): string {
+// The tab immediately to the left of `path`, or undefined if it's leftmost.
+// Callers must navigate() to this (or the fallback) BEFORE calling removeTab
+// — swap the displayed page first, drop the old tab second. Doing it in the
+// other order (remove, then navigate) left a brief window where the route
+// still pointed at the tab being closed while it no longer existed in the
+// list, which is what caused the tab strip to misbehave.
+export function leftNeighbor(path: string): PageTab | undefined {
   const list = tabs();
   const idx = list.findIndex((t) => t.path === path);
-  const neighbor = list[idx + 1] ?? list[idx - 1];
-  setTabs(list.filter((t) => t.path !== path));
-  return neighbor ? neighbor.path : "/overview";
+  return list[idx - 1];
+}
+
+export function removeTab(path: string) {
+  setTabs((t) => t.filter((x) => x.path !== path));
 }

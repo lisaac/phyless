@@ -2,7 +2,7 @@ import { Component, JSX, createSignal, createEffect, For, Show } from "solid-js"
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
-import { tabs, openOrActivate, closeTab, labelFor } from "../../stores/tabs";
+import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor } from "../../stores/tabs";
 
 export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const [drawerOpen, setDrawerOpen] = createSignal(false);
@@ -18,20 +18,24 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
 
   const closeAndNavigate = (e: MouseEvent, path: string) => {
     e.stopPropagation();
-    const dest = closeTab(path);
-    if (location.pathname !== path) return;
-    // Ensure the destination's tab exists unconditionally, regardless of
-    // whether navigate() below actually changes the route (it's a no-op when
-    // dest === the current path — e.g. closing your only tab, which happens
-    // to be the "/overview" fallback itself — and a no-op route change means
-    // the tab-sync effect never re-fires to recreate it).
-    openOrActivate(dest, labelFor(dest));
+    if (location.pathname !== path) {
+      // Closing a background tab — nothing on screen needs to change.
+      removeTab(path);
+      return;
+    }
+    // Closing the tab you're currently looking at: swap the displayed page
+    // to its left neighbor FIRST, then drop the old tab — not the other way
+    // around. Removing the tab before navigating left a window where the
+    // route still pointed at a path with no matching tab entry, which is
+    // what caused the strip to misbehave.
+    const dest = leftNeighbor(path)?.path ?? "/overview";
+    openOrActivate(dest, labelFor(dest)); // no-op if dest's tab (the left neighbor) already exists
     // replace, not push: switching/closing tabs is tab management, not
     // "forward" navigation. Pushing here left a history entry for the tab
     // that's closing — hitting the browser Back button would then land back
-    // on that now-closed page's path and silently recreate its tab, which is
-    // exactly the "closed tab reappears" bug this was meant to fix.
+    // on that now-closed page's path and silently recreate its tab.
     navigate(dest, { replace: true });
+    removeTab(path);
   };
 
   return (
