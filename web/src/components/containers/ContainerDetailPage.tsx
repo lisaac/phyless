@@ -364,7 +364,7 @@ export const ContainerDetailPage: Component = () => {
             <span class="text-zinc-400">│</span>
             <Btn danger onClick={async () => {
               if (!confirm(`删除容器 ${name()}?`)) return;
-              try { await del(`/api/containers/${id()}`); history.back(); }
+              try { await del(`/api/containers/${id()}`); navigate("/containers"); }
               catch (e) { toast.error((e as Error).message); }
             }}>⊖ 移除</Btn>
           </div>

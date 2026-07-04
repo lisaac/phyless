@@ -1,15 +1,15 @@
-import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from "solid-js";
+import { Component, For, createSignal, onMount, onCleanup, createEffect } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { connectWS } from "../../api/ws";
 import { cpuPercent, memUsageMB } from "../../api/stats";
-import { Table } from "../shared/Table";
-import { containerName } from "../containers/containerActions";
+import { Sparkline } from "../containers/Sparkline";
 import type { ContainerSummary, ImageSummary, ComposeProject, VolumeSummary, NetworkSummary } from "../../types";
 
-// One `/ws/containers/{id}/stats` socket per running container — same
-// approach `docker stats` itself uses (there's no single "all containers"
-// stats endpoint in the Docker API).
+// One `/ws/containers/{id}/stats` socket per running container (Docker has
+// no single "all containers" stats endpoint — `docker stats` itself opens
+// one stream per container), summed into a single total CPU/mem series
+// sampled once a second rather than pushed on every socket's own cadence.
 export const OverviewPage: Component = () => {
   const navigate = useNavigate();
   const containers = createResourceStore<ContainerSummary>("/api/containers");
@@ -35,17 +35,16 @@ export const OverviewPage: Component = () => {
 
   const running = () => containers.items().filter((c) => c.State === "running").length;
 
-  const [stats, setStats] = createSignal<Record<string, { cpu: number; mem: number }>>({});
+  const latest = new Map<string, { cpu: number; mem: number }>();
   const sockets = new Map<string, WebSocket>();
+  const [cpuHist, setCpuHist] = createSignal<number[]>([]);
+  const [memHist, setMemHist] = createSignal<number[]>([]);
+  const [totals, setTotals] = createSignal({ cpu: 0, mem: 0 });
 
   createEffect(() => {
     const runningIds = new Set(containers.items().filter((c) => c.State === "running").map((c) => c.Id));
     for (const [id, ws] of sockets) {
-      if (!runningIds.has(id)) {
-        ws.close();
-        sockets.delete(id);
-        setStats(({ [id]: _, ...rest }) => rest);
-      }
+      if (!runningIds.has(id)) { ws.close(); sockets.delete(id); latest.delete(id); }
     }
     for (const id of runningIds) {
       if (sockets.has(id)) continue;
@@ -55,7 +54,7 @@ export const OverviewPage: Component = () => {
           for (const line of text.split("\n").filter(Boolean)) {
             try {
               const s = JSON.parse(line);
-              setStats((prev) => ({ ...prev, [id]: { cpu: cpuPercent(s), mem: memUsageMB(s) } }));
+              latest.set(id, { cpu: cpuPercent(s), mem: memUsageMB(s) });
             } catch { /* partial frame */ }
           }
         },
@@ -64,6 +63,17 @@ export const OverviewPage: Component = () => {
     }
   });
   onCleanup(() => { for (const ws of sockets.values()) ws.close(); });
+
+  onMount(() => {
+    const timer = setInterval(() => {
+      let cpu = 0, mem = 0;
+      for (const v of latest.values()) { cpu += v.cpu; mem += v.mem; }
+      setTotals({ cpu, mem });
+      setCpuHist((a) => [...a, cpu].slice(-60));
+      setMemHist((a) => [...a, mem].slice(-60));
+    }, 1000);
+    onCleanup(() => clearInterval(timer));
+  });
 
   const cards = () => [
     { label: "容器", value: `${running()} / ${containers.items().length}`, sub: "运行中 / 总数", to: "/containers" },
@@ -90,19 +100,19 @@ export const OverviewPage: Component = () => {
         </For>
       </div>
 
-      <div>
-        <div class="mb-2 text-xs text-zinc-500">容器资源占用</div>
-        <Table
-          rows={containers.items()}
-          rowKey={(c) => c.Id}
-          onRowClick={(c) => navigate(`/containers/${c.Id}`)}
-          columns={[
-            { header: "名称", cell: (c) => <span class="text-zinc-200">{containerName(c) || c.Id.slice(0, 8)}</span> },
-            { header: "状态", cell: (c) => <span class={c.State === "running" ? "text-emerald-400" : "text-zinc-500"}>{c.Status}</span> },
-            { header: "CPU", cell: (c) => <Show when={stats()[c.Id]} fallback="—">{(s) => <>{s().cpu.toFixed(1)}%</>}</Show> },
-            { header: "内存", cell: (c) => <Show when={stats()[c.Id]} fallback="—">{(s) => <>{s().mem.toFixed(0)} MB</>}</Show> },
-          ]}
-        />
+      <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <div>
+          <div class="mb-1 text-xs text-zinc-500">
+            全部容器 CPU 总用量 <span class="text-zinc-200">{totals().cpu.toFixed(1)}%</span>
+          </div>
+          <Sparkline data={cpuHist()} color="#60a5fa" />
+        </div>
+        <div>
+          <div class="mb-1 text-xs text-zinc-500">
+            全部容器内存总用量 <span class="text-zinc-200">{totals().mem.toFixed(0)} MB</span>
+          </div>
+          <Sparkline data={memHist()} color="#34d399" />
+        </div>
       </div>
     </div>
   );

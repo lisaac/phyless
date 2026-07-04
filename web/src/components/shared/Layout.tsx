@@ -26,7 +26,12 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     // to be the "/overview" fallback itself — and a no-op route change means
     // the tab-sync effect never re-fires to recreate it).
     openOrActivate(dest, labelFor(dest));
-    navigate(dest);
+    // replace, not push: switching/closing tabs is tab management, not
+    // "forward" navigation. Pushing here left a history entry for the tab
+    // that's closing — hitting the browser Back button would then land back
+    // on that now-closed page's path and silently recreate its tab, which is
+    // exactly the "closed tab reappears" bug this was meant to fix.
+    navigate(dest, { replace: true });
   };
 
   return (
@@ -80,7 +85,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
                       ? "border-indigo-500/30 bg-indigo-500/15"
                       : "border-transparent hover:bg-zinc-800/60"
                   }`}
-                  onClick={() => navigate(t.path)}
+                  onClick={() => navigate(t.path, { replace: true })}
                 >
                   <span class="max-w-[9rem] truncate text-left">{t.label}</span>
                   <button
