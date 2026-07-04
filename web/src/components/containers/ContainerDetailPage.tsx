@@ -18,6 +18,7 @@ import { hasRole } from "../../stores/auth";
 import { setTabLabel, removeTab } from "../../stores/tabs";
 import { KV, Sec } from "../shared/KV";
 import { Btn } from "../shared/ActionButton";
+import { ContainerIcon } from "./ContainerIcon";
 import type { FileEntry, NetworkSummary } from "../../types";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -323,7 +324,8 @@ export const ContainerDetailPage: Component = () => {
       <Show when={inspect()} fallback={<p class="text-xs text-zinc-400">加载中…</p>}>
         <div>
           <div class="flex items-baseline gap-3">
-            <h1 class={`font-mono text-xl font-medium ${STATE_COLOR[state()] ?? "text-zinc-300"}`}>
+            <h1 class={`flex items-center gap-2 font-mono text-xl font-medium ${STATE_COLOR[state()] ?? "text-zinc-300"}`}>
+              <ContainerIcon size={18} class="shrink-0" />
               {name()}
             </h1>
             <span class="font-mono text-xs text-zinc-400">{id().slice(0, 12)}</span>

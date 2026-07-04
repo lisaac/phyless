@@ -1,6 +1,4 @@
 import { Component, createResource, createEffect, createSignal, Show } from "solid-js";
-import { get, imageInspectUrl } from "../../api/client";
-import { inspectToRunCmd } from "../../api/inspect";
 import { runToCompose, composeToRuns } from "../../api/convert";
 import { CodeEditor } from "../shared/CodeEditor";
 
@@ -33,24 +31,22 @@ function composeToCli(yaml: string): string {
   return cmds.join("\n\n");
 }
 
-export const BulkRunModal: Component<{ ids: string[]; onClose: () => void }> = (props) => {
+// Generic "N run commands" editor — reused by ContainerListPage's bulk
+// Run/Compose (fetchCmds derives cmds from container inspects) and the
+// Compose pages' Run/Compose (fetchCmds hits /api/compose/run-commands),
+// so both surfaces share one CLI ⇄ compose.yaml conversion UI instead of
+// each rendering their own.
+export const BulkRunModal: Component<{
+  reqKey: string; title: string; fetchCmds: () => Promise<string[]>; onClose: () => void;
+}> = (props) => {
   const [cli, setCli] = createSignal("");
   const [compose, setCompose] = createSignal("");
   const [err, setErr] = createSignal("");
 
   const [data] = createResource(
-    () => props.ids.join(","),
+    () => props.reqKey,
     async () => {
-      const cmds = await Promise.all(
-        props.ids.map(async (id) => {
-          const container = await get<any>(`/api/containers/${id}/inspect`);
-          let image: any = {};
-          try {
-            image = await get<any>(imageInspectUrl(container.Image));
-          } catch {}
-          return inspectToRunCmd(container, image);
-        })
-      );
+      const cmds = await props.fetchCmds();
       return {
         cli: cmds.join("\n\n"),
         compose: mergeComposeYamls(cmds.map(runToCompose)),
@@ -89,7 +85,7 @@ export const BulkRunModal: Component<{ ids: string[]; onClose: () => void }> = (
         {/* header */}
         <div class="flex shrink-0 items-center justify-between border-b border-zinc-800 px-4 py-2.5">
           <span class="text-xs font-semibold uppercase tracking-widest text-zinc-400">
-            {props.ids.length} 个容器
+            {props.title}
           </span>
           <button
             class="text-sm text-zinc-500 transition-colors hover:text-zinc-200"

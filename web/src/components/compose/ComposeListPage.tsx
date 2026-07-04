@@ -4,14 +4,15 @@ import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
-import { post, del } from "../../api/client";
+import { get, post, del } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions, fmtContainerStatus, fmtRelTime } from "../containers/containerActions";
 import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
-import { containersOf, representative, ActBtn, ComposeIcon, ComposeRunModal, type ComposeVerb, VERB_LABEL } from "./composeShared";
+import { BulkRunModal } from "../containers/BulkRunModal";
+import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb, VERB_LABEL } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 export const ComposeListPage: Component = () => {
@@ -95,18 +96,18 @@ export const ComposeListPage: Component = () => {
                         {(r) => <span class="text-zinc-400">{fmtContainerStatus(r().State, r().Status)}{" · 创建 "}{fmtRelTime(r().Created)}</span>}
                       </Show>
                     </div>
-                    <div class="mt-0.5 text-[11px] text-zinc-400">{p.base_dir} · {p.compose_file}</div>
+                    <div class="mt-0.5 text-[11px] text-zinc-400">{p.compose_file}</div>
                   </div>
                   <div class="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
                     <Show when={hasRole("operator")}>
                       <ActBtn title="docker compose up -d" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
+                      <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
                       <ActBtn title="docker compose stop" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
                       <ActBtn
                         danger
                         title="docker compose down（停止并移除容器、网络）"
                         onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) setComposeAction({ id: p.id, name: p.name, verb: "down" }); }}
                       >⊘ Down</ActBtn>
-                      <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
                       <ActBtn title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
@@ -168,7 +169,16 @@ export const ComposeListPage: Component = () => {
 
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
-      <ComposeRunModal project={runProject()} onClose={() => setRunProject(null)} />
+      <Show when={runProject()}>
+        {(p) => (
+          <BulkRunModal
+            reqKey={p().id}
+            title={p().name}
+            fetchCmds={async () => (await get<{ commands: string[] }>(`/api/compose/run-commands?id=${encodeURIComponent(p().id)}`)).commands}
+            onClose={() => setRunProject(null)}
+          />
+        )}
+      </Show>
 
       <PullStatusWidget
         active={!!composeAction()}

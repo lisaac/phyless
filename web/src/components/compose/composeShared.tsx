@@ -1,7 +1,4 @@
-import { Component, JSX, createResource, For, Show } from "solid-js";
-import { get } from "../../api/client";
-import { Modal } from "../shared/Modal";
-import { Button } from "../shared/Button";
+import { Component, JSX } from "solid-js";
 import { Btn } from "../shared/ActionButton";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
@@ -45,32 +42,3 @@ export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => 
 export const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; children: JSX.Element }> = (p) => (
   <Btn title={p.title} danger={p.danger} onClick={(e) => { e.stopPropagation(); p.onClick(); }}>{p.children}</Btn>
 );
-
-// "Run/Compose" modal shared by the list and detail page — the backend
-// builds each command directly from `docker compose config`'s structured,
-// fully-resolved service definitions (see resolvedRunCommands in
-// internal/api/compose_runcmd.go), not a JS-side YAML parse, so it works the
-// same whether or not the project is currently deployed.
-export const ComposeRunModal: Component<{ project: { id: string; name: string } | null; onClose: () => void }> = (props) => {
-  const [runs] = createResource(() => props.project?.id, async (id) => {
-    const res = await get<{ commands: string[] }>(`/api/compose/run-commands?id=${encodeURIComponent(id)}`);
-    return res.commands;
-  });
-
-  return (
-    <Modal open={!!props.project} onClose={props.onClose} title={`docker run 集合 — ${props.project?.name ?? ""}`} wide>
-      <Show when={!runs.loading} fallback={<p class="text-sm text-zinc-400">加载中…</p>}>
-        <div class="space-y-2">
-          <For each={runs() ?? []} fallback={<p class="text-sm text-zinc-400">无法转换或无服务</p>}>
-            {(r) => (
-              <div class="flex items-center gap-2">
-                <code class="flex-1 overflow-auto rounded bg-zinc-950 p-2 text-xs">{r}</code>
-                <Button onClick={() => navigator.clipboard.writeText(r)}>复制</Button>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-    </Modal>
-  );
-};

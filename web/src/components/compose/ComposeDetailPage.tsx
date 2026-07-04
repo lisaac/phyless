@@ -14,7 +14,8 @@ import { createContainerActions } from "../containers/containerActions";
 import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
-import { containersOf, representative, ActBtn, ComposeIcon, ComposeRunModal, type ComposeVerb } from "./composeShared";
+import { BulkRunModal } from "../containers/BulkRunModal";
+import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb } from "./composeShared";
 import type { ComposeProject, ContainerSummary, FileEntry } from "../../types";
 
 type Tab = "info" | "files" | "logs";
@@ -175,13 +176,13 @@ export const ComposeDetailPage: Component = () => {
       <Show when={hasRole("operator")}>
         <div class="mb-3 flex flex-wrap items-center gap-0.5 border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
           <ActBtn title="docker compose up -d" onClick={() => void runCmd("up")}>▶ Up</ActBtn>
+          <ActBtn title="docker compose restart" onClick={() => void runCmd("restart")}>↺ Restart</ActBtn>
           <ActBtn title="docker compose stop" onClick={() => void runCmd("stop")}>■ Stop</ActBtn>
           <ActBtn
             danger
             title="docker compose down（停止并移除容器、网络）"
             onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) void runCmd("down"); }}
           >⊘ Down</ActBtn>
-          <ActBtn title="docker compose restart" onClick={() => void runCmd("restart")}>↺ Restart</ActBtn>
           <ActBtn title="docker compose pull" onClick={() => void runCmd("pull")}>↓ Pull</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="查看 docker compose config 反推出的 docker run 命令" onClick={() => setShowRun(true)}>⧉ Run/Compose</ActBtn>
@@ -299,7 +300,14 @@ export const ComposeDetailPage: Component = () => {
         <LogsView wsUrl={`/ws/compose/logs?id=${encodeURIComponent(id())}`} />
       </Show>
 
-      <ComposeRunModal project={showRun() ? { id: id(), name: project()?.name ?? id() } : null} onClose={() => setShowRun(false)} />
+      <Show when={showRun()}>
+        <BulkRunModal
+          reqKey={id()}
+          title={project()?.name ?? id()}
+          fetchCmds={async () => (await get<{ commands: string[] }>(`/api/compose/run-commands?id=${encodeURIComponent(id())}`)).commands}
+          onClose={() => setShowRun(false)}
+        />
+      </Show>
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
     </div>

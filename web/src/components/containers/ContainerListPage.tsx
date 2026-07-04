@@ -1,5 +1,7 @@
 import { Component, createSignal, onMount, onCleanup, Show, For } from "solid-js";
 import { createResourceStore } from "../../stores/resource";
+import { get, imageInspectUrl } from "../../api/client";
+import { inspectToRunCmd } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
 import { containerName, createContainerActions } from "./containerActions";
 import { CreateContainerModal } from "./CreateContainerModal";
@@ -118,7 +120,19 @@ export const ContainerListPage: Component = () => {
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
       <Show when={bulkRunIds()}>
-        {(ids) => <BulkRunModal ids={ids()} onClose={() => setBulkRunIds(null)} />}
+        {(ids) => (
+          <BulkRunModal
+            reqKey={ids().join(",")}
+            title={`${ids().length} 个容器`}
+            fetchCmds={() => Promise.all(ids().map(async (id) => {
+              const container = await get<any>(`/api/containers/${id}/inspect`);
+              let image: any = {};
+              try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
+              return inspectToRunCmd(container, image);
+            }))}
+            onClose={() => setBulkRunIds(null)}
+          />
+        )}
       </Show>
 
       {/* ── Create container modal ───────────────────────────────────────────── */}
