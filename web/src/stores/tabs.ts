@@ -65,3 +65,15 @@ export function leftNeighbor(path: string): PageTab | undefined {
 export function removeTab(path: string) {
   setTabs((t) => t.filter((x) => x.path !== path));
 }
+
+// Tracks which paths have ever had their chip shown, so the entrance
+// animation in Layout.tsx's TabChip plays exactly once per tab — even if
+// something remounts the chip later (e.g. a future <For> reconciliation
+// quirk), switching BETWEEN already-open tabs must never animate, only a
+// genuinely brand-new tab should. Returns true if `path` was already seen.
+const seenPaths = new Set<string>();
+export function markSeen(path: string): boolean {
+  const already = seenPaths.has(path);
+  seenPaths.add(path);
+  return already;
+}

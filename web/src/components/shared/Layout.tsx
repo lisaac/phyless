@@ -2,19 +2,22 @@ import { Component, JSX, createSignal, createEffect, onMount, startTransition, F
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
-import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, type PageTab } from "../../stores/tabs";
+import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type PageTab } from "../../stores/tabs";
 
 const CLOSE_ANIM_MS = 200;
 
-// Owns its own enter/exit animation so a tab visibly grows in on open and
-// shrinks out on close, instead of the strip instantly reflowing — a fast
-// second click right after closing one tab used to land on whatever tab had
-// just snapped into that same spot. `onClose` (the real navigate+removeTab
-// logic) only fires after the shrink animation finishes.
+// Owns its own enter/exit animation so a tab visibly grows in the first time
+// it's ever opened and shrinks out on close — switching between tabs that
+// are already open must never animate. markSeen() makes that hold even if
+// something remounts this component for an already-seen path (e.g. a <For>
+// reconciliation quirk): a previously-seen path starts already "entered",
+// skipping the grow-in outright instead of just racing to finish it fast.
 const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void; onClose: () => void }> = (p) => {
-  const [entered, setEntered] = createSignal(false);
+  const alreadySeen = markSeen(p.tab.path);
+  const [entered, setEntered] = createSignal(alreadySeen);
   const [closing, setClosing] = createSignal(false);
   onMount(() => {
+    if (alreadySeen) return;
     // A single requestAnimationFrame can land in the same paint as the
     // initial (closed) render, so the browser never registers a "before"
     // state to transition from and the tab just snaps open instead of
