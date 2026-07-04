@@ -1,16 +1,17 @@
-import { Component, createSignal, createResource, createEffect, onMount, onCleanup, For, Show } from "solid-js";
+import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { post, del, get, getToken, setToken } from "../../api/client";
+import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { post, del } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions, fmtContainerStatus, fmtRelTime } from "../containers/containerActions";
 import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
-import { composeToRuns } from "../../api/convert";
+import { BulkRunModal } from "../containers/BulkRunModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 const LABEL_PROJECT = "com.docker.compose.project";
@@ -35,86 +36,16 @@ function representative(cs: ContainerSummary[]): ContainerSummary | undefined {
 type ComposeVerb = "up" | "stop" | "down" | "restart" | "pull";
 const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", down: "Down", restart: "Restart", pull: "Pull" };
 
-// Runs `docker compose <verb>` for one project and streams its plain-text
-// output live — same fetch+reader pattern ComposeDetailPage uses for its own
-// Up/Down/Pull/Restart buttons, just popped into a modal instead of a
-// permanently-mounted pane, since the list has no dedicated output area.
-const ComposeActionModal: Component<{ target: { id: string; name: string; verb: ComposeVerb } | null; onClose: () => void }> = (props) => {
-  const [output, setOutput] = createSignal("");
-  const [running, setRunning] = createSignal(false);
-  let ctrl: AbortController | undefined;
-
-  createEffect(() => {
-    const t = props.target;
-    ctrl?.abort();
-    if (!t) return;
-    setOutput("");
-    setRunning(true);
-    ctrl = new AbortController();
-    const c = ctrl;
-    void (async () => {
-      try {
-        const res = await fetch(`/api/compose/${t.verb}?id=${encodeURIComponent(t.id)}`, {
-          method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, signal: c.signal,
-        });
-        if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
-        const reader = res.body?.getReader();
-        if (!reader) return;
-        const dec = new TextDecoder();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          setOutput((o) => o + dec.decode(value));
-        }
-      } catch (e) {
-        if ((e as Error).name !== "AbortError") setOutput((o) => o + "\n" + (e as Error).message);
-      } finally {
-        setRunning(false);
-      }
-    })();
-  });
-  onCleanup(() => ctrl?.abort());
-
-  return (
-    <Modal open={!!props.target} onClose={() => { ctrl?.abort(); props.onClose(); }} title={`${VERB_LABEL[props.target?.verb ?? "up"]} — ${props.target?.name ?? ""}`} wide>
-      <pre class="h-[50vh] overflow-auto whitespace-pre-wrap rounded bg-zinc-950 p-3 font-mono text-xs">{output() || (running() ? "运行中…" : "")}</pre>
-    </Modal>
-  );
-};
-
-// Shows the docker-run-command view of a project's compose file — same
-// conversion ComposeDetailPage's "转换视图" button does, fetched fresh since
-// the list page doesn't keep any project's yaml preloaded.
-const ComposeConvertModal: Component<{ project: ComposeProject | null; onClose: () => void }> = (props) => {
-  const [runs] = createResource(() => props.project?.id, async (id) => {
-    const yaml = await get<string>(`/api/compose/file?id=${encodeURIComponent(id)}`);
-    try { return composeToRuns(yaml); } catch { return []; }
-  });
-
-  return (
-    <Modal open={!!props.project} onClose={props.onClose} title={`docker run 集合 — ${props.project?.name ?? ""}`} wide>
-      <div class="space-y-2">
-        <For each={runs() ?? []} fallback={<p class="text-sm text-zinc-400">无法转换或无服务</p>}>
-          {(r) => (
-            <div class="flex items-center gap-2">
-              <code class="flex-1 overflow-auto rounded bg-zinc-950 p-2 text-xs">{r}</code>
-              <Button onClick={() => navigator.clipboard.writeText(r)}>复制</Button>
-            </div>
-          )}
-        </For>
-      </div>
-    </Modal>
-  );
-};
-
-// Compact text button matching the icon-row density used in ContainerListPage's
-// bulk-action bar — a plain <Button> (px-3 py-1.5) is too wide for 5+ of these
-// side by side in a list row.
-const ActBtn: Component<{ title: string; onClick: () => void; children: string }> = (p) => (
+// Same compact text button used in ContainerListPage's bulk-action bar — a
+// plain <Button> (px-3 py-1.5, text-sm) doesn't match once it sits next to
+// several of these in one row.
+const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; children: string }> = (p) => (
   <button
     title={p.title}
     onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class="px-2 py-0.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+    class={`px-2 py-0.5 text-xs transition-colors ${
+      p.danger ? "text-red-400 hover:bg-red-900/40 hover:text-red-300" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+    }`}
   >{p.children}</button>
 );
 
@@ -127,7 +58,7 @@ export const ComposeListPage: Component = () => {
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [composeAction, setComposeAction] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
-  const [convertProject, setConvertProject] = createSignal<ComposeProject | null>(null);
+  const [bulkRunIds, setBulkRunIds] = createSignal<string[] | null>(null);
   const [show, setShow] = createSignal(false);
   const [form, setForm] = createSignal({ name: "", base_dir: "", compose_file: "", env_file: "" });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -172,7 +103,6 @@ export const ComposeListPage: Component = () => {
                   class="flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-white/[0.03] transition-colors"
                   onClick={() => toggleExpand(p.id)}
                 >
-                  <span class={`mt-0.5 text-zinc-500 transition-transform ${isOpen() ? "rotate-90" : ""}`}>▸</span>
                   <div class="min-w-0 flex-1">
                     <div class="font-medium">{p.name}</div>
                     <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
@@ -197,32 +127,43 @@ export const ComposeListPage: Component = () => {
                       <ActBtn title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>⇩ Pull</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
-                    <ActBtn title="查看转换出的 docker run 命令" onClick={() => setConvertProject(p)}>⧉ Run/Compose</ActBtn>
-                    <Button onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>详情</Button>
+                    <ActBtn
+                      title="查看该项目容器的 docker run / compose 命令"
+                      onClick={() => { const ids = cs().map((c) => c.Id); if (ids.length) setBulkRunIds(ids); }}
+                    >⧉ Run/Compose</ActBtn>
+                    <ActBtn title="查看详情" onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>详情</ActBtn>
                     <Show when={hasRole("operator") && !p.discovered}>
-                      <Button variant="danger" onClick={() => remove(p.id)}>删除</Button>
+                      <ActBtn title="删除项目" danger onClick={() => remove(p.id)}>删除</ActBtn>
                     </Show>
                   </div>
                 </div>
-                <Show when={isOpen()}>
-                  <div class="border-t border-zinc-800">
-                    <Show when={cs().length > 0} fallback={<div class="px-8 py-3 text-xs text-zinc-500">无容器</div>}>
-                      <div class="divide-y divide-zinc-800">
-                        <For each={cs()}>
-                          {(c) => (
-                            <ContainerRow
-                              c={c}
-                              isP={isP}
-                              act={act}
-                              onViewCmd={setRunTarget}
-                              onConsole={setConsoleTarget}
-                            />
-                          )}
-                        </For>
-                      </div>
-                    </Show>
+                {/* CSS grid-rows 0fr→1fr animates height without knowing the
+                    content's real height up front — <Show> would just snap
+                    the content in/out with no transition to play. */}
+                <div
+                  class="grid transition-[grid-template-rows] duration-200 ease-out"
+                  style={{ "grid-template-rows": isOpen() ? "1fr" : "0fr" }}
+                >
+                  <div class="overflow-hidden">
+                    <div class="border-t border-zinc-800">
+                      <Show when={cs().length > 0} fallback={<div class="px-8 py-3 text-xs text-zinc-500">无容器</div>}>
+                        <div class="divide-y divide-zinc-800">
+                          <For each={cs()}>
+                            {(c) => (
+                              <ContainerRow
+                                c={c}
+                                isP={isP}
+                                act={act}
+                                onViewCmd={setRunTarget}
+                                onConsole={setConsoleTarget}
+                              />
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
                   </div>
-                </Show>
+                </div>
               </div>
             );
           }}
@@ -245,8 +186,17 @@ export const ComposeListPage: Component = () => {
 
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
-      <ComposeActionModal target={composeAction()} onClose={() => { setComposeAction(null); void store.refresh(); void containers.refresh(); }} />
-      <ComposeConvertModal project={convertProject()} onClose={() => setConvertProject(null)} />
+      <Show when={bulkRunIds()}>
+        {(ids) => <BulkRunModal ids={ids()} onClose={() => setBulkRunIds(null)} />}
+      </Show>
+
+      <PullStatusWidget
+        active={!!composeAction()}
+        title={`${VERB_LABEL[composeAction()?.verb ?? "up"]} — ${composeAction()?.name ?? ""}`}
+        url={`/api/compose/${composeAction()?.verb ?? "up"}?id=${encodeURIComponent(composeAction()?.id ?? "")}`}
+        onDone={() => { void store.refresh(); void containers.refresh(); }}
+        onClose={() => setComposeAction(null)}
+      />
     </div>
   );
 };

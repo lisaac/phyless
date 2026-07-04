@@ -29,7 +29,9 @@ export const ComposeDetailPage: Component = () => {
     catch (e) { toast.error((e as Error).message); }
   };
 
-  // run streams text/plain; read the body incrementally into the output pane.
+// run streams newline-delimited {stream}/{error} JSON (same shape
+  // PullStatusWidget renders elsewhere); read the body incrementally,
+  // unwrapping each line back into plain text for this page's output pane.
   const runCmd = async (verb: "up" | "down" | "pull" | "restart") => {
     try {
       setOutput("");
@@ -40,10 +42,20 @@ export const ComposeDetailPage: Component = () => {
       const reader = res.body?.getReader();
       if (!reader) return;
       const dec = new TextDecoder();
+      let buf = "";
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        setOutput((o) => o + dec.decode(value));
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            setOutput((o) => o + (evt.stream ?? evt.error ?? "") + "\n");
+          } catch { /* ignore malformed line */ }
+        }
       }
     } catch (e) { toast.error((e as Error).message); }
   };

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	dockercontainer "phyless/internal/docker/container"
 	"phyless/internal/models"
 )
 
@@ -201,7 +203,10 @@ func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 	s.runComposeCmd(w, r, "restart")
 }
 
-// runComposeCmd executes `docker compose -f <file> <args>` and streams stdout+stderr to w.
+// runComposeCmd executes `docker compose -f <file> <args>` and streams
+// stdout+stderr to w as newline-delimited {stream}/{error} JSON — the same
+// shape docker pull/load/copy progress already uses, so PullStatusWidget
+// can render it without any format-specific handling.
 //
 // ponytail: docker/compose/v2 exists as an embeddable Go library, but it's
 // built for the CLI (cobra commands, global service wiring) and is painful
@@ -219,13 +224,28 @@ func (s *Server) runComposeCmd(w http.ResponseWriter, r *http.Request, args ...s
 	if p.EnvFile != "" {
 		cmd.Env = append(os.Environ(), "COMPOSE_ENV_FILES="+p.EnvFile)
 	}
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
-	cmd.Stdout = w
-	cmd.Stderr = w
-	if err := cmd.Run(); err != nil {
-		w.Write([]byte("\nERROR: " + err.Error())) //nolint:errcheck
+
+	rc, err := cmd.StdoutPipe()
+	if err != nil {
+		dockercontainer.EmitError(w, err)
+		return
 	}
+	cmd.Stderr = cmd.Stdout // merge stderr into the same pipe
+	if err := cmd.Start(); err != nil {
+		dockercontainer.EmitError(w, err)
+		return
+	}
+	scanner := bufio.NewScanner(rc)
+	for scanner.Scan() {
+		dockercontainer.EmitStream(w, "%s", scanner.Text())
+	}
+	if err := cmd.Wait(); err != nil {
+		dockercontainer.EmitError(w, err)
+		return
+	}
+	dockercontainer.EmitStream(w, "✓ 完成")
 }
 
 func (s *Server) handleGetComposeFile(w http.ResponseWriter, r *http.Request) {
