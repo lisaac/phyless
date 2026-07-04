@@ -28,6 +28,7 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Get("/api/compose/detail", s.handleGetCompose)
 	r.Delete("/api/compose", s.handleDeleteCompose)
 	r.Post("/api/compose/up", s.handleComposeUp)
+	r.Post("/api/compose/stop", s.handleComposeStop)
 	r.Post("/api/compose/down", s.handleComposeDown)
 	r.Post("/api/compose/pull", s.handleComposePull)
 	r.Post("/api/compose/restart", s.handleComposeRestart)
@@ -182,6 +183,10 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleComposeUp(w http.ResponseWriter, r *http.Request) {
 	s.runComposeCmd(w, r, "up", "--detach")
+}
+
+func (s *Server) handleComposeStop(w http.ResponseWriter, r *http.Request) {
+	s.runComposeCmd(w, r, "stop")
 }
 
 func (s *Server) handleComposeDown(w http.ResponseWriter, r *http.Request) {
