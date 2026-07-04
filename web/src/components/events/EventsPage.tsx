@@ -1,4 +1,4 @@
-import { Component, createSignal, onMount, onCleanup, For } from "solid-js";
+import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { connectWS } from "../../api/ws";
 
 interface DockerEvent { Type?: string; Action?: string; Actor?: { Attributes?: Record<string, string> }; time?: number; }
@@ -28,23 +28,29 @@ export const EventsPage: Component = () => {
   return (
     <div>
       <h1 class="mb-4 text-xl font-semibold">事件</h1>
-      <table class="w-full text-left text-sm">
-        <thead class="border-b border-zinc-800 text-zinc-400">
-          <tr><th class="px-2 py-2">时间</th><th class="px-2 py-2">类型</th><th class="px-2 py-2">动作</th><th class="px-2 py-2">对象</th></tr>
-        </thead>
-        <tbody>
+      <div class="overflow-x-auto border border-zinc-800">
+        <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+          <div class="w-28 shrink-0 px-2 py-2">时间</div>
+          <div class="w-28 shrink-0 px-2 py-2">类型</div>
+          <div class="w-28 shrink-0 px-2 py-2">动作</div>
+          <div class="min-w-0 flex-1 px-2 py-2">对象</div>
+        </div>
+        <div class="divide-y divide-zinc-800">
           <For each={events()}>
             {(e) => (
-              <tr class="border-b border-zinc-900">
-                <td class="px-2 py-1 text-xs text-zinc-500">{e.time ? new Date(e.time * 1000).toLocaleTimeString() : ""}</td>
-                <td class="px-2 py-1">{e.Type}</td>
-                <td class="px-2 py-1">{e.Action}</td>
-                <td class="px-2 py-1 text-zinc-300">{name(e)}</td>
-              </tr>
+              <div class="flex text-sm">
+                <div class="w-28 shrink-0 px-2 py-1 text-xs text-zinc-500">{e.time ? new Date(e.time * 1000).toLocaleTimeString() : ""}</div>
+                <div class="w-28 shrink-0 px-2 py-1">{e.Type}</div>
+                <div class="w-28 shrink-0 px-2 py-1">{e.Action}</div>
+                <div class="min-w-0 flex-1 truncate px-2 py-1 text-zinc-300">{name(e)}</div>
+              </div>
             )}
           </For>
-        </tbody>
-      </table>
+        </div>
+        <Show when={events().length === 0}>
+          <div class="py-16 text-center text-zinc-400">暂无事件</div>
+        </Show>
+      </div>
     </div>
   );
 };

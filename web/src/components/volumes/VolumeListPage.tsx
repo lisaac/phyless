@@ -1,7 +1,6 @@
 import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
-import { Table, type Column } from "../shared/Table";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
@@ -32,43 +31,6 @@ export const VolumeListPage: Component = () => {
   const listFiles = (sub: string) =>
     get<FileEntry[]>(`/api/volumes/${encodeURIComponent(browse()!.Name)}/files?path=${encodeURIComponent(sub)}`);
 
-  const columns: Column<VolumeSummary>[] = [
-    { header: "名称", cell: (v) => <span class="font-medium" title={v.Name}>{midPath(v.Name)}</span> },
-    { header: "驱动", cell: (v) => <span>{v.Driver}</span> },
-    { header: "挂载点", cell: (v) => <span class="text-xs text-zinc-400" title={v.Mountpoint}>{midPath(v.Mountpoint)}</span> },
-    {
-      header: "使用容器",
-      cell: (v) => (
-        <Show when={(v.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
-          <div class="flex flex-wrap gap-x-1.5 gap-y-0.5">
-            <For each={v.UsedBy}>
-              {(c) => (
-                <a
-                  href={`/containers/${c.Id}`}
-                  class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
-                  onClick={(e) => { e.preventDefault(); navigate(`/containers/${c.Id}`, { replace: true }); }}
-                >
-                  {c.Name || c.Id.slice(0, 8)}
-                </a>
-              )}
-            </For>
-          </div>
-        </Show>
-      ),
-    },
-    {
-      header: "操作",
-      cell: (v) => (
-        <div class="flex gap-1">
-          <Button onClick={() => setBrowse(v)}>浏览</Button>
-          <Show when={hasRole("operator")}>
-            <Button variant="danger" onClick={() => remove(v.Name)}>删除</Button>
-          </Show>
-        </div>
-      ),
-    },
-  ];
-
   return (
     <div>
       <div class="mb-4 flex items-center justify-between">
@@ -78,7 +40,60 @@ export const VolumeListPage: Component = () => {
         </Show>
       </div>
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
-      <Table rows={store.items()} columns={columns} rowKey={(v) => v.Name} />
+
+      {/* div-simulated table (same approach as ContainerRow) — a fixed-width
+          name column left the mountpoint/used-by columns starved for room
+          whenever a name happened to be long. */}
+      <div class="overflow-x-auto border border-zinc-800">
+        <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+          <div class="w-48 shrink-0 px-3 py-2">名称</div>
+          <div class="w-20 shrink-0 px-3 py-2">驱动</div>
+          <div class="min-w-0 flex-1 px-3 py-2">挂载点</div>
+          <div class="w-48 shrink-0 px-3 py-2">使用容器</div>
+          <div class="w-36 shrink-0 px-3 py-2">操作</div>
+        </div>
+        <div class="divide-y divide-zinc-800">
+          <For each={store.items()}>
+            {(v) => (
+              <div class="flex text-sm transition-colors hover:bg-white/[0.03]">
+                <div class="w-48 shrink-0 px-3 py-2">
+                  <span class="font-medium" title={v.Name}>{midPath(v.Name)}</span>
+                </div>
+                <div class="w-20 shrink-0 px-3 py-2 text-xs text-zinc-400">{v.Driver}</div>
+                <div class="min-w-0 flex-1 px-3 py-2 text-xs text-zinc-400" title={v.Mountpoint}>{midPath(v.Mountpoint)}</div>
+                <div class="w-48 shrink-0 px-3 py-2">
+                  <Show when={(v.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
+                    <div class="flex flex-wrap gap-x-1.5 gap-y-0.5">
+                      <For each={v.UsedBy}>
+                        {(c) => (
+                          <a
+                            href={`/containers/${c.Id}`}
+                            class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
+                            onClick={(e) => { e.preventDefault(); navigate(`/containers/${c.Id}`, { replace: true }); }}
+                          >
+                            {c.Name || c.Id.slice(0, 8)}
+                          </a>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+                <div class="w-36 shrink-0 px-3 py-2">
+                  <div class="flex gap-1">
+                    <Button onClick={() => setBrowse(v)}>浏览</Button>
+                    <Show when={hasRole("operator")}>
+                      <Button variant="danger" onClick={() => remove(v.Name)}>删除</Button>
+                    </Show>
+                  </div>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+        <Show when={store.items().length === 0 && !store.error()}>
+          <div class="py-16 text-center text-zinc-400">暂无存储卷</div>
+        </Show>
+      </div>
 
       <Modal open={show()} onClose={() => setShow(false)} title="创建存储卷">
         <input class="mb-3 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="卷名" value={name()} onInput={(e) => setName(e.currentTarget.value)} />

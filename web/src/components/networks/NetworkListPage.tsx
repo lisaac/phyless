@@ -1,6 +1,5 @@
-import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
+import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
 import { createResourceStore } from "../../stores/resource";
-import { Table, type Column } from "../shared/Table";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { post, del } from "../../api/client";
@@ -36,20 +35,6 @@ export const NetworkListPage: Component = () => {
     catch (e) { toast.error((e as Error).message); }
   };
 
-  const columns: Column<NetworkSummary>[] = [
-    { header: "名称", cell: (n) => <span class="font-medium">{n.Name}</span> },
-    { header: "驱动", cell: (n) => <span>{n.Driver}</span> },
-    { header: "范围", cell: (n) => <span class="text-zinc-400">{n.Scope}</span> },
-    {
-      header: "操作",
-      cell: (n) => (
-        <Show when={hasRole("operator")}>
-          <Button variant="danger" onClick={() => remove(n.Id)}>删除</Button>
-        </Show>
-      ),
-    },
-  ];
-
   return (
     <div>
       <div class="mb-4 flex items-center justify-between">
@@ -59,7 +44,34 @@ export const NetworkListPage: Component = () => {
         </Show>
       </div>
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
-      <Table rows={store.items()} columns={columns} rowKey={(n) => n.Id} />
+
+      <div class="overflow-x-auto border border-zinc-800">
+        <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+          <div class="w-56 shrink-0 px-3 py-2">名称</div>
+          <div class="w-28 shrink-0 px-3 py-2">驱动</div>
+          <div class="min-w-0 flex-1 px-3 py-2">范围</div>
+          <div class="w-28 shrink-0 px-3 py-2">操作</div>
+        </div>
+        <div class="divide-y divide-zinc-800">
+          <For each={store.items()}>
+            {(n) => (
+              <div class="flex text-sm transition-colors hover:bg-white/[0.03]">
+                <div class="w-56 shrink-0 px-3 py-2 font-medium">{n.Name}</div>
+                <div class="w-28 shrink-0 px-3 py-2 text-xs text-zinc-400">{n.Driver}</div>
+                <div class="min-w-0 flex-1 px-3 py-2 text-xs text-zinc-400">{n.Scope}</div>
+                <div class="w-28 shrink-0 px-3 py-2">
+                  <Show when={hasRole("operator")}>
+                    <Button variant="danger" onClick={() => remove(n.Id)}>删除</Button>
+                  </Show>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+        <Show when={store.items().length === 0 && !store.error()}>
+          <div class="py-16 text-center text-zinc-400">暂无网络</div>
+        </Show>
+      </div>
 
       <Modal open={show()} onClose={() => setShow(false)} title="创建网络">
         <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="名称" value={form().name} onInput={(e) => set("name", e.currentTarget.value)} />
