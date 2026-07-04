@@ -1,8 +1,48 @@
-import { Component, JSX, createSignal, createEffect, For, Show } from "solid-js";
+import { Component, JSX, createSignal, createEffect, onMount, For, Show } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
-import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor } from "../../stores/tabs";
+import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, type PageTab } from "../../stores/tabs";
+
+const CLOSE_ANIM_MS = 150;
+
+// Owns its own enter/exit animation so a tab visibly grows in on open and
+// shrinks out on close, instead of the strip instantly reflowing — a fast
+// second click right after closing one tab used to land on whatever tab had
+// just snapped into that same spot. `onClose` (the real navigate+removeTab
+// logic) only fires after the shrink animation finishes.
+const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void; onClose: () => void }> = (p) => {
+  const [entered, setEntered] = createSignal(false);
+  const [closing, setClosing] = createSignal(false);
+  onMount(() => requestAnimationFrame(() => setEntered(true)));
+
+  const startClose = (e: MouseEvent) => {
+    e.stopPropagation();
+    setClosing(true);
+    setTimeout(p.onClose, CLOSE_ANIM_MS);
+  };
+
+  return (
+    <div
+      class={`group flex shrink-0 cursor-pointer items-center overflow-hidden whitespace-nowrap rounded-md border text-xs text-zinc-200 transition-all ease-out ${
+        p.active ? "border-indigo-500/30 bg-indigo-500/15" : "border-transparent hover:bg-zinc-800/60"
+      } ${
+        entered() && !closing()
+          ? "max-w-[12rem] gap-1.5 px-2.5 py-1 opacity-100 scale-100"
+          : "max-w-0 gap-0 px-0 py-1 opacity-0 scale-90"
+      }`}
+      style={{ "transition-duration": `${CLOSE_ANIM_MS}ms` }}
+      onClick={p.onActivate}
+    >
+      <span class="max-w-[9rem] truncate text-left">{p.tab.label}</span>
+      <button
+        class="shrink-0 text-zinc-500 transition-colors hover:text-zinc-200"
+        onClick={startClose}
+        aria-label={`关闭标签 ${p.tab.label}`}
+      >✕</button>
+    </div>
+  );
+};
 
 export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const [drawerOpen, setDrawerOpen] = createSignal(false);
@@ -16,8 +56,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     openOrActivate(location.pathname, labelFor(location.pathname));
   });
 
-  const closeAndNavigate = (e: MouseEvent, path: string) => {
-    e.stopPropagation();
+  const closeAndNavigate = (path: string) => {
     if (location.pathname !== path) {
       // Closing a background tab — nothing on screen needs to change.
       removeTab(path);
@@ -83,21 +122,12 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           <div class="flex min-w-0 items-center gap-1 overflow-x-auto">
             <For each={tabs()}>
               {(t) => (
-                <div
-                  class={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs text-zinc-200 transition-colors ${
-                    location.pathname === t.path
-                      ? "border-indigo-500/30 bg-indigo-500/15"
-                      : "border-transparent hover:bg-zinc-800/60"
-                  }`}
-                  onClick={() => navigate(t.path, { replace: true })}
-                >
-                  <span class="max-w-[9rem] truncate text-left">{t.label}</span>
-                  <button
-                    class="shrink-0 text-zinc-500 transition-colors hover:text-zinc-200"
-                    onClick={(e) => closeAndNavigate(e, t.path)}
-                    aria-label={`关闭标签 ${t.label}`}
-                  >✕</button>
-                </div>
+                <TabChip
+                  tab={t}
+                  active={location.pathname === t.path}
+                  onActivate={() => navigate(t.path, { replace: true })}
+                  onClose={() => closeAndNavigate(t.path)}
+                />
               )}
             </For>
           </div>
