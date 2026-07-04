@@ -31,14 +31,19 @@ const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void
 
   return (
     <div
-      class={`group flex shrink-0 cursor-pointer items-center overflow-hidden whitespace-nowrap rounded-md border text-xs text-zinc-200 transition-all ease-out ${
+      class={`group flex shrink-0 cursor-pointer items-center overflow-hidden whitespace-nowrap rounded-md border text-xs text-zinc-200 ease-out ${
         p.active ? "border-indigo-500/30 bg-indigo-500/15" : "border-transparent hover:bg-zinc-800/60"
       } ${
         entered() && !closing()
           ? "max-w-[12rem] gap-1.5 px-2.5 py-1 opacity-100 scale-100"
           : "max-w-0 gap-0 px-0 py-1 opacity-0 scale-90"
       }`}
-      style={{ "transition-duration": `${CLOSE_ANIM_MS}ms` }}
+      style={{
+        "transition-duration": `${CLOSE_ANIM_MS}ms`,
+        // Only animate the open/close (shape) properties — not border/background
+        // color, so switching the active tab snaps instantly instead of fading.
+        "transition-property": "max-width, opacity, transform, padding, gap",
+      }}
       onClick={p.onActivate}
     >
       <span class="max-w-[9rem] truncate text-left">{p.tab.label}</span>
@@ -73,6 +78,15 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     // to its left neighbor FIRST, then drop the old tab — not the other way
     // around.
     const dest = leftNeighbor(path)?.path ?? "/overview";
+    if (dest === path) {
+      // Closing your only remaining tab, which is already the "/overview"
+      // fallback itself — there's nowhere left to switch to. navigate() to
+      // the same path is a no-op in solid-router (location.pathname never
+      // actually changes), so nothing would ever re-fire the tab-sync effect
+      // to recreate it — removeTab would leave a genuinely empty strip with
+      // no way back. Leave this last tab in place instead of closing it.
+      return;
+    }
     openOrActivate(dest, labelFor(dest)); // no-op if dest's tab (the left neighbor) already exists
     // replace, not push: switching/closing tabs is tab management, not
     // "forward" navigation. Pushing here left a history entry for the tab
