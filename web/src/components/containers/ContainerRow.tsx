@@ -68,11 +68,11 @@ export const ContainerRow: Component<{
 
   return (
     <div
-      class={`flex text-sm transition-colors ${rowBg()} ${p.selected ? "ring-1 ring-inset ring-indigo-500/60" : ""}`}
+      class={`flex flex-col text-sm transition-colors sm:flex-row ${rowBg()} ${p.selected ? "ring-1 ring-inset ring-indigo-500/60" : ""}`}
       onClick={() => p.onToggleSelect?.()}
     >
       {/* Container info + actions */}
-      <div class="w-44 shrink-0 px-3 py-2">
+      <div class="w-full px-3 py-2 sm:w-44 sm:shrink-0">
         <div class="flex items-center gap-1.5">
           <span class={`h-2 w-2 shrink-0 ${STATE_DOT[c().State] ?? "bg-zinc-600"}`} />
           <a
@@ -131,12 +131,12 @@ export const ContainerRow: Component<{
       </div>
 
       {/* Network + Ports */}
-      <div class="w-36 shrink-0 px-3 py-2 text-center">
+      <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left sm:w-36 sm:shrink-0 sm:border-t-0 sm:text-center">
         <Show when={nets()}>
-          <div class="mx-auto max-w-[10rem] truncate text-xs text-zinc-500" title={nets()}>{nets()}</div>
+          <div class="truncate text-xs text-zinc-500 sm:mx-auto sm:max-w-[10rem]" title={nets()}>{nets()}</div>
         </Show>
         <Show when={pubPorts().length > 0}>
-          <div class="mt-0.5 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5">
+          <div class="mt-0.5 flex flex-wrap items-center justify-start gap-x-1.5 gap-y-0.5 sm:justify-center">
             <For each={pubPorts()}>
               {(port) => (
                 <a
@@ -161,7 +161,7 @@ export const ContainerRow: Component<{
       {/* Mounts — only linked to the file browser while the container is
           running, since browsing its filesystem is exec-based and has
           nothing to attach to once it's stopped. */}
-      <div class="min-w-0 flex-1 px-3 py-2">
+      <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 sm:flex-1 sm:border-t-0">
         <Show
           when={c().Mounts.length > 0}
           fallback={<span class="text-xs text-zinc-500">—</span>}
@@ -213,7 +213,7 @@ export const ContainerRow: Component<{
       </div>
 
       {/* Command */}
-      <div class="w-48 shrink-0 px-3 py-2">
+      <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-48 sm:shrink-0 sm:border-t-0">
         <span class="line-clamp-3 break-all font-mono text-[11px] text-zinc-400" title={c().Command}>
           {c().Command || "—"}
         </span>
@@ -224,8 +224,11 @@ export const ContainerRow: Component<{
 
 // Header row matching ContainerRow's column widths — used above the <For> in
 // any list that renders ContainerRow, so labels line up with their column.
+// Hidden below sm: the column labels only mean something once the row is
+// actually laid out as columns; ContainerRow itself stacks into a single
+// full-width block below that breakpoint, where the labels add nothing.
 export const ContainerRowHeader: Component = () => (
-  <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+  <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
     <div class="w-44 shrink-0 px-3 py-2">容器</div>
     <div class="w-36 shrink-0 px-3 py-2 text-center">网络 / 端口</div>
     <div class="min-w-0 flex-1 px-3 py-2">挂载</div>

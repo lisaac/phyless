@@ -80,7 +80,7 @@ export const BulkRunModal: Component<{
       onClick={props.onClose}
     >
       <div
-        class="flex h-[90vh] w-[95vw] max-w-7xl flex-col overflow-hidden rounded border border-zinc-700 bg-zinc-950 shadow-2xl"
+        class="flex h-full w-full flex-col overflow-hidden bg-zinc-950 shadow-2xl sm:h-[90vh] sm:w-[95vw] sm:max-w-7xl sm:rounded sm:border sm:border-zinc-700"
         onClick={(e) => e.stopPropagation()}
       >
         {/* header */}
@@ -94,19 +94,20 @@ export const BulkRunModal: Component<{
           >✕</button>
         </div>
 
-        {/* body */}
+        {/* body — stacked on mobile (each pane needs real width to be
+            usable), side-by-side from sm up */}
         <Show
           when={!data.loading}
           fallback={<p class="p-4 text-xs text-zinc-500">加载中…</p>}
         >
-          <div class="grid min-h-0 flex-1 grid-cols-2 gap-px bg-zinc-800">
-            <div class="flex min-h-0 flex-col bg-zinc-950 p-3">
+          <div class="grid min-h-0 flex-1 grid-cols-1 gap-px overflow-y-auto bg-zinc-800 sm:grid-cols-2 sm:overflow-visible">
+            <div class="flex min-h-[40vh] flex-col bg-zinc-950 p-3 sm:min-h-0">
               <div class="mb-1 text-xs text-zinc-400">命令行</div>
               <div class="min-h-0 flex-1">
                 <CodeEditor value={cli()} onChange={onCliEdit} language="text" />
               </div>
             </div>
-            <div class="flex min-h-0 flex-col bg-zinc-950 p-3">
+            <div class="flex min-h-[40vh] flex-col bg-zinc-950 p-3 sm:min-h-0">
               <div class="mb-1 text-xs text-zinc-400">compose.yaml</div>
               <div class="min-h-0 flex-1">
                 <CodeEditor value={compose()} onChange={onComposeEdit} language="yaml" />

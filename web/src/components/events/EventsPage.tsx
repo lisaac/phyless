@@ -29,7 +29,7 @@ export const EventsPage: Component = () => {
     <div>
       <h1 class="mb-4 text-xl font-semibold">事件</h1>
       <div class="overflow-x-auto border border-zinc-800">
-        <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+        <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
           <div class="w-28 shrink-0 px-2 py-2">时间</div>
           <div class="w-28 shrink-0 px-2 py-2">类型</div>
           <div class="w-28 shrink-0 px-2 py-2">动作</div>
@@ -38,11 +38,11 @@ export const EventsPage: Component = () => {
         <div class="divide-y divide-zinc-800">
           <For each={events()}>
             {(e) => (
-              <div class="flex text-sm">
-                <div class="w-28 shrink-0 px-2 py-1 text-xs text-zinc-500">{e.time ? new Date(e.time * 1000).toLocaleTimeString() : ""}</div>
-                <div class="w-28 shrink-0 px-2 py-1">{e.Type}</div>
-                <div class="w-28 shrink-0 px-2 py-1">{e.Action}</div>
-                <div class="min-w-0 flex-1 truncate px-2 py-1 text-zinc-300">{name(e)}</div>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2 py-1 text-sm sm:flex-nowrap sm:gap-0 sm:px-0 sm:py-0">
+                <div class="w-auto shrink-0 text-xs text-zinc-500 sm:w-28 sm:px-2 sm:py-1">{e.time ? new Date(e.time * 1000).toLocaleTimeString() : ""}</div>
+                <div class="w-auto shrink-0 text-xs sm:w-28 sm:px-2 sm:py-1">{e.Type}</div>
+                <div class="w-auto shrink-0 text-xs sm:w-28 sm:px-2 sm:py-1">{e.Action}</div>
+                <div class="min-w-0 w-full flex-1 truncate text-zinc-300 sm:w-auto sm:px-2 sm:py-1">{name(e)}</div>
               </div>
             )}
           </For>

@@ -11,12 +11,12 @@ export function Tabs<T extends string>(props: {
   onChange: (t: T) => void;
 }) {
   return (
-    <div class="flex gap-1 border-b border-zinc-800 text-sm">
+    <div class="flex gap-1 overflow-x-auto border-b border-zinc-800 text-sm">
       <For each={props.tabs}>
         {(t) => (
           <button
             disabled={t.disabled}
-            class={`border-b-2 px-3 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
+            class={`shrink-0 whitespace-nowrap border-b-2 px-3 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
               props.active === t.key
                 ? "border-indigo-500 text-zinc-100"
                 : "border-transparent text-zinc-500 hover:text-zinc-300"

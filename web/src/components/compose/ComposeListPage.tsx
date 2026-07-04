@@ -80,7 +80,7 @@ export const ComposeListPage: Component = () => {
             return (
               <div class="border border-zinc-800">
                 <div
-                  class={`flex items-start gap-3 px-3 py-2 cursor-pointer transition-colors ${
+                  class={`flex flex-col gap-2 px-3 py-2 cursor-pointer transition-colors sm:flex-row sm:items-start sm:gap-3 ${
                     (p.running ?? 0) > 0 ? "bg-sky-500/[0.05] hover:bg-sky-500/[0.09]" : "hover:bg-white/[0.03]"
                   }`}
                   onClick={() => toggleExpand(p.id)}
@@ -107,7 +107,7 @@ export const ComposeListPage: Component = () => {
                     </div>
                     <div class="mt-0.5 text-[11px] text-zinc-400">{p.compose_file}</div>
                   </div>
-                  <div class="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
+                  <div class="flex shrink-0 flex-wrap items-center gap-0.5 sm:ml-auto sm:justify-end" onClick={(e) => e.stopPropagation()}>
                     <Show when={hasRole("operator")}>
                       <ActBtn title="docker compose up -d" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
                       <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>

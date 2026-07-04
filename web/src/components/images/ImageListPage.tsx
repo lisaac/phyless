@@ -230,7 +230,7 @@ export const ImageListPage: Component = () => {
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
 
       <div class="overflow-x-auto border border-zinc-800">
-        <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+        <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
           <div class="min-w-0 flex-1 px-3 py-2">标签</div>
           <div class="w-24 shrink-0 px-3 py-2 text-center">大小</div>
           <div class="w-48 shrink-0 px-3 py-2 text-center">使用容器</div>
@@ -239,8 +239,8 @@ export const ImageListPage: Component = () => {
         <div class="divide-y divide-zinc-800">
           <For each={store.items()}>
             {(img) => (
-              <div class="flex items-start text-sm transition-colors hover:bg-white/[0.03]">
-                <div class="min-w-0 flex-1 px-3 py-2">
+              <div class="flex flex-col text-sm transition-colors sm:flex-row sm:items-start hover:bg-white/[0.03]">
+                <div class="min-w-0 w-full px-3 py-2 sm:flex-1">
                   {/* Tags — editable + deletable chips */}
                   <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;</div>}>
                     <For each={img.RepoTags}>
@@ -295,10 +295,10 @@ export const ImageListPage: Component = () => {
                     </Show>
                   </div>
                 </div>
-                <div class="w-24 shrink-0 self-center px-3 py-2 text-center text-xs text-zinc-400">{fmtSize(img.Size)}</div>
-                <div class="w-48 shrink-0 self-center px-3 py-2 text-center text-xs">
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-24 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtSize(img.Size)}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs sm:w-48 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">
                   <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
-                    <div class="flex flex-col items-center gap-0.5">
+                    <div class="flex flex-col items-start gap-0.5 sm:items-center">
                       <For each={img.UsedBy}>
                         {(c) => (
                           <A href={`/containers/${c.Id}`} replace class="text-indigo-400 hover:text-indigo-300 hover:underline">
@@ -309,7 +309,7 @@ export const ImageListPage: Component = () => {
                     </div>
                   </Show>
                 </div>
-                <div class="w-40 shrink-0 self-center px-3 py-2 text-center text-xs text-zinc-400">{fmtDate(img.Created)}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-40 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtDate(img.Created)}</div>
               </div>
             )}
           </For>

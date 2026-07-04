@@ -200,12 +200,15 @@ export const FileBrowser: Component<{
                     {label}{sortCol() === col ? (sortDir() === 1 ? " ↑" : " ↓") : ""}
                   </th>
                 );
+                // 权限/所有者/修改时间 hidden below sm — a 6-column table has
+                // nowhere to go on a phone-width screen; name/size/actions
+                // are what you actually need to navigate and act on files.
                 return <>
                   {th("name", "名称")}
-                  {th("mode", "权限")}
-                  {th("owner", "所有者")}
+                  {th("mode", "权限", "hidden sm:table-cell")}
+                  {th("owner", "所有者", "hidden sm:table-cell")}
                   {th("size", "大小", "text-right")}
-                  {th("mod_time", "修改时间")}
+                  {th("mod_time", "修改时间", "hidden sm:table-cell")}
                   <th class="pb-1 font-normal" />
                 </>;
               })()}
@@ -240,12 +243,12 @@ export const FileBrowser: Component<{
                         />
                       </Show>
                     </td>
-                    <td class="py-1 pr-3 font-mono text-[11px] text-zinc-400">{e.mode ?? ""}</td>
-                    <td class="py-1 pr-3 text-[11px] text-zinc-400">
+                    <td class="hidden py-1 pr-3 font-mono text-[11px] text-zinc-400 sm:table-cell">{e.mode ?? ""}</td>
+                    <td class="hidden py-1 pr-3 text-[11px] text-zinc-400 sm:table-cell">
                       {e.uname ?? (e.uid != null ? String(e.uid) : "")}{e.gid != null ? `:${e.gid}` : ""}
                     </td>
                     <td class="py-1 pr-3 text-right font-mono text-[11px] text-zinc-400">{e.is_dir ? "—" : fmtSize(e.size)}</td>
-                    <td class="py-1 pr-3 text-[11px] text-zinc-400">{fmtTime(e.mod_time)}</td>
+                    <td class="hidden py-1 pr-3 text-[11px] text-zinc-400 sm:table-cell">{fmtTime(e.mod_time)}</td>
                     <td class="py-1">
                       <div class="flex gap-2">
                         <Show when={props.onRename}>

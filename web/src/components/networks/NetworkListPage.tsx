@@ -46,7 +46,7 @@ export const NetworkListPage: Component = () => {
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
 
       <div class="overflow-x-auto border border-zinc-800">
-        <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+        <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
           <div class="w-56 shrink-0 px-3 py-2">名称</div>
           <div class="w-28 shrink-0 px-3 py-2">驱动</div>
           <div class="min-w-0 flex-1 px-3 py-2">范围</div>
@@ -55,11 +55,11 @@ export const NetworkListPage: Component = () => {
         <div class="divide-y divide-zinc-800">
           <For each={store.items()}>
             {(n) => (
-              <div class="flex text-sm transition-colors hover:bg-white/[0.03]">
-                <div class="w-56 shrink-0 px-3 py-2 font-medium">{n.Name}</div>
-                <div class="w-28 shrink-0 px-3 py-2 text-xs text-zinc-400">{n.Driver}</div>
-                <div class="min-w-0 flex-1 px-3 py-2 text-xs text-zinc-400">{n.Scope}</div>
-                <div class="w-28 shrink-0 px-3 py-2">
+              <div class="flex flex-col text-sm transition-colors sm:flex-row hover:bg-white/[0.03]">
+                <div class="w-full px-3 py-2 font-medium sm:w-56 sm:shrink-0">{n.Name}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:w-28 sm:shrink-0 sm:border-t-0">{n.Driver}</div>
+                <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:flex-1 sm:border-t-0">{n.Scope}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-28 sm:shrink-0 sm:border-t-0">
                   <Show when={hasRole("operator")}>
                     <Button variant="danger" onClick={() => remove(n.Id)}>删除</Button>
                   </Show>

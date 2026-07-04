@@ -257,15 +257,15 @@ export const ComposeDetailPage: Component = () => {
       </Show>
 
       <Show when={tab() === "files"}>
-        <div class="grid grid-cols-2 gap-3">
-          <div class="h-[60vh] overflow-auto border border-zinc-800 p-2">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div class="h-[40vh] overflow-auto border border-zinc-800 p-2 sm:h-[60vh]">
             <FileBrowser
               listPath={(sub) => get<FileEntry[]>(`/api/compose/files?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub)}`)}
               onOpenFile={openFile}
               instanceKey={id()}
             />
           </div>
-          <div class="flex h-[60vh] flex-col">
+          <div class="flex h-[40vh] flex-col sm:h-[60vh]">
             <div class="mb-1 flex items-center justify-between">
               <span class="truncate font-mono text-xs text-zinc-400">{selectedFile() ?? "未选择文件"}</span>
               <Show when={hasRole("operator") && selectedFile()}>

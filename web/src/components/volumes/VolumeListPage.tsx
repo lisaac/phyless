@@ -45,7 +45,7 @@ export const VolumeListPage: Component = () => {
           name column left the mountpoint/used-by columns starved for room
           whenever a name happened to be long. */}
       <div class="overflow-x-auto border border-zinc-800">
-        <div class="flex border-b border-zinc-800 text-xs text-zinc-500">
+        <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
           <div class="w-48 shrink-0 px-3 py-2">名称</div>
           <div class="w-20 shrink-0 px-3 py-2">驱动</div>
           <div class="min-w-0 flex-1 px-3 py-2">挂载点</div>
@@ -55,13 +55,13 @@ export const VolumeListPage: Component = () => {
         <div class="divide-y divide-zinc-800">
           <For each={store.items()}>
             {(v) => (
-              <div class="flex text-sm transition-colors hover:bg-white/[0.03]">
-                <div class="w-48 shrink-0 px-3 py-2">
+              <div class="flex flex-col text-sm transition-colors sm:flex-row hover:bg-white/[0.03]">
+                <div class="w-full px-3 py-2 sm:w-48 sm:shrink-0">
                   <span class="font-medium" title={v.Name}>{midPath(v.Name)}</span>
                 </div>
-                <div class="w-20 shrink-0 px-3 py-2 text-xs text-zinc-400">{v.Driver}</div>
-                <div class="min-w-0 flex-1 px-3 py-2 text-xs text-zinc-400" title={v.Mountpoint}>{midPath(v.Mountpoint)}</div>
-                <div class="w-48 shrink-0 px-3 py-2">
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:w-20 sm:shrink-0 sm:border-t-0">{v.Driver}</div>
+                <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:flex-1 sm:border-t-0" title={v.Mountpoint}>{midPath(v.Mountpoint)}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-48 sm:shrink-0 sm:border-t-0">
                   <Show when={(v.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
                     <div class="flex flex-wrap gap-x-1.5 gap-y-0.5">
                       <For each={v.UsedBy}>
@@ -78,7 +78,7 @@ export const VolumeListPage: Component = () => {
                     </div>
                   </Show>
                 </div>
-                <div class="w-36 shrink-0 px-3 py-2">
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-36 sm:shrink-0 sm:border-t-0">
                   <div class="flex gap-1">
                     <Button onClick={() => setBrowse(v)}>浏览</Button>
                     <Show when={hasRole("operator")}>

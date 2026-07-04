@@ -393,7 +393,7 @@ export const CreateContainerModal: Component<{
 
           {/* 基本 */}
           <SectionLabel>基本</SectionLabel>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {inp("容器名称", "name", "my-container", "容器的唯一标识名称，对应 --name")}
             <label class="block">
               <span class="mb-1 block text-xs text-zinc-500 cursor-help" title="容器使用的 Docker 镜像，格式：名称:标签，如 nginx:latest">镜像</span>
@@ -409,7 +409,7 @@ export const CreateContainerModal: Component<{
               </datalist>
             </label>
           </div>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {rg("重启策略", "restart_policy", RESTART_OPTS, "容器退出后的重启行为：no/always/unless-stopped/on-failure")}
             {rg("拉取策略", "pull_policy", PULL_OPTS, "创建前是否拉取最新镜像：always/missing/never")}
           </div>
@@ -430,13 +430,13 @@ export const CreateContainerModal: Component<{
 
           {/* 网络 & 端口 */}
           <SectionLabel>网络 & 端口</SectionLabel>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {sel("网络", "network_mode", networkOptions(), "容器网络模式：bridge/host/none 或自定义网络名")}
             {ta("端口映射 (-p)", "ports", "8080:80\n443:443/tcp", "宿主机端口:容器端口，每行一条。格式：[IP:]主机端口:容器端口[/协议]")}
           </div>
           {/* 存储 & 环境 */}
           <SectionLabel>存储 & 环境</SectionLabel>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {ta("挂载 (-v)", "binds", "/data:/data\n/etc/localtime:/etc/localtime:ro", "主机路径:容器路径[:mode]，每行一条。mode 可为 ro/rw/z/Z 等")}
             {ta("环境变量 (-e)", "env", "TZ=Asia/Shanghai\nDEBUG=false", "KEY=value 格式，每行一条，对应 -e 参数")}
           </div>
@@ -447,22 +447,22 @@ export const CreateContainerModal: Component<{
               高级选项
             </summary>
             <div class="mt-3 space-y-3">
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {inp("用户 (-u)", "user", "1000 或 www-data", "运行容器进程的用户/UID，对应 -u。如 1000、www-data、1000:1000")}
                 {inp("主机名", "hostname", "留空使用容器 ID", "容器的主机名，对应 -h。留空时 Docker 用容器 ID 前 12 位")}
               </div>
               {inp("工作目录", "working_dir", "/app", "容器进程的初始工作目录，对应 -w / --workdir")}
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {ta("DNS (--dns)", "dns", "8.8.8.8\n1.1.1.1", "自定义 DNS 服务器，每行一条，对应 --dns")}
                 {ta("设备 (--device)", "devices", "/dev/snd:/dev/snd", "映射宿主机设备到容器，格式：/dev/host:/dev/container[:权限]，对应 --device")}
               </div>
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {ta("tmpfs (--tmpfs)", "tmpfs", "/run:size=64m\n/tmp", "在内存中挂载 tmpfs，格式：/路径[:选项]，如 /run:size=64m,uid=1000")}
                 {ta("Sysctls", "sysctls", "net.core.somaxconn=1024", "内核参数，格式：key=value，每行一条。对应 --sysctl")}
               </div>
 
               {/* Cap Add + Cap Drop — single-row combo: text input + dropdown picker */}
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {/* Cap Add */}
                 <div>
                   <span class="mb-1 block text-xs text-zinc-500 cursor-help" title="添加 Linux Capabilities，逗号分隔。如 NET_ADMIN,SYS_PTRACE。点击 ▾ 可选择">Cap Add (--cap-add)</span>
@@ -534,19 +534,19 @@ export const CreateContainerModal: Component<{
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {ta("标签 (--label)", "labels", "team=infra\nenv=prod", "容器元数据标签，格式：key=value，每行一条，对应 --label")}
               </div>
-              <div class="grid grid-cols-3 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {inp("内存上限 (MB)", "memory", "256", "容器可使用的最大内存（MB）。超出后进程会被 OOM 强制终止")}
                 {inp("内存+Swap (MB)", "memory_swap", "512 或 -1", "内存+Swap 合计上限（MB），需大于内存上限。留空=默认(2×内存)，设 -1 表示 Swap 无限")}
                 {inp("CPU 权重", "cpu_shares", "1024", "相对 CPU 权重，默认 1024。多容器竞争时，权重越高分得越多 CPU 时间")}
               </div>
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {inp("CPU Quota (μs)", "cpu_quota", "50000", "每个调度周期内容器最多使用的 CPU 时间（微秒）。如 50000 / 100000 Period = 50% CPU")}
                 {inp("CPU Period (μs)", "cpu_period", "100000", "CPU 调度周期长度（微秒），默认 100000（100ms）。通常无需修改")}
               </div>
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label class="block">
                   <span class="mb-1 block text-xs text-zinc-500 cursor-help" title="日志收集驱动，默认 json-file。修改后需重建容器才生效">日志驱动 (--log-driver)</span>
                   <div class="relative">
