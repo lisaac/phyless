@@ -34,8 +34,20 @@ export function openOrActivate(path: string, label: string) {
   setTabs((t) => [...t, { path, label }]);
 }
 
+// `<For>` in Layout.tsx reconciles by object identity, not by `path` — so
+// replacing a tab with a new object (even one with an identical label)
+// makes it remount the tab's chip, replaying its entrance animation. Detail
+// pages call this every time their data (re)loads, including when you just
+// switch back to an already-resolved tab, so this must be a genuine no-op —
+// same array, same objects — whenever the label hasn't actually changed.
 export function setTabLabel(path: string, label: string) {
-  setTabs((t) => t.map((x) => (x.path === path ? { ...x, label } : x)));
+  setTabs((t) => {
+    const idx = t.findIndex((x) => x.path === path);
+    if (idx === -1 || t[idx].label === label) return t;
+    const next = [...t];
+    next[idx] = { ...next[idx], label };
+    return next;
+  });
 }
 
 // The tab immediately to the left of `path`, or undefined if it's leftmost.
