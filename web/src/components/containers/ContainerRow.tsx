@@ -39,7 +39,10 @@ export const ContainerRow: Component<{
   const navigate = useNavigate();
   const c = () => p.c;
   const name = () => containerName(c());
-  const running = () => c().State === "running";
+  // "restarting" is treated as running for action purposes — it's still an
+  // up container mid-restart, not a stopped one, so it should offer
+  // stop/pause/restart/kill rather than "启动" (which would be a no-op/error).
+  const running = () => c().State === "running" || c().State === "restarting";
   const paused = () => c().State === "paused";
 
   const rowBg = () => {

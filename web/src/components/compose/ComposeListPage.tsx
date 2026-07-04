@@ -127,27 +127,35 @@ export const ComposeListPage: Component = () => {
                   class="grid transition-[grid-template-rows] duration-200 ease-out"
                   style={{ "grid-template-rows": isOpen() ? "1fr" : "0fr" }}
                 >
-                  <div class="overflow-hidden border-t border-zinc-800 p-2">
-                    {/* Boxed the same way ComposeDetailPage's info-tab "容器"
-                        section is (mt-1 border border-zinc-800) — this used
-                        to be just a top border, which read differently from
-                        the detail page's own container list. */}
-                    <div class="border border-zinc-800">
-                      <Show when={cs().length > 0} fallback={<div class="px-3 py-3 text-xs text-zinc-500">无容器</div>}>
-                        <div class="divide-y divide-zinc-800">
-                          <For each={cs()}>
-                            {(c) => (
-                              <ContainerRow
-                                c={c}
-                                isP={isP}
-                                act={act}
-                                onViewCmd={setRunTarget}
-                                onConsole={setConsoleTarget}
-                              />
-                            )}
-                          </For>
-                        </div>
-                      </Show>
+                  {/* overflow-hidden must carry NO padding/border of its own —
+                      those add real box height on top of the "auto min-height
+                      is 0 under overflow:hidden" trick that lets the grid row
+                      actually reach 0px, which is why a p-2/border-t placed
+                      directly here used to leave a sliver visible even when
+                      collapsed. Padding/border live one level deeper instead. */}
+                  <div class="overflow-hidden">
+                    <div class="border-t border-zinc-800 p-2">
+                      {/* Boxed the same way ComposeDetailPage's info-tab "容器"
+                          section is (mt-1 border border-zinc-800) — this used
+                          to be just a top border, which read differently from
+                          the detail page's own container list. */}
+                      <div class="border border-zinc-800">
+                        <Show when={cs().length > 0} fallback={<div class="px-3 py-3 text-xs text-zinc-500">无容器</div>}>
+                          <div class="divide-y divide-zinc-800">
+                            <For each={cs()}>
+                              {(c) => (
+                                <ContainerRow
+                                  c={c}
+                                  isP={isP}
+                                  act={act}
+                                  onViewCmd={setRunTarget}
+                                  onConsole={setConsoleTarget}
+                                />
+                              )}
+                            </For>
+                          </div>
+                        </Show>
+                      </div>
                     </div>
                   </div>
                 </div>

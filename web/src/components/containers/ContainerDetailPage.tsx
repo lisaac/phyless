@@ -337,9 +337,10 @@ export const ContainerDetailPage: Component = () => {
           <p class="mt-0.5 font-mono text-[11px] text-zinc-400">{cfg().Image}</p>
         </div>
 
-        {/* Action strip */}
+        {/* Action strip — boxed the same way ComposeDetailPage's action row is
+            (border + bg-zinc-900/60), for a consistent look across both. */}
         <Show when={hasRole("operator")}>
-          <div class="flex flex-wrap items-center gap-1.5">
+          <div class="flex flex-wrap items-center gap-0.5 border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
             <Show when={!running()}>
               <Btn loading={isP("start")} onClick={() => void act("start")}>▶ 启动</Btn>
             </Show>
@@ -348,7 +349,7 @@ export const ContainerDetailPage: Component = () => {
             </Show>
             <Btn loading={isP("restart")} onClick={() => void act("restart")}>↺ 重启</Btn>
             <Btn loading={isP("kill")} danger onClick={() => void act("kill")}>✕ 强制关闭</Btn>
-            <span class="text-zinc-400">│</span>
+            <span class="mx-0.5 text-zinc-600">│</span>
             <Btn onClick={() => {
               window.open(`/api/containers/${id()}/export?token=${encodeURIComponent(getToken() ?? "")}`, "_blank");
             }}>↓ 导出 tar</Btn>
@@ -357,7 +358,7 @@ export const ContainerDetailPage: Component = () => {
             <Show when={running()}>
               <Btn onClick={() => setConsoleTarget({ id: id(), name: name() })}>&gt;_ 控制台</Btn>
             </Show>
-            <span class="text-zinc-400">│</span>
+            <span class="mx-0.5 text-zinc-600">│</span>
             <Btn danger onClick={async () => {
               if (!confirm(`删除容器 ${name()}?`)) return;
               try {
