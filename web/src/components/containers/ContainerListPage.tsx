@@ -98,7 +98,7 @@ export const ContainerListPage: Component = () => {
       {/* ── List (div-simulated table, so rows can be reused elsewhere — e.g.
           ComposeListPage's expanded project section) ───────────────────────── */}
       <div class="overflow-x-auto border border-zinc-800">
-        <ContainerRowHeader showCheckbox />
+        <ContainerRowHeader />
         <div class="divide-y divide-zinc-800">
           <For each={store.items()}>
             {(c) => (
