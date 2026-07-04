@@ -18,6 +18,7 @@ import { hasRole } from "../../stores/auth";
 import { setTabLabel, removeTab } from "../../stores/tabs";
 import { KV, Sec } from "../shared/KV";
 import { Btn } from "../shared/ActionButton";
+import { Tabs } from "../shared/Tabs";
 import { ContainerIcon } from "./ContainerIcon";
 import type { FileEntry, NetworkSummary } from "../../types";
 
@@ -374,24 +375,11 @@ export const ContainerDetailPage: Component = () => {
       </Show>
 
       {/* ── Tabs ────────────────────────────────────────────────────────────── */}
-      <div class="flex gap-1 border-b border-zinc-800">
-        <For each={TABS}>
-          {(t) => {
-            const disabled = () => !!t.requiresRunning && state() !== "running";
-            return (
-              <button
-                disabled={disabled()}
-                class={`rounded-t-md px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
-                  tab() === t.key
-                    ? "bg-zinc-800 text-zinc-100 font-medium"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
-                }`}
-                onClick={() => !disabled() && setTab(t.key)}
-              >{t.label}</button>
-            );
-          }}
-        </For>
-      </div>
+      <Tabs
+        tabs={TABS.map((t) => ({ key: t.key, label: t.label, disabled: !!t.requiresRunning && state() !== "running" }))}
+        active={tab()}
+        onChange={setTab}
+      />
 
       {/* ── Tab: 基本信息 ──────────────────────────────────────────────────── */}
       <Show when={tab() === "info" && inspect()}>

@@ -32,9 +32,10 @@ function composeToCli(yaml: string): string {
 }
 
 // Generic "N run commands" editor — reused by ContainerListPage's bulk
-// Run/Compose (fetchCmds derives cmds from container inspects) and the
-// Compose pages' Run/Compose (fetchCmds hits /api/compose/run-commands),
-// so both surfaces share one CLI ⇄ compose.yaml conversion UI instead of
+// Run/Compose and the Compose pages' Run/Compose. Both derive fetchCmds the
+// same way: inspect every relevant container (the selected ones, or every
+// container belonging to the project) and run each through inspectToRunCmd,
+// so the two surfaces share one CLI ⇄ compose.yaml conversion UI instead of
 // each rendering their own.
 export const BulkRunModal: Component<{
   reqKey: string; title: string; fetchCmds: () => Promise<string[]>; onClose: () => void;

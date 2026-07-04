@@ -4,7 +4,8 @@ import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
-import { get, post, del } from "../../api/client";
+import { get, post, del, imageInspectUrl } from "../../api/client";
+import { inspectToRunCmd } from "../../api/inspect";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions, fmtContainerStatus, fmtRelTime } from "../containers/containerActions";
@@ -24,7 +25,7 @@ export const ComposeListPage: Component = () => {
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [composeAction, setComposeAction] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
-  const [runProject, setRunProject] = createSignal<{ id: string; name: string } | null>(null);
+  const [runProject, setRunProject] = createSignal<{ id: string; name: string; containerIds: string[] } | null>(null);
   const [show, setShow] = createSignal(false);
   const [form, setForm] = createSignal({ name: "", base_dir: "", compose_file: "", env_file: "" });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -120,8 +121,8 @@ export const ComposeListPage: Component = () => {
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <ActBtn
-                      title="查看 docker compose config 反推出的 docker run 命令"
-                      onClick={() => setRunProject({ id: p.id, name: p.name })}
+                      title="查看 docker run 命令（inspect 项目下所有容器）"
+                      onClick={() => setRunProject({ id: p.id, name: p.name, containerIds: cs().map((c) => c.Id) })}
                     >⧉ Run/Compose</ActBtn>
                     <Show when={hasRole("operator") && !p.discovered}>
                       <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>删除</ActBtn>
@@ -194,7 +195,12 @@ export const ComposeListPage: Component = () => {
           <BulkRunModal
             reqKey={p().id}
             title={p().name}
-            fetchCmds={async () => (await get<{ commands: string[] }>(`/api/compose/run-commands?id=${encodeURIComponent(p().id)}`)).commands}
+            fetchCmds={() => Promise.all(p().containerIds.map(async (id) => {
+              const container = await get<any>(`/api/containers/${id}/inspect`);
+              let image: any = {};
+              try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
+              return inspectToRunCmd(container, image);
+            }))}
             onClose={() => setRunProject(null)}
           />
         )}

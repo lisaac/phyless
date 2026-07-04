@@ -1,6 +1,7 @@
 import { Component, createSignal, createResource, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { useParams, useSearchParams } from "@solidjs/router";
-import { get, put, getToken, setToken } from "../../api/client";
+import { get, put, getToken, setToken, imageInspectUrl } from "../../api/client";
+import { inspectToRunCmd } from "../../api/inspect";
 import { createResourceStore } from "../../stores/resource";
 import { setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
@@ -8,6 +9,7 @@ import { Button } from "../shared/Button";
 import { FileBrowser } from "../shared/FileBrowser";
 import { LogsView } from "../shared/LogsView";
 import { KV, Sec } from "../shared/KV";
+import { Tabs } from "../shared/Tabs";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions } from "../containers/containerActions";
@@ -185,7 +187,7 @@ export const ComposeDetailPage: Component = () => {
           >⊘ Down</ActBtn>
           <ActBtn title="docker compose pull" onClick={() => void runCmd("pull")}>↓ Pull</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
-          <ActBtn title="查看 docker compose config 反推出的 docker run 命令" onClick={() => setShowRun(true)}>⧉ Run/Compose</ActBtn>
+          <ActBtn title="查看 docker run 命令（inspect 项目下所有容器）" onClick={() => setShowRun(true)}>⧉ Run/Compose</ActBtn>
         </div>
       </Show>
 
@@ -193,17 +195,8 @@ export const ComposeDetailPage: Component = () => {
         <pre class="mb-3 max-h-40 overflow-auto whitespace-pre-wrap border border-zinc-800 bg-zinc-950 p-2 font-mono text-xs text-zinc-400">{output()}</pre>
       </Show>
 
-      <div class="mb-3 flex gap-1 border-b border-zinc-800 text-sm">
-        <For each={TABS}>
-          {(t) => (
-            <button
-              class={`border-b-2 px-3 py-2 transition-colors ${
-                tab() === t.key ? "border-indigo-500 text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-300"
-              }`}
-              onClick={() => setTab(t.key)}
-            >{t.label}</button>
-          )}
-        </For>
+      <div class="mb-3">
+        <Tabs tabs={TABS} active={tab()} onChange={setTab} />
       </div>
 
       <Show when={tab() === "info"}>
@@ -304,7 +297,12 @@ export const ComposeDetailPage: Component = () => {
         <BulkRunModal
           reqKey={id()}
           title={project()?.name ?? id()}
-          fetchCmds={async () => (await get<{ commands: string[] }>(`/api/compose/run-commands?id=${encodeURIComponent(id())}`)).commands}
+          fetchCmds={() => Promise.all(cs().map(async (c) => {
+            const container = await get<any>(`/api/containers/${c.Id}/inspect`);
+            let image: any = {};
+            try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
+            return inspectToRunCmd(container, image);
+          }))}
           onClose={() => setShowRun(false)}
         />
       </Show>

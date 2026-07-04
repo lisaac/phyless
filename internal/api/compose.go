@@ -37,7 +37,6 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Post("/api/compose/pull", s.handleComposePull)
 	r.Post("/api/compose/restart", s.handleComposeRestart)
 	r.Get("/api/compose/config", s.handleComposeResolvedConfig)
-	r.Get("/api/compose/run-commands", s.handleComposeRunCommands)
 	r.Get("/api/compose/files", s.handleComposeListFiles)
 	r.Get("/api/compose/files/content", s.handleComposeGetFileContent)
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
@@ -276,24 +275,6 @@ func (s *Server) handleComposeResolvedConfig(w http.ResponseWriter, r *http.Requ
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(out) //nolint:errcheck
-}
-
-// handleComposeRunCommands is what the list and detail pages' "Run/Compose"
-// button actually calls — see resolvedRunCommands (compose_runcmd.go) for why
-// this builds commands from structured, resolved ServiceConfig fields rather
-// than parsing docker compose config's YAML with a JS compose->run converter.
-func (s *Server) handleComposeRunCommands(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	runs, err := s.resolvedRunCommands(r.Context(), p)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string][]string{"commands": runs})
 }
 
 // handleComposeListFiles/handleComposeGetFileContent/handleComposePutFileContent

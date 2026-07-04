@@ -3,6 +3,7 @@ import { Modal } from "../shared/Modal";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
+import { Tabs } from "../shared/Tabs";
 import { get, post, del, imageInspectUrl } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { emptyForm, formToPayload, formToRunCmd, parseRunIntoForm, type CreateForm } from "./containerForm";
@@ -361,19 +362,12 @@ export const CreateContainerModal: Component<{
       </div>
 
       {/* ── Tabs ──────────────────────────────────────────────────────────── */}
-      <div class="mb-4 flex border-b border-zinc-800">
-        {(["form", "cmd"] as Tab[]).map((t) => (
-          <button
-            class={`px-4 py-2 text-sm font-medium transition-colors ${
-              tab() === t
-                ? "border-b-2 border-blue-500 text-zinc-100"
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-            onClick={() => switchTab(t)}
-          >
-            {t === "form" ? "表单" : "命令行 / Compose"}
-          </button>
-        ))}
+      <div class="mb-4">
+        <Tabs
+          tabs={[{ key: "form", label: "表单" }, { key: "cmd", label: "命令行 / Compose" }]}
+          active={tab()}
+          onChange={switchTab}
+        />
       </div>
 
       {/* ── Save template bar ─────────────────────────────────────────────── */}
