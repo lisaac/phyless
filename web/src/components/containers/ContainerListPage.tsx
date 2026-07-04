@@ -7,6 +7,7 @@ import { BulkRunModal } from "./BulkRunModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { ViewCmdModal } from "./ViewCmdModal";
 import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
+import { Btn } from "../shared/ActionButton";
 import type { ContainerSummary } from "../../types";
 
 // ── Main page ──────────────────────────────────────────────────────────────────
@@ -68,21 +69,14 @@ export const ContainerListPage: Component = () => {
 
         <Show when={hasRole("operator")}>
           <span class="text-zinc-400">│</span>
-          <button title="启动选中容器" class="px-2 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-            disabled={n() === 0} onClick={() => void bulk("start")}>▶ 启动</button>
-          <button title="停止选中容器" class="px-2 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-            disabled={n() === 0} onClick={() => void bulk("stop")}>■ 停止</button>
-          <button title="强制关闭 (SIGKILL)" class="px-2 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-            disabled={n() === 0} onClick={() => void bulk("kill")}>✕ 强制关闭</button>
-          <button title="删除选中容器" class="px-2 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-            disabled={n() === 0}
-            onClick={() => { if (confirm(`删除选中的 ${n()} 个容器？`)) void bulk("delete"); }}
-          >⊖ 删除</button>
+          <Btn title="启动选中容器" disabled={n() === 0} onClick={() => void bulk("start")}>▶ 启动</Btn>
+          <Btn title="停止选中容器" disabled={n() === 0} onClick={() => void bulk("stop")}>■ 停止</Btn>
+          <Btn title="强制关闭 (SIGKILL)" danger disabled={n() === 0} onClick={() => { if (confirm(`强制关闭选中的 ${n()} 个容器？`)) void bulk("kill"); }}>✕ 强制关闭</Btn>
+          <Btn title="删除选中容器" danger disabled={n() === 0} onClick={() => { if (confirm(`删除选中的 ${n()} 个容器？`)) void bulk("delete"); }}>⊖ 删除</Btn>
         </Show>
 
         <span class="text-zinc-400">│</span>
-        <button title="查看 Run/Compose 命令" class="px-2 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-          disabled={n() === 0} onClick={bulkRun}>⧉ Run/Compose</button>
+        <Btn title="查看 Run/Compose 命令" disabled={n() === 0} onClick={bulkRun}>⧉ Run/Compose</Btn>
 
         <Show when={n() > 0}>
           <button class="ml-auto text-zinc-400 hover:text-zinc-400" onClick={() => setSelected(new Set())}>

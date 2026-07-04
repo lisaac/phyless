@@ -1,8 +1,8 @@
 import { Component, JSX, createResource, For, Show } from "solid-js";
 import { get } from "../../api/client";
-import { composeToRuns } from "../../api/convert";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
+import { Btn } from "../shared/ActionButton";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 export const LABEL_PROJECT = "com.docker.compose.project";
@@ -38,29 +38,23 @@ export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => 
   </svg>
 );
 
-// Compact text button shared by the compose list and detail page — same
-// density as ContainerListPage's bulk-action bar, glyph + label so every
-// compose action (Up/Stop/Down/Restart/Pull/Run-Compose/详情) reads the same
-// regardless of which page it's clicked from.
+// Thin wrapper around the shared Btn (same style used by the container list
+// bulk-bar and container detail page) that also stops the click from
+// bubbling — compose action buttons sit inside a row whose own onClick
+// toggles the expand/collapse state.
 export const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; children: JSX.Element }> = (p) => (
-  <button
-    title={p.title}
-    onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class={`px-2 py-0.5 text-xs transition-colors ${
-      p.danger ? "text-red-400 hover:bg-red-900/40 hover:text-red-300" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-    }`}
-  >{p.children}</button>
+  <Btn title={p.title} danger={p.danger} onClick={(e) => { e.stopPropagation(); p.onClick(); }}>{p.children}</Btn>
 );
 
-// "Run/Compose" modal shared by the list and detail page — derives docker run
-// commands from `docker compose config`'s fully-resolved output (env vars
-// substituted, extends/overrides merged) instead of parsing the raw compose
-// file, so it works the same whether or not the project is deployed and
-// doesn't choke on interpolation the raw file alone can't resolve.
+// "Run/Compose" modal shared by the list and detail page — the backend
+// builds each command directly from `docker compose config`'s structured,
+// fully-resolved service definitions (see resolvedRunCommands in
+// internal/api/compose_runcmd.go), not a JS-side YAML parse, so it works the
+// same whether or not the project is currently deployed.
 export const ComposeRunModal: Component<{ project: { id: string; name: string } | null; onClose: () => void }> = (props) => {
   const [runs] = createResource(() => props.project?.id, async (id) => {
-    const resolved = await get<string>(`/api/compose/config?id=${encodeURIComponent(id)}`);
-    try { return composeToRuns(resolved); } catch { return []; }
+    const res = await get<{ commands: string[] }>(`/api/compose/run-commands?id=${encodeURIComponent(id)}`);
+    return res.commands;
   });
 
   return (

@@ -17,6 +17,7 @@ import { inspectToRunCmd } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
 import { setTabLabel, removeTab } from "../../stores/tabs";
 import { KV, Sec } from "../shared/KV";
+import { Btn } from "../shared/ActionButton";
 import type { FileEntry, NetworkSummary } from "../../types";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -95,23 +96,6 @@ const EditableKV: Component<{
       </dd>
     </div>
   );
-};
-
-// ── Action button ─────────────────────────────────────────────────────────────
-const Btn: Component<{
-  onClick?: () => void; href?: string; danger?: boolean;
-  disabled?: boolean; loading?: boolean; title?: string; children: any;
-}> = (p) => {
-  const cls = `rounded-md px-2.5 py-1 text-xs transition-colors disabled:opacity-30 ${
-    p.danger
-      ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
-      : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
-  }`;
-  return p.href
-    ? <a href={p.href} class={cls} title={p.title}>{p.children}</a>
-    : <button class={cls} onClick={p.onClick} disabled={p.disabled || p.loading} title={p.title}>
-        {p.loading ? <span class="inline-block animate-spin">↺</span> : p.children}
-      </button>;
 };
 
 function fmtTime(unix: number): string {

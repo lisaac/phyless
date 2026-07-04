@@ -42,7 +42,8 @@ export const ComposeListPage: Component = () => {
       toast.success("已注册");
     } catch (e) { toast.error((e as Error).message); }
   };
-  const remove = async (id: string) => {
+  const remove = async (id: string, name: string) => {
+    if (!confirm(`删除 Compose 项目 ${name}？`)) return;
     try {
       await del(`/api/compose?id=${encodeURIComponent(id)}`);
       await store.refresh();
@@ -77,7 +78,11 @@ export const ComposeListPage: Component = () => {
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-1.5 font-medium">
                       <ComposeIcon size={14} />
-                      {p.name}
+                      <a
+                        href={`/compose/${p.id}`}
+                        class="hover:text-indigo-400 hover:underline transition-colors"
+                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
+                      >{p.name}</a>
                     </div>
                     <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
                       <Show when={p.discovered}>
@@ -96,7 +101,11 @@ export const ComposeListPage: Component = () => {
                     <Show when={hasRole("operator")}>
                       <ActBtn title="docker compose up -d" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
                       <ActBtn title="docker compose stop" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
-                      <ActBtn title="docker compose down（停止并移除容器、网络）" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "down" })}>⊘ Down</ActBtn>
+                      <ActBtn
+                        danger
+                        title="docker compose down（停止并移除容器、网络）"
+                        onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) setComposeAction({ id: p.id, name: p.name, verb: "down" }); }}
+                      >⊘ Down</ActBtn>
                       <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
                       <ActBtn title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
@@ -105,9 +114,8 @@ export const ComposeListPage: Component = () => {
                       title="查看 docker compose config 反推出的 docker run 命令"
                       onClick={() => setRunProject({ id: p.id, name: p.name })}
                     >⧉ Run/Compose</ActBtn>
-                    <ActBtn title="查看详情" onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>ⓘ 详情</ActBtn>
                     <Show when={hasRole("operator") && !p.discovered}>
-                      <ActBtn danger title="删除项目" onClick={() => remove(p.id)}>删除</ActBtn>
+                      <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>删除</ActBtn>
                     </Show>
                   </div>
                 </div>

@@ -176,7 +176,11 @@ export const ComposeDetailPage: Component = () => {
         <div class="mb-3 flex flex-wrap items-center gap-0.5 border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
           <ActBtn title="docker compose up -d" onClick={() => void runCmd("up")}>▶ Up</ActBtn>
           <ActBtn title="docker compose stop" onClick={() => void runCmd("stop")}>■ Stop</ActBtn>
-          <ActBtn title="docker compose down（停止并移除容器、网络）" onClick={() => void runCmd("down")}>⊘ Down</ActBtn>
+          <ActBtn
+            danger
+            title="docker compose down（停止并移除容器、网络）"
+            onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) void runCmd("down"); }}
+          >⊘ Down</ActBtn>
           <ActBtn title="docker compose restart" onClick={() => void runCmd("restart")}>↺ Restart</ActBtn>
           <ActBtn title="docker compose pull" onClick={() => void runCmd("pull")}>↓ Pull</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
