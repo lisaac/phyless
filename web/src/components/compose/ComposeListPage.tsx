@@ -68,6 +68,14 @@ export const ComposeListPage: Component = () => {
             const isOpen = () => expanded().has(p.id);
             const cs = () => containersOf(p, containers.items());
             const rep = () => representative(cs());
+            // 全部运行中 → 绿色, 部分运行中 → 蓝色, 未运行/退出 → 默认（无强调色）
+            const nameColor = () => {
+              const running = p.running ?? 0;
+              const total = p.total ?? 0;
+              if (total > 0 && running === total) return "text-emerald-400";
+              if (running > 0) return "text-sky-400";
+              return "";
+            };
             return (
               <div class="border border-zinc-800">
                 <div
@@ -81,7 +89,7 @@ export const ComposeListPage: Component = () => {
                       <ComposeIcon size={14} />
                       <a
                         href={`/compose/${p.id}`}
-                        class="hover:text-indigo-400 hover:underline transition-colors"
+                        class={`hover:text-indigo-400 hover:underline transition-colors ${nameColor()}`}
                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                       >{p.name}</a>
                     </div>
