@@ -77,7 +77,15 @@ export const ComposeDetailPage: Component = () => {
 
   return (
     <div>
-      <h1 class="mb-3 text-xl font-semibold">Compose: {id()}</h1>
+      <h1 class="mb-3 flex items-center gap-2 text-xl font-semibold">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" width="20" height="20" class="shrink-0 text-zinc-400">
+          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+          <polyline points="2 17 12 22 22 17" />
+          <polyline points="2 12 12 17 22 12" />
+        </svg>
+        Compose: {id()}
+      </h1>
       <Show when={hasRole("operator")}>
         <div class="mb-3 flex gap-2">
           <Button variant="primary" onClick={() => runCmd("up")}>Up</Button>

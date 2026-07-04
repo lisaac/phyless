@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,10 @@ func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// NetworkList's own order isn't guaranteed stable between calls — same
+	// instability class as Mounts/Ports/RepoTags. Sort by creation time so
+	// polling doesn't reshuffle the list.
+	sort.Slice(nets, func(i, j int) bool { return nets[i].Created.Before(nets[j].Created) })
 	writeJSON(w, http.StatusOK, nets)
 }
 

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"time"
 
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/go-chi/chi/v5"
@@ -16,6 +18,15 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// VolumeList's own order isn't guaranteed stable between calls — same
+	// instability class as Mounts/Ports/RepoTags/networks. Sort by creation
+	// time (unparsable/empty timestamps sort first) so polling doesn't
+	// reshuffle the list.
+	sort.Slice(resp.Volumes, func(i, j int) bool {
+		ti, _ := time.Parse(time.RFC3339, resp.Volumes[i].CreatedAt)
+		tj, _ := time.Parse(time.RFC3339, resp.Volumes[j].CreatedAt)
+		return ti.Before(tj)
+	})
 	writeJSON(w, http.StatusOK, resp.Volumes)
 }
 
