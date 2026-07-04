@@ -2,6 +2,7 @@ import { Component, createSignal, createResource, createEffect, onMount, onClean
 import { useParams, useSearchParams } from "@solidjs/router";
 import { get, put, getToken, setToken, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
+import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { createResourceStore } from "../../stores/resource";
 import { setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
@@ -26,20 +27,6 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "files", label: "文件" },
   { key: "logs", label: "日志" },
 ];
-
-// Extensions the CodeEditor/browser can render safely as text. Anything else
-// (images, archives, binaries…) gets a confirm() first — the editor loads
-// content via res.text(), which silently mangles non-UTF8 bytes instead of
-// erroring, so a binary file would otherwise open looking "fine" and then
-// corrupt on save.
-const TEXT_EXT = /\.(ya?ml|json|env|txt|md|conf|cfg|ini|sh|bash|zsh|py|js|ts|jsx|tsx|go|rb|toml|properties|gitignore|dockerignore|lock|xml|html?|css|sql)$/i;
-const KNOWN_TEXT_NAMES = /^(dockerfile|makefile|readme|license)$/i;
-function looksTextFile(path: string): boolean {
-  const name = path.split("/").pop() ?? path;
-  if (KNOWN_TEXT_NAMES.test(name)) return true;
-  if (!name.includes(".")) return true; // extensionless files are usually scripts/config
-  return TEXT_EXT.test(name);
-}
 
 export const ComposeDetailPage: Component = () => {
   const params = useParams();
@@ -136,15 +123,13 @@ export const ComposeDetailPage: Component = () => {
 
   createResource(selectedFile, async (p) => {
     if (!p) { setFileContent(""); setFileTruncated(false); return ""; }
-    const res = await fetch(`/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(p)}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
-    if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return ""; }
-    if (!res.ok) { toast.error(await res.text()); return ""; }
-    const text = await res.text();
-    setFileContent(text);
-    setFileTruncated(res.headers.get("X-Truncated") === "true");
-    return text;
+    try {
+      const result = await fetchTextFile(`/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(p)}`);
+      if (!result) return "";
+      setFileContent(result.text);
+      setFileTruncated(result.truncated);
+      return result.text;
+    } catch (e) { toast.error((e as Error).message); return ""; }
   });
 
   const fileLang = () => {
@@ -265,7 +250,7 @@ export const ComposeDetailPage: Component = () => {
               instanceKey={id()}
             />
           </div>
-          <div class="flex h-[40vh] flex-col sm:h-[60vh]">
+          <div class="sticky top-4 flex h-[40vh] flex-col sm:h-[60vh]">
             <div class="mb-1 flex items-center justify-between">
               <span class="truncate font-mono text-xs text-zinc-400">{selectedFile() ?? "未选择文件"}</span>
               <Show when={hasRole("operator") && selectedFile()}>

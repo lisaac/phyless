@@ -1,56 +1,13 @@
-import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
-import { connectWS } from "../../api/ws";
+import { Component } from "solid-js";
+import { LogsView } from "../shared/LogsView";
 
-interface DockerEvent { Type?: string; Action?: string; Actor?: { Attributes?: Record<string, string> }; time?: number; }
-
-export const EventsPage: Component = () => {
-  const [events, setEvents] = createSignal<DockerEvent[]>([]);
-  let ws: WebSocket | undefined;
-
-  onMount(() => {
-    const dec = new TextDecoder();
-    ws = connectWS("/ws/events", {
-      onMessage: (ev) => {
-        const text = typeof ev.data === "string" ? ev.data : dec.decode(ev.data as ArrayBuffer);
-        for (const line of text.split("\n").filter(Boolean)) {
-          try {
-            const e = JSON.parse(line) as DockerEvent;
-            setEvents((a) => [e, ...a].slice(0, 500)); // ponytail: cap at 500 newest
-          } catch { /* partial */ }
-        }
-      },
-    });
-  });
-  onCleanup(() => ws?.close());
-
-  const name = (e: DockerEvent) => e.Actor?.Attributes?.name ?? e.Actor?.Attributes?.image ?? "";
-
-  return (
-    <div>
-      <h1 class="mb-4 text-xl font-semibold">事件</h1>
-      <div class="overflow-x-auto border border-zinc-800">
-        <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-          <div class="w-28 shrink-0 px-2 py-2">时间</div>
-          <div class="w-28 shrink-0 px-2 py-2">类型</div>
-          <div class="w-28 shrink-0 px-2 py-2">动作</div>
-          <div class="min-w-0 flex-1 px-2 py-2">对象</div>
-        </div>
-        <div class="divide-y divide-zinc-800">
-          <For each={events()}>
-            {(e) => (
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2 py-1 text-sm sm:flex-nowrap sm:gap-0 sm:px-0 sm:py-0">
-                <div class="w-auto shrink-0 text-xs text-zinc-500 sm:w-28 sm:px-2 sm:py-1">{e.time ? new Date(e.time * 1000).toLocaleTimeString() : ""}</div>
-                <div class="w-auto shrink-0 text-xs sm:w-28 sm:px-2 sm:py-1">{e.Type}</div>
-                <div class="w-auto shrink-0 text-xs sm:w-28 sm:px-2 sm:py-1">{e.Action}</div>
-                <div class="min-w-0 w-full flex-1 truncate text-zinc-300 sm:w-auto sm:px-2 sm:py-1">{name(e)}</div>
-              </div>
-            )}
-          </For>
-        </div>
-        <Show when={events().length === 0}>
-          <div class="py-16 text-center text-zinc-400">暂无事件</div>
-        </Show>
-      </div>
-    </div>
-  );
-};
+// Reuses the exact same log-stream viewer as container/compose logs — each
+// docker event arrives as one full JSON line (see ws.Events, which now
+// appends "\n" per message), giving the full event payload (all Actor
+// attributes) instead of a curated 4-column table.
+export const EventsPage: Component = () => (
+  <div>
+    <h1 class="mb-4 text-xl font-semibold">事件</h1>
+    <LogsView wsUrl="/ws/events" />
+  </div>
+);

@@ -23,7 +23,13 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   let payload: BodyInit | undefined;
-  if (body !== undefined) {
+  if (typeof body === "string") {
+    // Raw file content (compose/config file editors) — JSON.stringify-ing a
+    // string wraps it in quotes and escapes it, silently corrupting whatever
+    // gets saved. Send it verbatim; the backend just io.ReadAll()s the body.
+    headers["Content-Type"] = "text/plain";
+    payload = body;
+  } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }

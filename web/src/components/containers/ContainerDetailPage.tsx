@@ -155,6 +155,7 @@ export const ContainerDetailPage: Component = () => {
   const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
   const [upgrading, setUpgrading] = createSignal(false);
   const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
+  let uploadXhr: XMLHttpRequest | undefined;
 
   const cfg  = () => inspect()?.Config ?? {};
   const host = () => inspect()?.HostConfig ?? {};
@@ -247,6 +248,7 @@ export const ContainerDetailPage: Component = () => {
   const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
     setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
     const xhr = new XMLHttpRequest();
+    uploadXhr = xhr;
     xhr.open("POST", `/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`);
     xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
     xhr.upload.onprogress = (e) => {
@@ -272,6 +274,10 @@ export const ContainerDetailPage: Component = () => {
     xhr.onerror = () => {
       setUploadState((s) => ({ ...s, done: true, error: "网络错误" }));
       reject(new Error("network error"));
+    };
+    xhr.onabort = () => {
+      setUploadState((s) => ({ ...s, done: true }));
+      reject(new Error("aborted"));
     };
     xhr.send(file);
   });
@@ -740,7 +746,7 @@ export const ContainerDetailPage: Component = () => {
         progress={uploadState().progress}
         done={uploadState().done}
         error={uploadState().error}
-        onClose={() => setUploadState((s) => ({ ...s, active: false }))}
+        onClose={() => { uploadXhr?.abort(); setUploadState((s) => ({ ...s, active: false })); }}
       />
     </div>
   );

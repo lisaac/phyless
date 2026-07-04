@@ -3,6 +3,10 @@ import { A, useNavigate } from "@solidjs/router";
 import { currentUser, doLogout, hasRole } from "../../stores/auth";
 import { theme, toggleTheme } from "../../stores/theme";
 
+// Flat list kept as the single source of truth for path→label lookups
+// (stores/tabs.ts builds its labelFor() map from this + adminLinks) — the
+// Sidebar's own rendering below groups a subset of these under "Docker"
+// without needing a second data structure to keep in sync.
 export const mainLinks = [
   { to: "/overview",   label: "总览" },
   { to: "/containers", label: "容器" },
@@ -18,6 +22,11 @@ export const adminLinks = [
   { to: "/settings/registries", label: "镜像仓库" },
   { to: "/settings/audit",      label: "审计日志" },
 ];
+
+const DOCKER_PATHS = new Set(["/containers", "/compose", "/images", "/networks", "/volumes", "/events"]);
+const dockerLinks = mainLinks.filter((l) => DOCKER_PATHS.has(l.to));
+const overviewLink = mainLinks.find((l) => l.to === "/overview")!;
+const configLink = mainLinks.find((l) => l.to === "/config")!;
 
 export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
   const navigate = useNavigate();
@@ -61,7 +70,14 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
 
       {/* Main nav */}
       <div class="flex-1 overflow-y-auto py-1">
-        <For each={mainLinks}>
+        <A href={overviewLink.to} replace class={linkCls} activeClass={activeCls} onClick={() => props.onClose?.()}>
+          {overviewLink.label}
+        </A>
+
+        <div class="mx-4 mt-4 mb-1 border-t border-zinc-800 pt-3 text-[10px] font-medium uppercase tracking-widest text-zinc-500">
+          Docker
+        </div>
+        <For each={dockerLinks}>
           {(l) => (
             <A
               href={l.to}
@@ -74,6 +90,10 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
             </A>
           )}
         </For>
+
+        <A href={configLink.to} replace class={linkCls} activeClass={activeCls} onClick={() => props.onClose?.()}>
+          {configLink.label}
+        </A>
 
         <Show when={hasRole("admin")}>
           <div class="mx-4 mt-4 mb-1 border-t border-zinc-800 pt-3 text-[10px] font-medium uppercase tracking-widest text-zinc-500">

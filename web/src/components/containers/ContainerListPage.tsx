@@ -9,6 +9,7 @@ import { BulkRunModal } from "./BulkRunModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { ViewCmdModal } from "./ViewCmdModal";
 import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
+import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
 import type { ContainerSummary } from "../../types";
 
@@ -18,6 +19,7 @@ export const ContainerListPage: Component = () => {
   const { isP, act } = createContainerActions(store.refresh);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [showCreate, setShowCreate] = createSignal(false);
+  const [showImport, setShowImport] = createSignal(false);
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [bulkRunIds, setBulkRunIds] = createSignal<string[] | null>(null);
@@ -55,12 +57,20 @@ export const ContainerListPage: Component = () => {
       <div class="flex items-center justify-between">
         <h1 class="text-lg font-semibold">容器</h1>
         <Show when={hasRole("operator")}>
-          <button
-            class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
-            onClick={() => setShowCreate(true)}
-          >
-            + 新建容器
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              class="rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100"
+              onClick={() => setShowImport(true)}
+            >
+              导入容器
+            </button>
+            <button
+              class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
+              onClick={() => setShowCreate(true)}
+            >
+              + 新建容器
+            </button>
+          </div>
         </Show>
       </div>
 
@@ -141,6 +151,9 @@ export const ContainerListPage: Component = () => {
         onClose={() => setShowCreate(false)}
         onCreated={() => { setShowCreate(false); void store.refresh(); }}
       />
+
+      {/* ── Import container (tar → image) modal ─────────────────────────────── */}
+      <ImportContainerModal open={showImport()} onClose={() => setShowImport(false)} />
     </div>
   );
 };

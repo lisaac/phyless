@@ -160,7 +160,11 @@ func Events(cli *client.Client) http.HandlerFunc {
 			select {
 			case e := <-eventCh:
 				data, _ := json.Marshal(e)
-				conn.WriteMessage(websocket.TextMessage, data)
+				// Trailing newline so each event lands on its own line for
+				// consumers that just concatenate raw text across messages
+				// (shared/LogsView.tsx, reused by the events page) — without
+				// it, back-to-back events would run together unreadably.
+				conn.WriteMessage(websocket.TextMessage, append(data, '\n'))
 			case <-errCh:
 				return
 			}

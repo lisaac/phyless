@@ -300,13 +300,6 @@ func (s *Server) handleComposeListFiles(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, entries)
 }
 
-// maxComposeFileContent caps how much of a file the editor ever loads —
-// without it, opening something huge (a log file dropped in the project
-// directory, say) would try to pull the whole thing into the browser. The
-// frontend refuses to save back when X-Truncated is set, since writing a
-// truncated buffer over the real file would destroy the rest of it.
-const maxComposeFileContent = 2 << 20 // 2MB
-
 func (s *Server) handleComposeGetFileContent(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
 	if !ok {
@@ -318,27 +311,7 @@ func (s *Server) handleComposeGetFileContent(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	f, err := os.Open(fullPath)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxComposeFileContent))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if info.Size() > maxComposeFileContent {
-		w.Header().Set("X-Truncated", "true")
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(data) //nolint:errcheck
+	serveFileContent(w, fullPath)
 }
 
 func (s *Server) handleComposePutFileContent(w http.ResponseWriter, r *http.Request) {

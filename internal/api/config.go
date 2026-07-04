@@ -42,13 +42,7 @@ func (s *Server) handleConfigGetFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(data)
+	serveFileContent(w, fullPath)
 }
 
 func (s *Server) handleConfigPutFile(w http.ResponseWriter, r *http.Request) {

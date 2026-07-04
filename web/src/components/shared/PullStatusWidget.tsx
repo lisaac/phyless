@@ -47,9 +47,14 @@ export const PullStatusWidget: Component<{
   const [err, setErr] = createSignal("");
   const [collapsed, setCollapsed] = createSignal(false);
   const [containerId, setContainerId] = createSignal("");
+  // Only meaningful while props.file is set and the browser is still
+  // sending bytes — null once upload finishes (server-side progress takes
+  // over via the layers/notes above).
+  const [uploadPct, setUploadPct] = createSignal<number | null>(null);
   const { setRef, offset } = useFloatingSlot(() => props.active);
-  let ctrl: AbortController | undefined;
+  let xhr: XMLHttpRequest | undefined;
   let buf = "";
+  let readLen = 0;
   const layerMap = new Map<string, LayerProgress>();
 
   const applyLine = (line: string) => {
@@ -75,51 +80,62 @@ export const PullStatusWidget: Component<{
     }
   };
 
+  const consumeChunk = (chunk: string) => {
+    buf += chunk;
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    lines.forEach(applyLine);
+  };
+
+  // XHR rather than fetch: fetch has no upload-progress events at all, so a
+  // large file (docker load / import) would otherwise show nothing but a
+  // spinner for the entire upload. XHR gives both upload progress AND, via
+  // onprogress on the response side, the same incremental NDJSON parsing
+  // fetch's reader gave us — one transport covers both directions.
   createEffect(() => {
-    if (!props.active) { ctrl?.abort(); return; }
+    if (!props.active) { xhr?.abort(); return; }
     setLayers([]); setNotes([]); setDone(false); setErr(""); setCollapsed(false); setContainerId("");
+    setUploadPct(props.file ? 0 : null);
     layerMap.clear();
-    buf = "";
-    ctrl = new AbortController();
-    const c = ctrl;
-    void (async () => {
-      try {
-        const headers: Record<string, string> = { Authorization: `Bearer ${getToken()}` };
-        let body: BodyInit | undefined;
-        if (props.file) {
-          headers["Content-Type"] = "application/x-tar";
-          body = props.file;
-        } else if (props.body) {
-          headers["Content-Type"] = "application/json";
-          body = JSON.stringify(props.body);
-        }
-        const res = await fetch(props.url, { method: "POST", headers, body, signal: c.signal });
-        if (!res.ok) {
-          setErr(await res.text());
-          setDone(true);
-          return;
-        }
-        const reader = res.body!.getReader();
-        const dec = new TextDecoder();
-        while (true) {
-          const { done: eof, value } = await reader.read();
-          if (eof) break;
-          buf += dec.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          lines.forEach(applyLine);
-        }
-        if (buf) applyLine(buf);
-        setDone(true);
-        props.onDone?.();
-      } catch (e: unknown) {
-        if ((e as Error).name !== "AbortError") setErr((e as Error).message);
-        setDone(true);
+    buf = ""; readLen = 0;
+
+    const req = new XMLHttpRequest();
+    xhr = req;
+    req.open("POST", props.url);
+    req.setRequestHeader("Authorization", `Bearer ${getToken()}`);
+    if (props.file) {
+      req.setRequestHeader("Content-Type", "application/x-tar");
+      req.upload.onprogress = (e) => {
+        if (e.lengthComputable) setUploadPct((e.loaded / e.total) * 100);
+      };
+    } else if (props.body) {
+      req.setRequestHeader("Content-Type", "application/json");
+    }
+    req.onprogress = () => {
+      setUploadPct(null); // response bytes are arriving — upload phase is over
+      const text = req.responseText;
+      if (text.length > readLen) {
+        consumeChunk(text.slice(readLen));
+        readLen = text.length;
       }
-    })();
+    };
+    req.onload = () => {
+      if (req.status < 200 || req.status >= 300) {
+        setErr(req.responseText || `请求失败 (${req.status})`);
+        setDone(true);
+        return;
+      }
+      if (req.responseText.length > readLen) consumeChunk(req.responseText.slice(readLen));
+      if (buf) applyLine(buf);
+      setDone(true);
+      props.onDone?.();
+    };
+    req.onerror = () => { setErr("网络错误"); setDone(true); };
+    req.onabort = () => setDone(true);
+    req.send(props.file ?? (props.body ? JSON.stringify(props.body) : undefined));
   });
 
-  onCleanup(() => ctrl?.abort());
+  onCleanup(() => xhr?.abort());
 
   return (
     <Show when={props.active}>
@@ -144,13 +160,22 @@ export const PullStatusWidget: Component<{
             <button
               class="p-1 text-zinc-500 transition-colors hover:text-zinc-200"
               title="关闭"
-              onClick={() => { ctrl?.abort(); props.onClose(); }}
+              onClick={() => { xhr?.abort(); props.onClose(); }}
             >✕</button>
           </div>
         </div>
         <Show when={!collapsed()}>
           <div class="max-h-64 overflow-auto px-3 py-2 font-mono text-xs">
-            <Show when={layers().length === 0 && notes().length === 0}>
+            <Show when={uploadPct() !== null}>
+              <p class="mb-1.5 text-zinc-400">上传中 {uploadPct()!.toFixed(0)}%</p>
+              <div class="mb-1.5 h-2 overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  class="h-full rounded-full bg-indigo-600 transition-all duration-150"
+                  style={{ width: `${Math.min(100, uploadPct()!)}%` }}
+                />
+              </div>
+            </Show>
+            <Show when={uploadPct() === null && layers().length === 0 && notes().length === 0}>
               <p class="text-zinc-500">连接中…</p>
             </Show>
             <div class="flex flex-col gap-1">
