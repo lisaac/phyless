@@ -1,4 +1,5 @@
-import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
+import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
+import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Table, type Column } from "../shared/Table";
 import { Button } from "../shared/Button";
@@ -7,9 +8,11 @@ import { FileBrowser } from "../shared/FileBrowser";
 import { get, post, del } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
+import { midPath } from "../containers/containerActions";
 import type { VolumeSummary, FileEntry } from "../../types";
 
 export const VolumeListPage: Component = () => {
+  const navigate = useNavigate();
   const store = createResourceStore<VolumeSummary>("/api/volumes");
   const [show, setShow] = createSignal(false);
   const [name, setName] = createSignal("");
@@ -30,9 +33,29 @@ export const VolumeListPage: Component = () => {
     get<FileEntry[]>(`/api/volumes/${encodeURIComponent(browse()!.Name)}/files?path=${encodeURIComponent(sub)}`);
 
   const columns: Column<VolumeSummary>[] = [
-    { header: "名称", cell: (v) => <span class="font-medium">{v.Name}</span> },
+    { header: "名称", cell: (v) => <span class="font-medium" title={v.Name}>{midPath(v.Name)}</span> },
     { header: "驱动", cell: (v) => <span>{v.Driver}</span> },
-    { header: "挂载点", cell: (v) => <span class="text-xs text-zinc-400">{v.Mountpoint}</span> },
+    { header: "挂载点", cell: (v) => <span class="text-xs text-zinc-400" title={v.Mountpoint}>{midPath(v.Mountpoint)}</span> },
+    {
+      header: "使用容器",
+      cell: (v) => (
+        <Show when={(v.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
+          <div class="flex flex-wrap gap-x-1.5 gap-y-0.5">
+            <For each={v.UsedBy}>
+              {(c) => (
+                <a
+                  href={`/containers/${c.Id}`}
+                  class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
+                  onClick={(e) => { e.preventDefault(); navigate(`/containers/${c.Id}`, { replace: true }); }}
+                >
+                  {c.Name || c.Id.slice(0, 8)}
+                </a>
+              )}
+            </For>
+          </div>
+        </Show>
+      ),
+    },
     {
       header: "操作",
       cell: (v) => (

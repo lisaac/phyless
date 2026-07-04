@@ -41,6 +41,7 @@ export interface VolumeSummary {
   Name: string;
   Driver: string;
   Mountpoint: string;
+  UsedBy?: { Id: string; Name: string }[];
 }
 
 export interface ComposeProject {

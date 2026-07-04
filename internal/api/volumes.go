@@ -6,11 +6,22 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/go-chi/chi/v5"
 )
+
+// volumeWithUsage adds which containers actually mount a volume — mirrors
+// imageWithUsage's UsedBy field (see images.go), computed the same way: scan
+// every container's Mounts for ones that reference this volume by name.
+type volumeWithUsage struct {
+	volumetypes.Volume
+	UsedBy []containerRef `json:"UsedBy"`
+}
 
 func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.docker.VolumeList(r.Context(), volumetypes.ListOptions{})
@@ -27,7 +38,26 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 		tj, _ := time.Parse(time.RFC3339, resp.Volumes[j].CreatedAt)
 		return ti.Before(tj)
 	})
-	writeJSON(w, http.StatusOK, resp.Volumes)
+
+	containers, _ := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	usedBy := make(map[string][]containerRef)
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		for _, m := range c.Mounts {
+			if m.Type == mount.TypeVolume && m.Name != "" {
+				usedBy[m.Name] = append(usedBy[m.Name], containerRef{ID: c.ID, Name: name})
+			}
+		}
+	}
+
+	out := make([]volumeWithUsage, len(resp.Volumes))
+	for i, v := range resp.Volumes {
+		out[i] = volumeWithUsage{Volume: *v, UsedBy: usedBy[v.Name]}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {

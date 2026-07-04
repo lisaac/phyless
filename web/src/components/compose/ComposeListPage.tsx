@@ -74,11 +74,15 @@ export const ComposeListPage: Component = () => {
       await post("/api/compose", form());
       setShow(false); setForm({ name: "", base_dir: "", compose_file: "", env_file: "" });
       await store.refresh();
+      toast.success("已注册");
     } catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (id: string) => {
-    try { await del(`/api/compose?id=${encodeURIComponent(id)}`); await store.refresh(); }
-    catch (e) { toast.error((e as Error).message); }
+    try {
+      await del(`/api/compose?id=${encodeURIComponent(id)}`);
+      await store.refresh();
+      toast.success("已删除");
+    } catch (e) { toast.error((e as Error).message); }
   };
 
   return (
