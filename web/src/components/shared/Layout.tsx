@@ -4,7 +4,7 @@ import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
 import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, type PageTab } from "../../stores/tabs";
 
-const CLOSE_ANIM_MS = 150;
+const CLOSE_ANIM_MS = 200;
 
 // Owns its own enter/exit animation so a tab visibly grows in on open and
 // shrinks out on close, instead of the strip instantly reflowing — a fast
@@ -14,7 +14,14 @@ const CLOSE_ANIM_MS = 150;
 const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void; onClose: () => void }> = (p) => {
   const [entered, setEntered] = createSignal(false);
   const [closing, setClosing] = createSignal(false);
-  onMount(() => requestAnimationFrame(() => setEntered(true)));
+  onMount(() => {
+    // A single requestAnimationFrame can land in the same paint as the
+    // initial (closed) render, so the browser never registers a "before"
+    // state to transition from and the tab just snaps open instead of
+    // growing in. Two nested rAFs guarantee one full frame has actually
+    // painted the closed state first.
+    requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)));
+  });
 
   const startClose = (e: MouseEvent) => {
     e.stopPropagation();
