@@ -8,7 +8,7 @@ import { post, del } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions, fmtContainerStatus, fmtRelTime } from "../containers/containerActions";
-import { ContainerRow, VARIANT_STYLE, type BtnVariant } from "../containers/ContainerRow";
+import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import { BulkRunModal } from "../containers/BulkRunModal";
@@ -38,14 +38,14 @@ const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", down: 
 
 // Same compact text button used in ContainerListPage's bulk-action bar — a
 // plain <Button> (px-3 py-1.5, text-sm) doesn't match once it sits next to
-// several of these in one row. Colors reuse ContainerRow's VARIANT_STYLE so
-// the same kind of action (start-ish, stop-ish, destructive…) reads the same
-// color in both the container list and here.
-const ActBtn: Component<{ title: string; onClick: () => void; variant?: BtnVariant; children: string }> = (p) => (
+// several of these in one row.
+const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; children: string }> = (p) => (
   <button
     title={p.title}
     onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class={`px-2 py-0.5 text-xs transition-colors ${VARIANT_STYLE[p.variant ?? "default"]}`}
+    class={`px-2 py-0.5 text-xs transition-colors ${
+      p.danger ? "text-red-400 hover:bg-red-900/40 hover:text-red-300" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+    }`}
   >{p.children}</button>
 );
 
@@ -122,11 +122,11 @@ export const ComposeListPage: Component = () => {
                   </div>
                   <div class="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
                     <Show when={hasRole("operator")}>
-                      <ActBtn variant="success" title="docker compose up -d" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
-                      <ActBtn variant="warning" title="docker compose stop" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
-                      <ActBtn variant="danger" title="docker compose down（停止并移除容器、网络）" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "down" })}>⊘ Down</ActBtn>
-                      <ActBtn variant="info" title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
-                      <ActBtn variant="info" title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>⇩ Pull</ActBtn>
+                      <ActBtn title="docker compose up -d" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
+                      <ActBtn title="docker compose stop" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
+                      <ActBtn title="docker compose down（停止并移除容器、网络）" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "down" })}>⊘ Down</ActBtn>
+                      <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
+                      <ActBtn title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>⇩ Pull</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <ActBtn
@@ -135,7 +135,7 @@ export const ComposeListPage: Component = () => {
                     >⧉ Run/Compose</ActBtn>
                     <ActBtn title="查看详情" onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>详情</ActBtn>
                     <Show when={hasRole("operator") && !p.discovered}>
-                      <ActBtn variant="danger" title="删除项目" onClick={() => remove(p.id)}>删除</ActBtn>
+                      <ActBtn danger title="删除项目" onClick={() => remove(p.id)}>删除</ActBtn>
                     </Show>
                   </div>
                 </div>

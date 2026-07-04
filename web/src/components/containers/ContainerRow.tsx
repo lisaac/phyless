@@ -4,27 +4,19 @@ import { hasRole } from "../../stores/auth";
 import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary } from "../../types";
 
-// Shared semantic palette for per-row action buttons — exported so
-// ComposeListPage's own action buttons (Up/Stop/Down/Restart/Pull) use the
-// same colors for the same kind of action instead of inventing a second set.
-export type BtnVariant = "default" | "danger" | "success" | "warning" | "info";
-export const VARIANT_STYLE: Record<BtnVariant, string> = {
-  default: "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100",
-  danger:  "text-zinc-500 hover:bg-red-900/40 hover:text-red-400",
-  success: "text-zinc-500 hover:bg-emerald-900/40 hover:text-emerald-400",
-  warning: "text-zinc-500 hover:bg-amber-900/40 hover:text-amber-400",
-  info:    "text-zinc-500 hover:bg-sky-900/40 hover:text-sky-400",
-};
-
 const IBtn = (p: {
   title: string; onClick: () => void;
-  loading?: boolean; disabled?: boolean; variant?: BtnVariant; children: JSX.Element;
+  loading?: boolean; disabled?: boolean; danger?: boolean; children: JSX.Element;
 }) => (
   <button
     title={p.title}
     disabled={p.loading || p.disabled}
     onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${VARIANT_STYLE[p.variant ?? "default"]}`}
+    class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${
+      p.danger
+        ? "text-zinc-500 hover:bg-red-900/40 hover:text-red-400"
+        : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"
+    }`}
   >
     {p.loading ? <span class="inline-block animate-spin text-xs">↺</span> : p.children}
   </button>
@@ -83,7 +75,7 @@ export const ContainerRow: Component<{
         <div class="flex items-center gap-1.5">
           <span class={`h-2 w-2 shrink-0 ${STATE_DOT[c().State] ?? "bg-zinc-600"}`} />
           <a
-            class="max-w-[9rem] truncate font-medium text-zinc-200 hover:text-indigo-400 transition-colors"
+            class="max-w-[9rem] truncate font-medium text-zinc-200 hover:text-indigo-400 hover:underline transition-colors"
             href={`/containers/${c().Id}`}
             title={name() || "(unnamed)"}
             onClick={goto(`/containers/${c().Id}`)}
@@ -92,7 +84,7 @@ export const ContainerRow: Component<{
           </a>
         </div>
         <a
-          class="mt-0.5 font-mono text-[11px] text-zinc-400 hover:text-indigo-400 transition-colors"
+          class="mt-0.5 inline-block font-mono text-[11px] text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
           href={`/containers/${c().Id}`}
           onClick={goto(`/containers/${c().Id}`)}
         >{c().Id.slice(0, 12)}</a>
@@ -104,16 +96,16 @@ export const ContainerRow: Component<{
         <Show when={hasRole("operator")}>
           <div class="mt-1 flex items-center gap-0.5">
             <Show when={!running() && !paused()}>
-              <IBtn title="启动" variant="success" loading={p.isP(c().Id, "start")} onClick={() => void p.act(c().Id, "start")}>▶</IBtn>
+              <IBtn title="启动" loading={p.isP(c().Id, "start")} onClick={() => void p.act(c().Id, "start")}>▶</IBtn>
             </Show>
             <Show when={paused()}>
-              <IBtn title="恢复运行" variant="success" loading={p.isP(c().Id, "unpause")} onClick={() => void p.act(c().Id, "unpause")}>▶</IBtn>
+              <IBtn title="恢复运行" loading={p.isP(c().Id, "unpause")} onClick={() => void p.act(c().Id, "unpause")}>▶</IBtn>
             </Show>
             <Show when={running()}>
-              <IBtn title="停止" variant="warning" loading={p.isP(c().Id, "stop")} onClick={() => void p.act(c().Id, "stop")}>■</IBtn>
-              <IBtn title="暂停" variant="warning" loading={p.isP(c().Id, "pause")} onClick={() => void p.act(c().Id, "pause")}>⏸</IBtn>
-              <IBtn title="重启" variant="info" loading={p.isP(c().Id, "restart")} onClick={() => void p.act(c().Id, "restart")}>↺</IBtn>
-              <IBtn title="强制关闭 (SIGKILL)" variant="danger" loading={p.isP(c().Id, "kill")} onClick={() => void p.act(c().Id, "kill")}>✕</IBtn>
+              <IBtn title="停止" loading={p.isP(c().Id, "stop")} onClick={() => void p.act(c().Id, "stop")}>■</IBtn>
+              <IBtn title="暂停" loading={p.isP(c().Id, "pause")} onClick={() => void p.act(c().Id, "pause")}>⏸</IBtn>
+              <IBtn title="重启" loading={p.isP(c().Id, "restart")} onClick={() => void p.act(c().Id, "restart")}>↺</IBtn>
+              <IBtn title="强制关闭 (SIGKILL)" loading={p.isP(c().Id, "kill")} onClick={() => void p.act(c().Id, "kill")} danger>✕</IBtn>
             </Show>
 
             <span class="mx-0.5 text-zinc-400">│</span>
@@ -126,7 +118,7 @@ export const ContainerRow: Component<{
 
             <Show when={!running()}>
               <span class="mx-0.5 text-zinc-400">│</span>
-              <IBtn title="删除容器" variant="danger" loading={p.isP(c().Id, "delete")} onClick={() => { if (confirm(`删除容器 ${name() || c().Id.slice(0, 8)}？`)) void p.act(c().Id, "delete"); }}>⊖</IBtn>
+              <IBtn title="删除容器" danger loading={p.isP(c().Id, "delete")} onClick={() => { if (confirm(`删除容器 ${name() || c().Id.slice(0, 8)}？`)) void p.act(c().Id, "delete"); }}>⊖</IBtn>
             </Show>
           </div>
         </Show>
@@ -173,6 +165,10 @@ export const ContainerRow: Component<{
           when={c().Mounts.length > 0}
           fallback={<span class="text-xs text-zinc-500">—</span>}
         >
+          {/* self-start below: this container is flex-col, whose default
+              align-items:stretch would otherwise stretch each row's
+              hit/hover box to the full cell width — the link (and its
+              hover highlight) must cover only the path text itself. */}
           <div class="flex flex-col gap-0.5">
             <For each={c().Mounts.slice(0, 4)}>
               {(m) => (
@@ -180,7 +176,7 @@ export const ContainerRow: Component<{
                   when={running()}
                   fallback={
                     <span
-                      class="flex items-center gap-0.5 font-mono text-[11px] text-zinc-500"
+                      class="flex w-fit shrink-0 items-center gap-0.5 self-start font-mono text-[11px] text-zinc-500"
                       title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
                     >
                       <span class="shrink-0">{midPath(m.Source || m.Name || "")}</span>
@@ -194,7 +190,7 @@ export const ContainerRow: Component<{
                 >
                   <a
                     href={`/containers/${c().Id}?tab=files&path=${encodeURIComponent(m.Destination)}`}
-                    class="flex items-center gap-0.5 font-mono text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
+                    class="flex w-fit shrink-0 items-center gap-0.5 self-start font-mono text-[11px] text-zinc-400 hover:text-emerald-400 hover:underline transition-colors"
                     title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
                     onClick={goto(`/containers/${c().Id}?tab=files&path=${encodeURIComponent(m.Destination)}`)}
                   >
