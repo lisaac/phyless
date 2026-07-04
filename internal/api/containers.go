@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -17,11 +18,33 @@ import (
 	dockercontainer "phyless/internal/docker/container"
 )
 
+// sortMounts gives Mounts a deterministic order. The daemon builds this slice
+// fresh on every call (it isn't stored in the order shown), so without this
+// the same container's mounts visibly reshuffle in the frontend on every
+// poll even though nothing about the container changed.
+func sortMounts(mounts []container.MountPoint) {
+	sort.Slice(mounts, func(a, b int) bool { return mounts[a].Destination < mounts[b].Destination })
+}
+
+// sortPorts is the same fix for Ports, which has the same instability.
+func sortPorts(ports []container.Port) {
+	sort.Slice(ports, func(a, b int) bool {
+		if ports[a].PrivatePort != ports[b].PrivatePort {
+			return ports[a].PrivatePort < ports[b].PrivatePort
+		}
+		return ports[a].PublicPort < ports[b].PublicPort
+	})
+}
+
 func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	for i := range containers {
+		sortMounts(containers[i].Mounts)
+		sortPorts(containers[i].Ports)
 	}
 	writeJSON(w, http.StatusOK, containers)
 }
@@ -246,6 +269,7 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	sortMounts(info.Mounts)
 	writeJSON(w, http.StatusOK, info)
 }
 
