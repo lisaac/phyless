@@ -65,9 +65,7 @@ export const ContainerRow: Component<{
 
   return (
     <div
-      class={`flex text-sm transition-colors ${rowBg()} ${p.onToggleSelect ? "cursor-pointer" : ""} ${
-        p.selected ? "ring-1 ring-inset ring-indigo-500/60" : ""
-      }`}
+      class={`flex text-sm transition-colors ${rowBg()} ${p.selected ? "ring-1 ring-inset ring-indigo-500/60" : ""}`}
       onClick={() => p.onToggleSelect?.()}
     >
       {/* Container info + actions */}

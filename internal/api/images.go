@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -37,6 +38,11 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]imageWithUsage, len(imgs))
 	for i, img := range imgs {
+		// RepoTags/RepoDigests come from the daemon's internal reference
+		// store (map-backed) and aren't guaranteed to keep the same order
+		// call to call — same instability class as Mounts/Ports.
+		sort.Strings(img.RepoTags)
+		sort.Strings(img.RepoDigests)
 		out[i] = imageWithUsage{Summary: img, UsedBy: usedBy[img.ID]}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -49,6 +55,8 @@ func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	sort.Strings(info.RepoTags)
+	sort.Strings(info.RepoDigests)
 	writeJSON(w, http.StatusOK, info)
 }
 

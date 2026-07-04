@@ -161,15 +161,21 @@ export const ContainerDetailPage: Component = () => {
   const id = () => params.id;
   const tab = () => (searchParams.tab as Tab) || "info";
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
-  // Auto-redirect to info when current tab requires running but container is stopped
-  createEffect(() => {
-    const cur = TABS.find((t) => t.key === tab());
-    if (cur?.requiresRunning && state() !== "running") setTab("info");
-  });
-
   const [inspect, { refetch }] = createResource(id, (i) =>
     get<any>(`/api/containers/${i}/inspect`)
   );
+
+  // Auto-redirect to info when current tab requires running but container is
+  // stopped. Must wait for inspect() to actually resolve first — state()
+  // defaults to "unknown" while it's loading, which isn't "running" either,
+  // so without this guard a link straight into ?tab=files (e.g. a mount from
+  // the container list) got redirected to info before the real state was
+  // even known, and never navigated back once it arrived.
+  createEffect(() => {
+    if (!inspect()) return;
+    const cur = TABS.find((t) => t.key === tab());
+    if (cur?.requiresRunning && state() !== "running") setTab("info");
+  });
 
   const [networks] = createResource(() => get<NetworkSummary[]>("/api/networks"));
   const [runCmd, setRunCmd] = createSignal<string>("");
