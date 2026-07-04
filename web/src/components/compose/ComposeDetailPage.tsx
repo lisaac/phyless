@@ -264,7 +264,7 @@ export const ComposeDetailPage: Component = () => {
       </Show>
 
       <Show when={tab() === "files"}>
-        <div class="grid grid-cols-[24rem_1fr] gap-3">
+        <div class="grid grid-cols-2 gap-3">
           <div class="h-[60vh] overflow-auto border border-zinc-800 p-2">
             <FileBrowser
               listPath={(sub) => get<FileEntry[]>(`/api/compose/files?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub)}`)}
