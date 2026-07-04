@@ -186,8 +186,16 @@ export const ContainerDetailPage: Component = () => {
   const running = () => state() === "running";
 
   // Upgrade the tab strip's placeholder ("容器 abc12345") to the real name once known.
+  // This page isn't remounted when switching between two containers (same
+  // /containers/:id route pattern) — createResource keeps serving the
+  // PREVIOUS container's stale inspect data while the new id's fetch is in
+  // flight, so without the Id check below this would briefly label the new
+  // tab with the old container's name until the real fetch resolves.
   createEffect(() => {
-    if (inspect()?.Name) setTabLabel(`/containers/${id()}`, name());
+    const insp = inspect();
+    if (insp?.Id === id() && insp?.Name) {
+      setTabLabel(`/containers/${id()}`, insp.Name.replace(/^\//, ""));
+    }
   });
 
   const [now, setNow] = createSignal(Date.now());
