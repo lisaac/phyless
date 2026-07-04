@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
 import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type PageTab } from "../../stores/tabs";
+import { ComposeIcon } from "../compose/composeShared";
 
 const CLOSE_ANIM_MS = 200;
 
@@ -50,12 +51,7 @@ const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void
       onClick={p.onActivate}
     >
       <Show when={p.tab.path.startsWith("/compose/")}>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" width="12" height="12" class="shrink-0 opacity-70">
-          <polygon points="12 2 2 7 12 12 22 7 12 2" />
-          <polyline points="2 17 12 22 22 17" />
-          <polyline points="2 12 12 17 22 12" />
-        </svg>
+        <ComposeIcon size={12} class="shrink-0 opacity-70" />
       </Show>
       <span class="max-w-[9rem] truncate text-left">{p.tab.label}</span>
       <button

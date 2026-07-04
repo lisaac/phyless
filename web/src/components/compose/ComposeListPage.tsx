@@ -12,42 +12,8 @@ import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import { BulkRunModal } from "../containers/BulkRunModal";
+import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb, VERB_LABEL } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
-
-const LABEL_PROJECT = "com.docker.compose.project";
-const LABEL_CONFIG_FILES = "com.docker.compose.project.config_files";
-
-// Mirrors the matching handleListCompose (internal/api/compose.go) does
-// server-side: discovered projects match by the project label directly, but
-// registered ones match by compose_file — a registered project's `name` is
-// user-typed and may not equal the actual docker compose project name.
-function containersOf(p: ComposeProject, all: ContainerSummary[]): ContainerSummary[] {
-  if (p.discovered) return all.filter((c) => c.Labels?.[LABEL_PROJECT] === p.name);
-  return all.filter((c) => c.Labels?.[LABEL_CONFIG_FILES]?.split(",")[0] === p.compose_file);
-}
-
-// The container whose status best represents the whole project's uptime —
-// a running one if any, else just the first (matches what the aggregate
-// running/total badge already implies).
-function representative(cs: ContainerSummary[]): ContainerSummary | undefined {
-  return cs.find((c) => c.State === "running") ?? cs[0];
-}
-
-type ComposeVerb = "up" | "stop" | "down" | "restart" | "pull";
-const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", down: "Down", restart: "Restart", pull: "Pull" };
-
-// Same compact text button used in ContainerListPage's bulk-action bar — a
-// plain <Button> (px-3 py-1.5, text-sm) doesn't match once it sits next to
-// several of these in one row.
-const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; children: string }> = (p) => (
-  <button
-    title={p.title}
-    onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class={`px-2 py-0.5 text-xs transition-colors ${
-      p.danger ? "text-red-400 hover:bg-red-900/40 hover:text-red-300" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-    }`}
-  >{p.children}</button>
-);
 
 export const ComposeListPage: Component = () => {
   const navigate = useNavigate();
@@ -110,7 +76,10 @@ export const ComposeListPage: Component = () => {
                   onClick={() => toggleExpand(p.id)}
                 >
                   <div class="min-w-0 flex-1">
-                    <div class="font-medium">{p.name}</div>
+                    <div class="flex items-center gap-1.5 font-medium">
+                      <ComposeIcon size={14} />
+                      {p.name}
+                    </div>
                     <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
                       <Show when={p.discovered}>
                         <span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" title="根据容器上的 compose 标签自动发现，非手动注册">自动发现</span>
@@ -130,14 +99,14 @@ export const ComposeListPage: Component = () => {
                       <ActBtn title="docker compose stop" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
                       <ActBtn title="docker compose down（停止并移除容器、网络）" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "down" })}>⊘ Down</ActBtn>
                       <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
-                      <ActBtn title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>⇩ Pull</ActBtn>
+                      <ActBtn title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <ActBtn
                       title="查看该项目容器的 docker run / compose 命令"
                       onClick={() => { const ids = cs().map((c) => c.Id); if (ids.length) setBulkRunIds(ids); }}
                     >⧉ Run/Compose</ActBtn>
-                    <ActBtn title="查看详情" onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>详情</ActBtn>
+                    <ActBtn title="查看详情" onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>ⓘ 详情</ActBtn>
                     <Show when={hasRole("operator") && !p.discovered}>
                       <ActBtn danger title="删除项目" onClick={() => remove(p.id)}>删除</ActBtn>
                     </Show>

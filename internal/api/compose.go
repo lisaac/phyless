@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"phyless/internal/config"
 	dockercontainer "phyless/internal/docker/container"
 	"phyless/internal/models"
 )
@@ -36,6 +38,9 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Post("/api/compose/restart", s.handleComposeRestart)
 	r.Get("/api/compose/file", s.handleGetComposeFile)
 	r.Put("/api/compose/file", s.handlePutComposeFile)
+	r.Get("/api/compose/files", s.handleComposeListFiles)
+	r.Get("/api/compose/files/content", s.handleComposeGetFileContent)
+	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
 }
 
 const (
@@ -279,6 +284,74 @@ func (s *Server) handlePutComposeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditFromCtx(r, "compose.file.update", p.Name, "ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleComposeListFiles/handleComposeGetFileContent/handleComposePutFileContent
+// browse and edit arbitrary files under a project's BaseDir (not just the
+// main compose file) — same root+subPath+isSubPath pattern as the /etc config
+// file browser (config.go), just rooted at the project's directory instead.
+func (s *Server) handleComposeListFiles(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	subPath := r.URL.Query().Get("path")
+	if !isSubPath(p.BaseDir, filepath.Join(p.BaseDir, subPath)) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	entries, err := config.ListDir(p.BaseDir, subPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *Server) handleComposeGetFileContent(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	fullPath := filepath.Join(p.BaseDir, r.URL.Query().Get("path"))
+	if !isSubPath(p.BaseDir, fullPath) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data) //nolint:errcheck
+}
+
+func (s *Server) handleComposePutFileContent(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	subPath := r.URL.Query().Get("path")
+	fullPath := filepath.Join(p.BaseDir, subPath)
+	if !isSubPath(p.BaseDir, fullPath) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10MB limit
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "compose.file.write", p.Name+":"+subPath, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 
