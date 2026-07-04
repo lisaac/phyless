@@ -304,7 +304,7 @@ export const ImageListPage: Component = () => {
                       <div class="flex flex-col items-center gap-0.5">
                         <For each={img.UsedBy}>
                           {(c) => (
-                            <A href={`/containers/${c.Id}`} class="text-indigo-400 hover:text-indigo-300 hover:underline">
+                            <A href={`/containers/${c.Id}`} replace class="text-indigo-400 hover:text-indigo-300 hover:underline">
                               {c.Name}
                             </A>
                           )}

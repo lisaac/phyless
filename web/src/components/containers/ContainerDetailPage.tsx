@@ -322,7 +322,7 @@ export const ContainerDetailPage: Component = () => {
 
       {/* ── Back ────────────────────────────────────────────────────────────── */}
       <div>
-        <button class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors" onClick={() => navigate(-1)}>← 返回</button>
+        <button class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors" onClick={() => navigate("/containers", { replace: true })}>← 返回</button>
       </div>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
@@ -364,7 +364,7 @@ export const ContainerDetailPage: Component = () => {
             <span class="text-zinc-400">│</span>
             <Btn danger onClick={async () => {
               if (!confirm(`删除容器 ${name()}?`)) return;
-              try { await del(`/api/containers/${id()}`); navigate("/containers"); }
+              try { await del(`/api/containers/${id()}`); navigate("/containers", { replace: true }); }
               catch (e) { toast.error((e as Error).message); }
             }}>⊖ 移除</Btn>
           </div>

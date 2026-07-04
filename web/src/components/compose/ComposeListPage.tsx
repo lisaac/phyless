@@ -57,7 +57,7 @@ export const ComposeListPage: Component = () => {
       header: "操作",
       cell: (p) => (
         <div class="flex gap-1">
-          <Button onClick={() => navigate(`/compose/${p.id}`)}>详情</Button>
+          <Button onClick={() => navigate(`/compose/${p.id}`, { replace: true })}>详情</Button>
           <Show when={hasRole("operator") && !p.discovered}>
             <Button variant="danger" onClick={() => remove(p.id)}>删除</Button>
           </Show>

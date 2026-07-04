@@ -26,7 +26,7 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
 
   const nav = (to: string) => {
     props.onClose?.();
-    navigate(to);
+    navigate(to, { replace: true });
   };
 
   return (
@@ -65,6 +65,7 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
           {(l) => (
             <A
               href={l.to}
+              replace
               class={linkCls}
               activeClass={activeCls}
               onClick={() => props.onClose?.()}
@@ -82,6 +83,7 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
             {(l) => (
               <A
                 href={l.to}
+                replace
                 class={linkCls}
                 activeClass={activeCls}
                 onClick={() => props.onClose?.()}

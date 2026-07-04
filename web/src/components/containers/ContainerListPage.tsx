@@ -282,7 +282,7 @@ export const ContainerListPage: Component = () => {
                           class="max-w-[9rem] truncate font-medium text-zinc-200 hover:text-indigo-400 transition-colors"
                           href={`/containers/${c.Id}`}
                           title={name || "(unnamed)"}
-                          onClick={(e) => { e.stopPropagation(); navigate(`/containers/${c.Id}`); e.preventDefault(); }}
+                          onClick={(e) => { e.stopPropagation(); navigate(`/containers/${c.Id}`, { replace: true }); e.preventDefault(); }}
                         >
                           {name || <span class="text-zinc-400">(unnamed)</span>}
                         </a>
@@ -291,7 +291,7 @@ export const ContainerListPage: Component = () => {
                       <a
                         class="mt-0.5 font-mono text-[11px] text-zinc-400 hover:text-indigo-400 transition-colors"
                         href={`/containers/${c.Id}`}
-                        onClick={(e) => { e.stopPropagation(); navigate(`/containers/${c.Id}`); e.preventDefault(); }}
+                        onClick={(e) => { e.stopPropagation(); navigate(`/containers/${c.Id}`, { replace: true }); e.preventDefault(); }}
                       >{c.Id.slice(0, 12)}</a>
                       <div class="max-w-[10rem] truncate text-[11px] text-zinc-400" title={c.Image}>{c.Image}</div>
                       {/* Time */}
@@ -377,7 +377,11 @@ export const ContainerListPage: Component = () => {
                                 href={`/containers/${c.Id}?tab=files&path=${encodeURIComponent(m.Destination)}`}
                                 class="flex items-center gap-0.5 font-mono text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
                                 title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
-                                onClick={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  navigate(`/containers/${c.Id}?tab=files&path=${encodeURIComponent(m.Destination)}`, { replace: true });
+                                }}
                               >
                                 <span class="shrink-0">{midPath(m.Source || m.Name || "")}</span>
                                 <span class="shrink-0 text-zinc-600">→</span>

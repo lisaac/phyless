@@ -1,4 +1,5 @@
 import { Component, createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { useNavigate } from "@solidjs/router";
 import { getToken } from "../../api/client";
 import { useFloatingSlot } from "../../stores/floatingStack";
 
@@ -39,6 +40,7 @@ export const PullStatusWidget: Component<{
   // to point, e.g. copy-to-container linking straight to the target directory.
   doneLink?: { href: string; label: string };
 }> = (props) => {
+  const navigate = useNavigate();
   const [layers, setLayers] = createSignal<LayerProgress[]>([]);
   const [notes, setNotes] = createSignal<string[]>([]);
   const [done, setDone] = createSignal(false);
@@ -176,6 +178,10 @@ export const PullStatusWidget: Component<{
               <a
                 href={props.doneLink?.href ?? `/containers/${containerId()}`}
                 class="mt-1.5 block text-indigo-400 hover:text-indigo-300 hover:underline"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate(props.doneLink?.href ?? `/containers/${containerId()}`, { replace: true });
+                }}
               >
                 → {props.doneLink?.label ?? "查看容器详情"}
               </a>
