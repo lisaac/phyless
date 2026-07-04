@@ -19,6 +19,7 @@ export const ConsoleModal: Component<{ target: { id: string; name: string } | nu
     const params = new URLSearchParams();
     if (cmd()) params.set("cmd", cmd());
     if (user()) params.set("user", user());
+    params.set("name", t.name);
     window.open(
       `/terminal/${t.id}?${params.toString()}`,
       "_blank",

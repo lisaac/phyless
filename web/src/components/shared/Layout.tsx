@@ -54,8 +54,9 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
 
       {/* ── Main area ─────────────────────────────────────────────────── */}
       <div class="flex min-w-0 flex-1 flex-col">
-        {/* Top bar — always visible; hamburger+title are mobile-only, the tab
-            strip (top-right) and theme toggle are shown at every width. */}
+        {/* Top bar — always visible; hamburger+title are mobile-only. Tab strip
+            sits left (after the mobile hamburger/title), theme toggle is
+            pushed to the far right via ml-auto. */}
         <header class="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900 px-3 py-2">
           <button
             class="text-zinc-400 hover:text-zinc-100 lg:hidden"
@@ -70,14 +71,14 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           <span class="font-bold text-zinc-100 lg:hidden">phyless</span>
 
           {/* Tab strip */}
-          <div class="ml-auto flex min-w-0 items-center gap-1 overflow-x-auto">
+          <div class="flex min-w-0 items-center gap-1 overflow-x-auto">
             <For each={tabs()}>
               {(t) => (
                 <div
-                  class={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                  class={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs text-zinc-200 transition-colors ${
                     location.pathname === t.path
-                      ? "border-indigo-500/30 bg-indigo-500/15 text-indigo-300"
-                      : "border-transparent text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                      ? "border-indigo-500/30 bg-indigo-500/15"
+                      : "border-transparent hover:bg-zinc-800/60"
                   }`}
                   onClick={() => navigate(t.path)}
                 >
@@ -93,7 +94,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           </div>
 
           <button
-            class="shrink-0 text-zinc-400 hover:text-zinc-100"
+            class="ml-auto shrink-0 text-zinc-400 hover:text-zinc-100"
             onClick={toggleTheme}
             title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
           >

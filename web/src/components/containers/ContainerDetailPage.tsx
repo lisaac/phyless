@@ -694,6 +694,7 @@ export const ContainerDetailPage: Component = () => {
       {/* ── Tab: 文件 ──────────────────────────────────────────────────────── */}
       <Show when={tab() === "files"}>
         <FileBrowser
+          instanceKey={id()}
           listPath={listFiles}
           downloadURL={downloadURL}
           onUpload={hasRole("operator") ? uploadFile : undefined}

@@ -1,4 +1,4 @@
-import { Component, createSignal, createResource, For, Show, createMemo } from "solid-js";
+import { Component, createSignal, createResource, createEffect, For, Show, createMemo } from "solid-js";
 import type { FileEntry } from "../../types";
 
 function fmtSize(b: number): string {
@@ -31,9 +31,21 @@ export const FileBrowser: Component<{
   onOpenFile?: (fullSubPath: string) => void;
   initialPath?: string;
   onPathChange?: (path: string) => void;
+  // Identifies which entity (e.g. container id) is being browsed. The page
+  // that owns FileBrowser often doesn't remount across navigations (Solid
+  // Router reuses the same component instance for e.g. /containers/:id when
+  // only :id changes), so without this, switching to a different container
+  // whose file browser happens to already sit at the same path would never
+  // refetch — leaving the previous container's stale listing on screen while
+  // every action (delete/rename/copy) silently targets the new container.
+  instanceKey?: string;
 }> = (props) => {
   const [path, setPath] = createSignal(props.initialPath ?? "/");
-  const [entries, { refetch }] = createResource(path, (p) => props.listPath(p));
+  createEffect(() => {
+    props.instanceKey;
+    setPath(props.initialPath ?? "/");
+  });
+  const [entries, { refetch }] = createResource(() => [props.instanceKey, path()] as const, ([, p]) => props.listPath(p));
   const [sortCol, setSortCol] = createSignal("name");
   const [sortDir, setSortDir] = createSignal<1 | -1>(1);
   const toggleSort = (col: string) => {

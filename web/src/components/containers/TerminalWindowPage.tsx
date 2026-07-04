@@ -1,4 +1,4 @@
-import { Component } from "solid-js";
+import { Component, createEffect } from "solid-js";
 import { useParams, useSearchParams } from "@solidjs/router";
 import { ContainerTerminal } from "./ContainerTerminal";
 
@@ -9,12 +9,16 @@ import { ContainerTerminal } from "./ContainerTerminal";
 export const TerminalWindowPage: Component = () => {
   const params = useParams();
   const [search] = useSearchParams();
+  const cmd = () => (search.cmd as string) || "/bin/sh";
+  const name = () => (search.name as string) || params.id;
+
+  createEffect(() => { document.title = `${name()} — ${cmd()}`; });
 
   return (
     <div class="h-screen w-screen bg-[#0c0c0c]">
       <ContainerTerminal
         id={params.id}
-        cmd={(search.cmd as string) || "/bin/sh"}
+        cmd={cmd()}
         user={(search.user as string) || ""}
       />
     </div>
