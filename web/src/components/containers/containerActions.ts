@@ -1,7 +1,56 @@
+import { createSignal } from "solid-js";
+import { post, del } from "../../api/client";
+import { toast } from "../shared/Toast";
 import type { ContainerSummary } from "../../types";
 
 export function containerName(c: ContainerSummary): string {
   return (c.Names[0] ?? "").replace(/^\//, "");
+}
+
+export function fmtRelTime(unix: number): string {
+  const diff = Date.now() - unix * 1000;
+  const m = Math.floor(diff / 60000);
+  const h = Math.floor(diff / 3600000);
+  const d = Math.floor(diff / 86400000);
+  if (m < 1) return "刚刚";
+  if (m < 60) return `${m}m 前`;
+  if (h < 24) return `${h}h 前`;
+  if (d < 30) return `${d}d 前`;
+  const dt = new Date(unix * 1000);
+  return `${dt.getMonth() + 1}/${dt.getDate()}`;
+}
+
+// Show last 1-2 path segments, max ~16 chars.
+// Middle-ellipsis: keep the start and end of the path so both context and target are visible.
+export function midPath(p: string, max = 26): string {
+  if (!p || p.length <= max) return p;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = max - head - 1;
+  return p.slice(0, head) + "…" + p.slice(p.length - tail);
+}
+
+// Per-container start/stop/pause/kill/delete with a loading flag per (id, verb)
+// pair — one instance per page, parameterized by that page's own refresh (so
+// ContainerListPage refreshes its store and ComposeListPage refreshes its own
+// containers store, but the pending/act logic itself isn't duplicated).
+export function createContainerActions(refresh: () => Promise<void>) {
+  const [pending, setPending] = createSignal<Set<string>>(new Set());
+  const mark = (id: string, verb: string, on: boolean) =>
+    setPending((p) => { const n = new Set(p); on ? n.add(`${id}:${verb}`) : n.delete(`${id}:${verb}`); return n; });
+  const isP = (id: string, verb: string) => pending().has(`${id}:${verb}`);
+  const act = async (id: string, verb: string) => {
+    mark(id, verb, true);
+    try {
+      if (verb === "delete") await del(`/api/containers/${id}`);
+      else await post(`/api/containers/${id}/${verb}`);
+      await refresh();
+    } catch (e) {
+      toast.error(`${verb} 失败: ${(e as Error).message}`);
+    } finally {
+      mark(id, verb, false);
+    }
+  };
+  return { isP, act };
 }
 
 export const STATE_DOT: Record<string, string> = {

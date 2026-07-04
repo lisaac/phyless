@@ -1,95 +1,20 @@
-import { Component, createSignal, onMount, onCleanup, Show, For, JSX, createResource } from "solid-js";
-import { useNavigate } from "@solidjs/router";
+import { Component, createSignal, onMount, onCleanup, Show, For } from "solid-js";
 import { createResourceStore } from "../../stores/resource";
-import { get, post, del, imageInspectUrl } from "../../api/client";
-import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
-import { containerName, STATE_DOT, fmtContainerStatus } from "./containerActions";
-import { inspectToRunCmd } from "../../api/inspect";
+import { containerName, createContainerActions } from "./containerActions";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { BulkRunModal } from "./BulkRunModal";
 import { ConsoleModal } from "./ConsoleModal";
+import { ViewCmdModal } from "./ViewCmdModal";
+import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
 import type { ContainerSummary } from "../../types";
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-export function fmtRelTime(unix: number): string {
-  const diff = Date.now() - unix * 1000;
-  const m = Math.floor(diff / 60000);
-  const h = Math.floor(diff / 3600000);
-  const d = Math.floor(diff / 86400000);
-  if (m < 1) return "刚刚";
-  if (m < 60) return `${m}m 前`;
-  if (h < 24) return `${h}h 前`;
-  if (d < 30) return `${d}d 前`;
-  const dt = new Date(unix * 1000);
-  return `${dt.getMonth() + 1}/${dt.getDate()}`;
-}
-
-// Show last 1-2 path segments, max ~16 chars
-// Middle-ellipsis: keep the start and end of the path so both context and target are visible.
-function midPath(p: string, max = 26): string {
-  if (!p || p.length <= max) return p;
-  const head = Math.ceil((max - 1) / 2);
-  const tail = max - head - 1;
-  return p.slice(0, head) + "…" + p.slice(p.length - tail);
-}
-
-function composeProject(c: ContainerSummary): string | undefined {
-  return c.Labels?.["com.docker.compose.project"];
-}
-
-// ── Icon button ────────────────────────────────────────────────────────────────
-const IBtn = (p: {
-  title: string; onClick: () => void;
-  loading?: boolean; disabled?: boolean; danger?: boolean; children: JSX.Element;
-}) => (
-  <button
-    title={p.title}
-    disabled={p.loading || p.disabled}
-    onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${
-      p.danger
-        ? "text-zinc-500 hover:bg-red-900/40 hover:text-red-400"
-        : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"
-    }`}
-  >
-    {p.loading ? <span class="inline-block animate-spin text-xs">↺</span> : p.children}
-  </button>
-);
-
-// ── Run/Compose modal ──────────────────────────────────────────────────────────
-// Always mounted (open just toggles CreateContainerModal's own visibility) —
-// wrapping it in a <Show> would unmount CreateContainerModal, and with it the
-// PullStatusWidget it embeds, the instant onClose fires (e.g. right after
-// clicking "创建容器"), killing the in-flight creation before it can render.
-const ViewCmdModal: Component<{ target: { id: string; name: string } | null; onClose: () => void }> = (props) => {
-  const [cmd] = createResource(() => props.target, async (t) => {
-    const inspect = await get<Record<string, unknown>>(`/api/containers/${t.id}/inspect`);
-    const imageId = (inspect?.Image as string) ?? "";
-    let imageInspect = {};
-    if (imageId) {
-      try { imageInspect = await get(imageInspectUrl(imageId)); } catch { /* ignore */ }
-    }
-    return inspectToRunCmd(inspect, imageInspect);
-  });
-
-  return (
-    <CreateContainerModal
-      open={!!props.target && !cmd.loading}
-      onClose={props.onClose}
-      onCreated={props.onClose}
-      initialRun={cmd() ?? ""}
-    />
-  );
-};
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 export const ContainerListPage: Component = () => {
-  const navigate = useNavigate();
   const store = createResourceStore<ContainerSummary>("/api/containers");
+  const { isP, act } = createContainerActions(store.refresh);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [showCreate, setShowCreate] = createSignal(false);
-  const [pending, setPending] = createSignal<Set<string>>(new Set());
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [bulkRunIds, setBulkRunIds] = createSignal<string[] | null>(null);
@@ -101,23 +26,6 @@ export const ContainerListPage: Component = () => {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAll = (v: boolean) =>
     setSelected(v ? new Set(store.items().map((c) => c.Id)) : new Set());
-
-  const mark = (id: string, verb: string, on: boolean) =>
-    setPending((p) => { const n = new Set(p); on ? n.add(`${id}:${verb}`) : n.delete(`${id}:${verb}`); return n; });
-  const isP = (id: string, verb: string) => pending().has(`${id}:${verb}`);
-
-  const act = async (id: string, verb: string) => {
-    mark(id, verb, true);
-    try {
-      if (verb === "delete") await del(`/api/containers/${id}`);
-      else await post(`/api/containers/${id}/${verb}`);
-      await store.refresh();
-    } catch (e) {
-      toast.error(`${verb} 失败: ${(e as Error).message}`);
-    } finally {
-      mark(id, verb, false);
-    }
-  };
 
   const bulk = async (verb: "start" | "stop" | "kill" | "delete") => {
     await Promise.all([...selected()].map((id) => act(id, verb)));
@@ -187,189 +95,25 @@ export const ContainerListPage: Component = () => {
         <p class="text-sm text-red-400">{store.error()}</p>
       </Show>
 
-      {/* ── Table ───────────────────────────────────────────────────────────── */}
+      {/* ── List (div-simulated table, so rows can be reused elsewhere — e.g.
+          ComposeListPage's expanded project section) ───────────────────────── */}
       <div class="overflow-x-auto border border-zinc-800">
-        <table class="w-full text-left text-sm">
-          <thead class="border-b border-zinc-800 text-xs text-zinc-500">
-            <tr>
-              <th class="w-8 px-3 py-2 text-center font-normal" />
-              <th class="w-44 px-3 py-2 font-normal">容器</th>
-              <th class="w-36 px-3 py-2 text-center font-normal">网络 / 端口</th>
-              <th class="px-3 py-2 font-normal">挂载</th>
-              <th class="w-48 px-3 py-2 font-normal">命令</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-zinc-800">
-            <For each={store.items()}>
-              {(c) => {
-                const name = containerName(c);
-                const running = () => c.State === "running";
-                const paused  = () => c.State === "paused";
-                const proj    = composeProject(c);
-
-                const rowBg = () => {
-                  if (c.State === "running")    return "bg-emerald-500/[0.08] hover:bg-emerald-500/[0.13]";
-                  if (c.State === "paused")     return "bg-amber-500/[0.04] hover:bg-amber-500/[0.08]";
-                  if (c.State === "restarting") return "bg-sky-500/[0.04] hover:bg-sky-500/[0.08]";
-                  if (c.State === "dead")       return "bg-red-500/[0.05] hover:bg-red-500/[0.09]";
-                  // exited / created: neutral
-                  return "hover:bg-white/[0.03]";
-                };
-
-                // Port links
-                const pubPorts = () => {
-                  const seen = new Set<number>();
-                  return c.Ports.filter((p) => p.PublicPort && !seen.has(p.PublicPort) && seen.add(p.PublicPort));
-                };
-
-                // Networks
-                const nets = Object.keys(c.NetworkSettings?.Networks ?? {}).join(", ");
-
-                return (
-                  <tr class={`transition-colors ${rowBg()}`}>
-                    {/* Checkbox */}
-                    <td class="px-3 py-2 text-center">
-                      <input type="checkbox" checked={selected().has(c.Id)} onChange={() => toggle(c.Id)} />
-                    </td>
-
-                    {/* Container info + actions */}
-                    <td class="px-3 py-2">
-                      {/* Name row */}
-                      <div class="flex items-center gap-1.5">
-                        <span class={`h-2 w-2 shrink-0 ${STATE_DOT[c.State] ?? "bg-zinc-600"}`} />
-                        <a
-                          class="max-w-[9rem] truncate font-medium text-zinc-200 hover:text-indigo-400 transition-colors"
-                          href={`/containers/${c.Id}`}
-                          title={name || "(unnamed)"}
-                          onClick={(e) => { e.stopPropagation(); navigate(`/containers/${c.Id}`, { replace: true }); e.preventDefault(); }}
-                        >
-                          {name || <span class="text-zinc-400">(unnamed)</span>}
-                        </a>
-                      </div>
-                      {/* ID + image */}
-                      <a
-                        class="mt-0.5 font-mono text-[11px] text-zinc-400 hover:text-indigo-400 transition-colors"
-                        href={`/containers/${c.Id}`}
-                        onClick={(e) => { e.stopPropagation(); navigate(`/containers/${c.Id}`, { replace: true }); e.preventDefault(); }}
-                      >{c.Id.slice(0, 12)}</a>
-                      <div class="max-w-[10rem] truncate text-[11px] text-zinc-400" title={c.Image}>{c.Image}</div>
-                      {/* Time */}
-                      <div class="mt-0.5 text-[11px] text-zinc-400">
-                        {fmtContainerStatus(c.State, c.Status)}
-                        {" · 创建 "}{fmtRelTime(c.Created)}
-                      </div>
-                      {/* Inline actions */}
-                      <Show when={hasRole("operator")}>
-                        <div class="mt-1 flex items-center gap-0.5">
-                          <Show when={!running() && !paused()}>
-                            <IBtn title="启动" loading={isP(c.Id, "start")} onClick={() => void act(c.Id, "start")}>▶</IBtn>
-                          </Show>
-                          <Show when={paused()}>
-                            <IBtn title="恢复运行" loading={isP(c.Id, "unpause")} onClick={() => void act(c.Id, "unpause")}>▶</IBtn>
-                          </Show>
-                          <Show when={running()}>
-                            <IBtn title="停止" loading={isP(c.Id, "stop")} onClick={() => void act(c.Id, "stop")}>■</IBtn>
-                            <IBtn title="暂停" loading={isP(c.Id, "pause")} onClick={() => void act(c.Id, "pause")}>⏸</IBtn>
-                            <IBtn title="重启" loading={isP(c.Id, "restart")} onClick={() => void act(c.Id, "restart")}>↺</IBtn>
-                            <IBtn title="强制关闭 (SIGKILL)" loading={isP(c.Id, "kill")} onClick={() => void act(c.Id, "kill")} danger>✕</IBtn>
-                          </Show>
-
-                          <span class="mx-0.5 text-zinc-400">│</span>
-
-                          <IBtn title="查看 Run/Compose 命令" onClick={() => setRunTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>⧉</IBtn>
-
-                          <Show when={running()}>
-                            <IBtn title="控制台" onClick={() => setConsoleTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>&gt;_</IBtn>
-                          </Show>
-
-                          <Show when={!running()}>
-                            <span class="mx-0.5 text-zinc-400">│</span>
-                            <IBtn title="删除容器" danger loading={isP(c.Id, "delete")} onClick={() => { if (confirm(`删除容器 ${name || c.Id.slice(0, 8)}？`)) void act(c.Id, "delete"); }}>⊖</IBtn>
-                          </Show>
-                        </div>
-                      </Show>
-                      <Show when={!hasRole("operator")}>
-                        <div class="mt-1 flex gap-0.5">
-                          <IBtn title="查看 Run/Compose 命令" onClick={() => setRunTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>⧉</IBtn>
-                        </div>
-                      </Show>
-                    </td>
-
-                    {/* Network + Ports */}
-                    <td class="px-3 py-2 text-center align-middle">
-                      <Show when={nets}>
-                        <div class="mx-auto max-w-[10rem] truncate text-xs text-zinc-500" title={nets}>{nets}</div>
-                      </Show>
-                      <Show when={pubPorts().length > 0}>
-                        <div class="mt-0.5 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5">
-                          <For each={pubPorts()}>
-                            {(p) => (
-                              <a
-                                href={`http://${location.hostname}:${p.PublicPort}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="font-mono text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
-                                title={`打开 ${location.hostname}:${p.PublicPort}`}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {p.PublicPort}→{p.PrivatePort}
-                              </a>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                      <Show when={!nets && pubPorts().length === 0}>
-                        <span class="text-xs text-zinc-500">—</span>
-                      </Show>
-                    </td>
-
-                    {/* Mounts — both sides simplified */}
-                    <td class="px-3 py-2 align-middle">
-                      <Show
-                        when={c.Mounts.length > 0}
-                        fallback={<span class="text-xs text-zinc-500">—</span>}
-                      >
-                        <div class="flex flex-col gap-0.5">
-                          <For each={c.Mounts.slice(0, 4)}>
-                            {(m) => (
-                              <a
-                                href={`/containers/${c.Id}?tab=files&path=${encodeURIComponent(m.Destination)}`}
-                                class="flex items-center gap-0.5 font-mono text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
-                                title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  navigate(`/containers/${c.Id}?tab=files&path=${encodeURIComponent(m.Destination)}`, { replace: true });
-                                }}
-                              >
-                                <span class="shrink-0">{midPath(m.Source || m.Name || "")}</span>
-                                <span class="shrink-0 text-zinc-600">→</span>
-                                <span class="shrink-0">{midPath(m.Destination)}</span>
-                                <Show when={m.Mode?.includes("ro")}>
-                                  <span class="text-[9px] text-zinc-400">ro</span>
-                                </Show>
-                              </a>
-                            )}
-                          </For>
-                          <Show when={c.Mounts.length > 4}>
-                            <span class="text-[11px] text-zinc-400">+{c.Mounts.length - 4} 更多</span>
-                          </Show>
-                        </div>
-                      </Show>
-                    </td>
-
-                    {/* Command */}
-                    <td class="px-3 py-2 align-middle">
-                      <span class="line-clamp-3 break-all font-mono text-[11px] text-zinc-400" title={c.Command}>
-                        {c.Command || "—"}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              }}
-            </For>
-          </tbody>
-        </table>
+        <ContainerRowHeader showCheckbox />
+        <div class="divide-y divide-zinc-800">
+          <For each={store.items()}>
+            {(c) => (
+              <ContainerRow
+                c={c}
+                selected={selected().has(c.Id)}
+                onToggleSelect={() => toggle(c.Id)}
+                isP={isP}
+                act={act}
+                onViewCmd={setRunTarget}
+                onConsole={setConsoleTarget}
+              />
+            )}
+          </For>
+        </div>
 
         <Show when={store.items().length === 0 && !store.error()}>
           <div class="py-16 text-center text-zinc-400">暂无容器</div>

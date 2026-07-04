@@ -6,7 +6,10 @@ import { Modal } from "../shared/Modal";
 import { post, del } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
-import { containerName, STATE_DOT, fmtContainerStatus } from "../containers/containerActions";
+import { createContainerActions } from "../containers/containerActions";
+import { ContainerRow, ContainerRowHeader } from "../containers/ContainerRow";
+import { ViewCmdModal } from "../containers/ViewCmdModal";
+import { ConsoleModal } from "../containers/ConsoleModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 const LABEL_PROJECT = "com.docker.compose.project";
@@ -25,7 +28,10 @@ export const ComposeListPage: Component = () => {
   const navigate = useNavigate();
   const store = createResourceStore<ComposeProject>("/api/compose");
   const containers = createResourceStore<ContainerSummary>("/api/containers");
+  const { isP, act } = createContainerActions(containers.refresh);
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
+  const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
+  const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [show, setShow] = createSignal(false);
   const [form, setForm] = createSignal({ name: "", base_dir: "", compose_file: "", env_file: "" });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -87,21 +93,23 @@ export const ComposeListPage: Component = () => {
                   </div>
                 </div>
                 <Show when={isOpen()}>
-                  <div class="divide-y divide-zinc-800/60 border-t border-zinc-800 bg-zinc-950/40">
-                    <For each={cs()} fallback={<div class="px-8 py-3 text-xs text-zinc-500">无容器</div>}>
-                      {(c) => (
-                        <a
-                          href={`/containers/${c.Id}`}
-                          class="flex items-center gap-2 px-8 py-1.5 text-xs hover:bg-white/[0.03] transition-colors"
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/containers/${c.Id}`, { replace: true }); }}
-                        >
-                          <span class={`h-2 w-2 shrink-0 rounded-full ${STATE_DOT[c.State] ?? "bg-zinc-600"}`} />
-                          <span class="font-medium text-zinc-200">{containerName(c) || c.Id.slice(0, 12)}</span>
-                          <span class="text-zinc-500">{fmtContainerStatus(c.State, c.Status)}</span>
-                          <span class="ml-auto max-w-[16rem] truncate text-zinc-400">{c.Image}</span>
-                        </a>
-                      )}
-                    </For>
+                  <div class="border-t border-zinc-800 bg-zinc-950/40">
+                    <Show when={cs().length > 0} fallback={<div class="px-8 py-3 text-xs text-zinc-500">无容器</div>}>
+                      <ContainerRowHeader />
+                      <div class="divide-y divide-zinc-800/60">
+                        <For each={cs()}>
+                          {(c) => (
+                            <ContainerRow
+                              c={c}
+                              isP={isP}
+                              act={act}
+                              onViewCmd={setRunTarget}
+                              onConsole={setConsoleTarget}
+                            />
+                          )}
+                        </For>
+                      </div>
+                    </Show>
                   </div>
                 </Show>
               </div>
@@ -123,6 +131,9 @@ export const ComposeListPage: Component = () => {
           <Button variant="primary" onClick={create}>注册</Button>
         </div>
       </Modal>
+
+      <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
+      <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
     </div>
   );
 };

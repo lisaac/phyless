@@ -16,7 +16,7 @@ export interface ContainerSummary {
   Status: string;
   Created: number;
   Ports: { PrivatePort: number; PublicPort?: number; Type: string; IP?: string }[];
-  Mounts: { Source: string; Destination: string; Mode?: string; Type?: string }[];
+  Mounts: { Source: string; Destination: string; Mode?: string; Type?: string; Name?: string }[];
   Command: string;
   NetworkSettings?: { Networks: Record<string, { IPAddress: string }> };
   Labels?: Record<string, string>;
