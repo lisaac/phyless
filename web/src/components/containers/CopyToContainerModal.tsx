@@ -90,6 +90,10 @@ export const CopyToContainerModal: Component<{
         title={`复制 ${props.source?.path ?? ""} → ${targetContainerLabel() || targetId()}`}
         url={`/api/containers/${props.source?.containerId}/files/copy-to?path=${encodeURIComponent(props.source?.path ?? "")}`}
         body={{ target_id: targetId(), target_path: targetPath() }}
+        doneLink={{
+          href: `/containers/${targetId()}?tab=files&path=${encodeURIComponent(targetPath())}`,
+          label: "查看目标目录",
+        }}
       />
     </>
   );

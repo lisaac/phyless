@@ -34,6 +34,10 @@ export const PullStatusWidget: Component<{
   file?: File;
   onDone?: () => void;
   onClose: () => void;
+  // Overrides the auto-detected "查看容器详情" link (from a {container_id}
+  // event) — for callers that already know exactly where they want the link
+  // to point, e.g. copy-to-container linking straight to the target directory.
+  doneLink?: { href: string; label: string };
 }> = (props) => {
   const [layers, setLayers] = createSignal<LayerProgress[]>([]);
   const [notes, setNotes] = createSignal<string[]>([]);
@@ -168,12 +172,12 @@ export const PullStatusWidget: Component<{
             <For each={notes()}>
               {(n) => <div class="mt-1.5 text-zinc-400">{n}</div>}
             </For>
-            <Show when={done() && containerId()}>
+            <Show when={done() && (props.doneLink || containerId())}>
               <a
-                href={`/containers/${containerId()}`}
+                href={props.doneLink?.href ?? `/containers/${containerId()}`}
                 class="mt-1.5 block text-indigo-400 hover:text-indigo-300 hover:underline"
               >
-                → 查看容器详情
+                → {props.doneLink?.label ?? "查看容器详情"}
               </a>
             </Show>
           </div>
