@@ -1,4 +1,4 @@
-import { Component, JSX, createSignal, createEffect, onMount, For, Show } from "solid-js";
+import { Component, JSX, createSignal, createEffect, onMount, startTransition, For, Show } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
@@ -64,17 +64,24 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     }
     // Closing the tab you're currently looking at: swap the displayed page
     // to its left neighbor FIRST, then drop the old tab — not the other way
-    // around. Removing the tab before navigating left a window where the
-    // route still pointed at a path with no matching tab entry, which is
-    // what caused the strip to misbehave.
+    // around.
     const dest = leftNeighbor(path)?.path ?? "/overview";
     openOrActivate(dest, labelFor(dest)); // no-op if dest's tab (the left neighbor) already exists
     // replace, not push: switching/closing tabs is tab management, not
     // "forward" navigation. Pushing here left a history entry for the tab
     // that's closing — hitting the browser Back button would then land back
     // on that now-closed page's path and silently recreate its tab.
-    navigate(dest, { replace: true });
-    removeTab(path);
+    //
+    // navigate() runs inside solid-router's own startTransition internally —
+    // location.pathname does NOT update synchronously when navigate() returns,
+    // it updates once that transition commits. Calling removeTab(path) right
+    // after navigate() ran it while location.pathname was STILL `path`: the
+    // header effect above (which reacts to location.pathname) would see
+    // "displaying `path`, but no tab for it" mid-transition and recreate one
+    // — which is exactly the "tab reappears after closing" bug. Wrapping our
+    // own navigate() in startTransition and awaiting it guarantees
+    // location.pathname has actually become `dest` before we remove `path`'s tab.
+    void startTransition(() => navigate(dest, { replace: true })).then(() => removeTab(path));
   };
 
   return (

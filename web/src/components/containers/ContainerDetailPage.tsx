@@ -1,5 +1,5 @@
 import {
-  Component, createSignal, createResource, createEffect, For, Show, onMount, onCleanup,
+  Component, createSignal, createResource, createEffect, For, Show, onMount, onCleanup, startTransition,
 } from "solid-js";
 import { useParams, useSearchParams, useNavigate } from "@solidjs/router";
 import { get, post, del, put, getToken, setToken, imageInspectUrl } from "../../api/client";
@@ -325,10 +325,13 @@ export const ContainerDetailPage: Component = () => {
         <button
           class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
           onClick={() => {
-            // Switch the displayed page first, then drop this container's
-            // tab — same order as closing a tab from the strip (see Layout.tsx).
-            navigate("/containers", { replace: true });
-            removeTab(`/containers/${id()}`);
+            // Switch the displayed page first, then drop this container's tab
+            // — same order as closing a tab from the strip (see Layout.tsx).
+            // Must wait for navigate()'s startTransition to actually commit
+            // before removing the tab, or the tab-sync effect can see the old
+            // path with no matching tab mid-transition and recreate it.
+            const path = `/containers/${id()}`;
+            void startTransition(() => navigate("/containers", { replace: true })).then(() => removeTab(path));
           }}
         >← 返回</button>
       </div>
@@ -374,8 +377,9 @@ export const ContainerDetailPage: Component = () => {
               if (!confirm(`删除容器 ${name()}?`)) return;
               try {
                 await del(`/api/containers/${id()}`);
-                navigate("/containers", { replace: true });
-                removeTab(`/containers/${id()}`);
+                const path = `/containers/${id()}`;
+                await startTransition(() => navigate("/containers", { replace: true }));
+                removeTab(path);
               }
               catch (e) { toast.error((e as Error).message); }
             }}>⊖ 移除</Btn>
