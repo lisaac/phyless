@@ -8,7 +8,6 @@ import { containerName } from "./containerActions";
 import { inspectToRunCmd } from "../../api/inspect";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { BulkRunModal } from "./BulkRunModal";
-import { TagPicker } from "../tags/TagPicker";
 import type { ContainerSummary } from "../../types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -135,7 +134,6 @@ export const ContainerListPage: Component = () => {
   const [pending, setPending] = createSignal<Set<string>>(new Set());
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [bulkRunIds, setBulkRunIds] = createSignal<string[] | null>(null);
-  const [tagTarget, setTagTarget] = createSignal<{ id: string; name: string } | null>(null);
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
@@ -318,7 +316,6 @@ export const ContainerListPage: Component = () => {
                           <span class="mx-0.5 text-zinc-400">│</span>
 
                           <IBtn title="查看 Run/Compose 命令" onClick={() => setRunTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>⧉</IBtn>
-                          <IBtn title="标签" onClick={() => setTagTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>#</IBtn>
 
                           <Show when={!running()}>
                             <span class="mx-0.5 text-zinc-400">│</span>
@@ -415,15 +412,6 @@ export const ContainerListPage: Component = () => {
       <Show when={bulkRunIds()}>
         {(ids) => <BulkRunModal ids={ids()} onClose={() => setBulkRunIds(null)} />}
       </Show>
-
-      {/* ── Tag picker ───────────────────────────────────────────────────────── */}
-      <TagPicker
-        open={!!tagTarget()}
-        onClose={() => setTagTarget(null)}
-        resourceType="container"
-        resourceId={tagTarget()?.id ?? ""}
-        resourceName={tagTarget()?.name ?? ""}
-      />
 
       {/* ── Create container modal ───────────────────────────────────────────── */}
       <CreateContainerModal

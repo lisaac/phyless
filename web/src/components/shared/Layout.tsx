@@ -1,9 +1,26 @@
-import { Component, JSX, createSignal, Show } from "solid-js";
+import { Component, JSX, createSignal, createEffect, For, Show } from "solid-js";
+import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
+import { tabs, openOrActivate, closeTab, labelFor } from "../../stores/tabs";
 
 export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const [drawerOpen, setDrawerOpen] = createSignal(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Every navigation (sidebar click, clicking into a row, back/forward) flows
+  // through here — the single integration point that keeps the tab strip in
+  // sync with the actual route, without touching individual navigate() calls.
+  createEffect(() => {
+    openOrActivate(location.pathname, labelFor(location.pathname));
+  });
+
+  const closeAndNavigate = (e: MouseEvent, path: string) => {
+    e.stopPropagation();
+    const dest = closeTab(path);
+    if (location.pathname === path) navigate(dest);
+  };
 
   return (
     <div class="flex h-full overflow-hidden">
@@ -30,10 +47,11 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
 
       {/* ── Main area ─────────────────────────────────────────────────── */}
       <div class="flex min-w-0 flex-1 flex-col">
-        {/* Mobile top bar */}
-        <header class="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900 px-4 py-3 lg:hidden">
+        {/* Top bar — always visible; hamburger+title are mobile-only, the tab
+            strip (top-right) and theme toggle are shown at every width. */}
+        <header class="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900 px-3 py-2">
           <button
-            class="text-zinc-400 hover:text-zinc-100"
+            class="text-zinc-400 hover:text-zinc-100 lg:hidden"
             onClick={() => setDrawerOpen(true)}
             aria-label="打开菜单"
           >
@@ -42,9 +60,33 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
               <path d="M3 12h18M3 6h18M3 18h18" />
             </svg>
           </button>
-          <span class="font-bold text-zinc-100">phyless</span>
+          <span class="font-bold text-zinc-100 lg:hidden">phyless</span>
+
+          {/* Tab strip */}
+          <div class="ml-auto flex min-w-0 items-center gap-1 overflow-x-auto">
+            <For each={tabs()}>
+              {(t) => (
+                <div
+                  class={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors ${
+                    location.pathname === t.path
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                  }`}
+                  onClick={() => navigate(t.path)}
+                >
+                  <span class="max-w-[9rem] truncate">{t.label}</span>
+                  <button
+                    class="shrink-0 text-zinc-500 transition-colors hover:text-zinc-200"
+                    onClick={(e) => closeAndNavigate(e, t.path)}
+                    aria-label={`关闭标签 ${t.label}`}
+                  >✕</button>
+                </div>
+              )}
+            </For>
+          </div>
+
           <button
-            class="ml-auto text-zinc-400 hover:text-zinc-100"
+            class="shrink-0 text-zinc-400 hover:text-zinc-100"
             onClick={toggleTheme}
             title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
           >

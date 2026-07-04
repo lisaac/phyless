@@ -14,6 +14,7 @@ import { ContainerStats } from "./ContainerStats";
 import { FileBrowser } from "../shared/FileBrowser";
 import { inspectToRunCmd } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
+import { setTabLabel } from "../../stores/tabs";
 import type { FileEntry, NetworkSummary } from "../../types";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -181,6 +182,11 @@ export const ContainerDetailPage: Component = () => {
   const name = () => (inspect()?.Name ?? id()).replace(/^\//, "");
   const state = () => inspect()?.State?.Status ?? "unknown";
   const running = () => state() === "running";
+
+  // Upgrade the tab strip's placeholder ("容器 abc12345") to the real name once known.
+  createEffect(() => {
+    if (inspect()?.Name) setTabLabel(`/containers/${id()}`, name());
+  });
 
   const [now, setNow] = createSignal(Date.now());
   onMount(() => { const t = setInterval(() => setNow(Date.now()), 1000); onCleanup(() => clearInterval(t)); });

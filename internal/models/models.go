@@ -48,20 +48,3 @@ type Template struct {
 	Cmd     string `json:"cmd"` // docker run command
 	Created string `json:"created"`
 }
-
-// Tag is a user-defined label for organizing resources across types.
-// Docker labels are immutable after a container/image is created, so tags
-// live entirely in our own store rather than as Docker labels.
-type Tag struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Color string `json:"color,omitempty"` // hex, e.g. "#6366f1"; empty = default
-}
-
-// TagBinding attaches one tag to one resource. ResourceType is "container" or
-// "image"; ResourceID is that resource's Docker ID.
-type TagBinding struct {
-	TagID        string `json:"tag_id"`
-	ResourceType string `json:"resource_type"`
-	ResourceID   string `json:"resource_id"`
-}

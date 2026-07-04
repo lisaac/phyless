@@ -3,8 +3,7 @@ import { A, useNavigate } from "@solidjs/router";
 import { currentUser, doLogout, hasRole } from "../../stores/auth";
 import { theme, toggleTheme } from "../../stores/theme";
 
-const mainLinks = [
-  { to: "/tags",       label: "标签" },
+export const mainLinks = [
   { to: "/containers", label: "容器" },
   { to: "/compose",    label: "Compose" },
   { to: "/images",     label: "镜像" },
@@ -13,7 +12,7 @@ const mainLinks = [
   { to: "/events",     label: "事件" },
   { to: "/config",     label: "配置文件" },
 ];
-const adminLinks = [
+export const adminLinks = [
   { to: "/settings/users",      label: "用户管理" },
   { to: "/settings/registries", label: "镜像仓库" },
   { to: "/settings/audit",      label: "审计日志" },

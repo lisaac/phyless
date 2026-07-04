@@ -13,8 +13,6 @@ type Config struct {
 	ComposeProjects []models.ComposeProject `json:"compose_projects"`
 	Registries      []models.Registry       `json:"registries"`
 	Templates       []models.Template       `json:"templates"`
-	Tags            []models.Tag            `json:"tags"`
-	TagBindings     []models.TagBinding     `json:"tag_bindings"`
 }
 
 type Store struct {
@@ -36,8 +34,6 @@ func (s *Store) Read() (*Config, error) {
 			Users:           []models.User{},
 			ComposeProjects: []models.ComposeProject{},
 			Registries:      []models.Registry{},
-			Tags:            []models.Tag{},
-			TagBindings:     []models.TagBinding{},
 		}, nil
 	}
 	if err != nil {
