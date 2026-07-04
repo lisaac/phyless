@@ -1,15 +1,8 @@
 import { Component, onMount, onCleanup, createSignal, createResource, For, Show } from "solid-js";
 import { connectWS } from "../../api/ws";
 import { get } from "../../api/client";
+import { cpuPercent, memUsageMB, memLimitMB } from "../../api/stats";
 import { Sparkline } from "./Sparkline";
-
-function cpuPercent(s: any): number {
-  const cpuDelta = s.cpu_stats.cpu_usage.total_usage - (s.precpu_stats?.cpu_usage?.total_usage ?? 0);
-  const sysDelta = s.cpu_stats.system_cpu_usage - (s.precpu_stats?.system_cpu_usage ?? 0);
-  const cpus = s.cpu_stats.online_cpus ?? 1;
-  if (sysDelta <= 0 || cpuDelta <= 0) return 0;
-  return (cpuDelta / sysDelta) * cpus * 100;
-}
 
 function netBytes(s: any): { rx: number; tx: number } {
   const nets = s.networks ?? {};
@@ -42,8 +35,8 @@ export const ContainerStats: Component<{ id: string }> = (props) => {
           try {
             const s = JSON.parse(line);
             const c = cpuPercent(s);
-            const m = (s.memory_stats?.usage ?? 0) / 1024 / 1024;
-            const limit = (s.memory_stats?.limit ?? 0) / 1024 / 1024;
+            const m = memUsageMB(s);
+            const limit = memLimitMB(s);
             const net = netBytes(s);
             const rxDelta = Math.max(0, net.rx - prevNet.rx);
             const txDelta = Math.max(0, net.tx - prevNet.tx);

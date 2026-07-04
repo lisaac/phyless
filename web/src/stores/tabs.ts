@@ -39,12 +39,14 @@ export function setTabLabel(path: string, label: string) {
 }
 
 // Returns the path to navigate to after closing (a neighboring tab, or
-// "/containers" as the default landing page if none remain).
+// "/overview" as the default landing page if none remain). Looks up the
+// neighbor directly in the pre-removal list (list[idx+1] ?? list[idx-1])
+// rather than re-deriving an index into the filtered list, so there's no
+// arithmetic that could point at the wrong entry after removal.
 export function closeTab(path: string): string {
   const list = tabs();
   const idx = list.findIndex((t) => t.path === path);
-  const next = list.filter((t) => t.path !== path);
-  setTabs(next);
-  if (next.length === 0) return "/containers";
-  return next[Math.min(idx, next.length - 1)].path;
+  const neighbor = list[idx + 1] ?? list[idx - 1];
+  setTabs(list.filter((t) => t.path !== path));
+  return neighbor ? neighbor.path : "/overview";
 }

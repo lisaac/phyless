@@ -20,13 +20,13 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     e.stopPropagation();
     const dest = closeTab(path);
     if (location.pathname !== path) return;
-    // navigate() is a no-op when dest === the current path (e.g. closing your
-    // only tab, which happens to be the "/containers" fallback itself) — no
-    // route change means the tab-sync effect above never re-fires, so the
-    // fallback tab would never get recreated. Recreate it explicitly instead
-    // of relying on a navigation event that may not actually occur.
-    if (dest === location.pathname) openOrActivate(dest, labelFor(dest));
-    else navigate(dest);
+    // Ensure the destination's tab exists unconditionally, regardless of
+    // whether navigate() below actually changes the route (it's a no-op when
+    // dest === the current path — e.g. closing your only tab, which happens
+    // to be the "/overview" fallback itself — and a no-op route change means
+    // the tab-sync effect never re-fires to recreate it).
+    openOrActivate(dest, labelFor(dest));
+    navigate(dest);
   };
 
   return (

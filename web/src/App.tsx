@@ -4,6 +4,7 @@ import { currentUser, loadSession } from "./stores/auth";
 import { Layout } from "./components/shared/Layout";
 import { ToastHost } from "./components/shared/Toast";
 import { LoginPage } from "./components/auth/LoginPage";
+import { OverviewPage } from "./components/overview/OverviewPage";
 import { ContainerListPage } from "./components/containers/ContainerListPage";
 import { ContainerDetailPage } from "./components/containers/ContainerDetailPage";
 import { TerminalWindowPage } from "./components/containers/TerminalWindowPage";
@@ -47,7 +48,8 @@ export const App: Component = () => {
             window (see ConsoleModal), not part of the normal app navigation. */}
         <Route path="/terminal/:id" component={TerminalWindowPage} />
         <Route path="/" component={Guard}>
-          <Route path="/" component={() => <Navigate href="/containers" />} />
+          <Route path="/" component={() => <Navigate href="/overview" />} />
+          <Route path="/overview" component={OverviewPage} />
           <Route path="/containers" component={ContainerListPage} />
           <Route path="/containers/:id" component={ContainerDetailPage} />
           <Route path="/images" component={ImageListPage} />
