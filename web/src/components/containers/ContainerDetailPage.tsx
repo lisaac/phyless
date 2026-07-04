@@ -352,7 +352,7 @@ export const ContainerDetailPage: Component = () => {
             <Btn onClick={() => {
               window.open(`/api/containers/${id()}/export?token=${encodeURIComponent(getToken() ?? "")}`, "_blank");
             }}>↓ 导出 tar</Btn>
-            <Btn onClick={() => void doUpgrade()}>⇡ 升级</Btn>
+            <Btn onClick={() => void doUpgrade()}>↑ 升级</Btn>
             <Btn onClick={() => void openCmdModal()}>⧉ Run/Compose</Btn>
             <Show when={running()}>
               <Btn onClick={() => setConsoleTarget({ id: id(), name: name() })}>&gt;_ 控制台</Btn>

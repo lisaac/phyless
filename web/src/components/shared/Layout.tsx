@@ -4,6 +4,7 @@ import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
 import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type PageTab } from "../../stores/tabs";
 import { ComposeIcon } from "../compose/composeShared";
+import { ContainerIcon } from "../containers/ContainerIcon";
 
 const CLOSE_ANIM_MS = 200;
 
@@ -52,6 +53,9 @@ const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void
     >
       <Show when={p.tab.path.startsWith("/compose/")}>
         <ComposeIcon size={12} class="shrink-0 opacity-70" />
+      </Show>
+      <Show when={p.tab.path.startsWith("/containers/")}>
+        <ContainerIcon size={12} class="shrink-0 opacity-70" />
       </Show>
       <span class="max-w-[9rem] truncate text-left">{p.tab.label}</span>
       <button

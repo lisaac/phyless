@@ -127,9 +127,13 @@ export const ComposeListPage: Component = () => {
                   class="grid transition-[grid-template-rows] duration-200 ease-out"
                   style={{ "grid-template-rows": isOpen() ? "1fr" : "0fr" }}
                 >
-                  <div class="overflow-hidden">
-                    <div class="border-t border-zinc-800">
-                      <Show when={cs().length > 0} fallback={<div class="px-8 py-3 text-xs text-zinc-500">无容器</div>}>
+                  <div class="overflow-hidden border-t border-zinc-800 p-2">
+                    {/* Boxed the same way ComposeDetailPage's info-tab "容器"
+                        section is (mt-1 border border-zinc-800) — this used
+                        to be just a top border, which read differently from
+                        the detail page's own container list. */}
+                    <div class="border border-zinc-800">
+                      <Show when={cs().length > 0} fallback={<div class="px-3 py-3 text-xs text-zinc-500">无容器</div>}>
                         <div class="divide-y divide-zinc-800">
                           <For each={cs()}>
                             {(c) => (
