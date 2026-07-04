@@ -27,6 +27,7 @@ export const FileBrowser: Component<{
   onUpload?: (sub: string, file: File) => Promise<void>;
   onDelete?: (sub: string) => Promise<void>;
   onRename?: (oldPath: string, newPath: string) => Promise<void>;
+  onCopyToContainer?: (fullPath: string) => void;
   onOpenFile?: (fullSubPath: string) => void;
   initialPath?: string;
   onPathChange?: (path: string) => void;
@@ -249,6 +250,9 @@ export const FileBrowser: Component<{
                               a.click();
                             }}
                           >下载 tar</button>
+                        </Show>
+                        <Show when={props.onCopyToContainer}>
+                          <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => props.onCopyToContainer!(join(e.name))}>复制到容器</button>
                         </Show>
                         <Show when={props.onDelete}>
                           <button class="text-[11px] text-red-900 hover:text-red-400" onClick={() => void doDelete(e)}>删除</button>

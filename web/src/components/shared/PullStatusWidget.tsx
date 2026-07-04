@@ -40,6 +40,7 @@ export const PullStatusWidget: Component<{
   const [done, setDone] = createSignal(false);
   const [err, setErr] = createSignal("");
   const [collapsed, setCollapsed] = createSignal(false);
+  const [containerId, setContainerId] = createSignal("");
   const { setRef, offset } = useFloatingSlot(() => props.active);
   let ctrl: AbortController | undefined;
   let buf = "";
@@ -62,6 +63,7 @@ export const PullStatusWidget: Component<{
       setNotes((n) => [...n, evt.status]);
     } else if (evt.stream) {
       setNotes((n) => [...n, String(evt.stream).trim()]);
+      if (evt.container_id) setContainerId(evt.container_id);
     } else if (evt.error) {
       setErr(evt.error);
     }
@@ -69,7 +71,7 @@ export const PullStatusWidget: Component<{
 
   createEffect(() => {
     if (!props.active) { ctrl?.abort(); return; }
-    setLayers([]); setNotes([]); setDone(false); setErr(""); setCollapsed(false);
+    setLayers([]); setNotes([]); setDone(false); setErr(""); setCollapsed(false); setContainerId("");
     layerMap.clear();
     buf = "";
     ctrl = new AbortController();
@@ -166,6 +168,14 @@ export const PullStatusWidget: Component<{
             <For each={notes()}>
               {(n) => <div class="mt-1.5 text-zinc-400">{n}</div>}
             </For>
+            <Show when={done() && containerId()}>
+              <a
+                href={`/containers/${containerId()}`}
+                class="mt-1.5 block text-indigo-400 hover:text-indigo-300 hover:underline"
+              >
+                → 查看容器详情
+              </a>
+            </Show>
           </div>
           <Show when={err()}>
             <p class="border-t border-zinc-800 px-3 py-1.5 text-xs text-red-400">{err()}</p>

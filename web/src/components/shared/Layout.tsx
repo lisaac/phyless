@@ -19,7 +19,14 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const closeAndNavigate = (e: MouseEvent, path: string) => {
     e.stopPropagation();
     const dest = closeTab(path);
-    if (location.pathname === path) navigate(dest);
+    if (location.pathname !== path) return;
+    // navigate() is a no-op when dest === the current path (e.g. closing your
+    // only tab, which happens to be the "/containers" fallback itself) — no
+    // route change means the tab-sync effect above never re-fires, so the
+    // fallback tab would never get recreated. Recreate it explicitly instead
+    // of relying on a navigation event that may not actually occur.
+    if (dest === location.pathname) openOrActivate(dest, labelFor(dest));
+    else navigate(dest);
   };
 
   return (
@@ -67,14 +74,14 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             <For each={tabs()}>
               {(t) => (
                 <div
-                  class={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  class={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors ${
                     location.pathname === t.path
-                      ? "bg-zinc-800 text-zinc-100"
-                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                      ? "border-indigo-500/30 bg-indigo-500/15 text-indigo-300"
+                      : "border-transparent text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
                   }`}
                   onClick={() => navigate(t.path)}
                 >
-                  <span class="max-w-[9rem] truncate">{t.label}</span>
+                  <span class="max-w-[9rem] truncate text-left">{t.label}</span>
                   <button
                     class="shrink-0 text-zinc-500 transition-colors hover:text-zinc-200"
                     onClick={(e) => closeAndNavigate(e, t.path)}

@@ -8,8 +8,9 @@ import { Modal } from "../shared/Modal";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
 import { CreateContainerModal } from "./CreateContainerModal";
+import { ConsoleModal } from "./ConsoleModal";
+import { CopyToContainerModal } from "./CopyToContainerModal";
 import { ContainerLogs } from "./ContainerLogs";
-import { ContainerTerminal } from "./ContainerTerminal";
 import { ContainerStats } from "./ContainerStats";
 import { FileBrowser } from "../shared/FileBrowser";
 import { inspectToRunCmd } from "../../api/inspect";
@@ -36,12 +37,11 @@ const STATE_ZH: Record<string, string> = {
   exited: "已停止", dead: "已终止", created: "已创建", removing: "删除中",
 };
 
-type Tab = "info" | "stats" | "files" | "console" | "logs" | "inspect";
+type Tab = "info" | "stats" | "files" | "logs" | "inspect";
 const TABS: { key: Tab; label: string; requiresRunning?: true }[] = [
   { key: "info",    label: "基本信息" },
   { key: "stats",   label: "状态",    requiresRunning: true },
   { key: "files",   label: "文件",    requiresRunning: true },
-  { key: "console", label: "控制台",  requiresRunning: true },
   { key: "logs",    label: "日志"   },
   { key: "inspect", label: "Inspect" },
 ];
@@ -174,6 +174,8 @@ export const ContainerDetailPage: Component = () => {
   const [networks] = createResource(() => get<NetworkSummary[]>("/api/networks"));
   const [runCmd, setRunCmd] = createSignal<string>("");
   const [showCmdModal, setShowCmdModal] = createSignal(false);
+  const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
+  const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
   const [upgrading, setUpgrading] = createSignal(false);
   const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
 
@@ -356,6 +358,9 @@ export const ContainerDetailPage: Component = () => {
             }}>↓ 导出 tar</Btn>
             <Btn onClick={() => void doUpgrade()}>⇡ 升级</Btn>
             <Btn onClick={() => void openCmdModal()}>⧉ Run/Compose</Btn>
+            <Show when={running()}>
+              <Btn onClick={() => setConsoleTarget({ id: id(), name: name() })}>&gt;_ 控制台</Btn>
+            </Show>
             <span class="text-zinc-400">│</span>
             <Btn danger onClick={async () => {
               if (!confirm(`删除容器 ${name()}?`)) return;
@@ -694,16 +699,10 @@ export const ContainerDetailPage: Component = () => {
           onUpload={hasRole("operator") ? uploadFile : undefined}
           onDelete={hasRole("operator") ? deleteFile : undefined}
           onRename={hasRole("operator") ? renameFile : undefined}
+          onCopyToContainer={hasRole("operator") ? (path) => setCopySource({ containerId: id(), path }) : undefined}
           initialPath={fileInitialPath()}
           onPathChange={onFilePathChange}
         />
-      </Show>
-
-      {/* ── Tab: 控制台 ────────────────────────────────────────────────────── */}
-      <Show when={tab() === "console"}>
-        <Show when={hasRole("operator")} fallback={<p class="text-xs text-zinc-400">需要 operator 权限</p>}>
-          <ContainerTerminal id={id()} />
-        </Show>
       </Show>
 
       {/* ── Tab: 日志 ──────────────────────────────────────────────────────── */}
@@ -727,6 +726,12 @@ export const ContainerDetailPage: Component = () => {
         onCreated={() => { setShowCmdModal(false); void refetch(); }}
         initialRun={runCmd()}
       />
+
+      {/* ── Console: pick cmd/user, opens a standalone terminal window ───── */}
+      <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
+
+      {/* ── Copy a file/dir to another container ─────────────────────────── */}
+      <CopyToContainerModal source={copySource()} onClose={() => setCopySource(null)} />
 
       {/* ── Upgrade progress — non-blocking floating card ────────────────── */}
       <PullStatusWidget

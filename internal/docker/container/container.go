@@ -23,13 +23,20 @@ import (
 // same {stream}/{error} shape docker load already uses, so a single frontend
 // widget can render pull, load, create, and upgrade progress uniformly.
 type streamEvent struct {
-	Stream string `json:"stream,omitempty"`
-	Error  string `json:"error,omitempty"`
+	Stream      string `json:"stream,omitempty"`
+	Error       string `json:"error,omitempty"`
+	ContainerID string `json:"container_id,omitempty"`
 }
 
 // EmitStream writes one formatted status line to a progress stream.
 func EmitStream(w io.Writer, format string, a ...any) {
 	json.NewEncoder(w).Encode(streamEvent{Stream: fmt.Sprintf(format, a...)}) //nolint:errcheck
+}
+
+// EmitDone writes the terminal success line, tagged with the resulting
+// container's ID so the frontend can link straight to its detail page.
+func EmitDone(w io.Writer, containerID, format string, a ...any) {
+	json.NewEncoder(w).Encode(streamEvent{Stream: fmt.Sprintf(format, a...), ContainerID: containerID}) //nolint:errcheck
 }
 
 // EmitError writes a terminal error line to a progress stream.
@@ -211,6 +218,20 @@ func UploadFile(ctx context.Context, cli *client.Client, containerID, destPath s
 	return cli.CopyToContainer(ctx, containerID, destPath, content, container.CopyToContainerOptions{})
 }
 
+// CopyBetweenContainers streams srcPath from one container straight into
+// dstPath on another — the same two calls `docker cp` itself makes when both
+// sides are containers (there's no single daemon endpoint for container-to-
+// container copy); CopyFromContainer's tar output is piped directly into
+// CopyToContainer without buffering the whole thing in memory.
+func CopyBetweenContainers(ctx context.Context, cli *client.Client, srcContainer, srcPath, dstContainer, dstPath string) error {
+	rc, err := DownloadFile(ctx, cli, srcContainer, srcPath)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	return UploadFile(ctx, cli, dstContainer, dstPath, rc)
+}
+
 // CreateTar wraps a single file into a tar stream for UploadFile.
 func CreateTar(filename string, content []byte) io.Reader {
 	var buf bytes.Buffer
@@ -284,7 +305,7 @@ func Upgrade(ctx context.Context, cli *client.Client, containerID string, w io.W
 		return "", fmt.Errorf("启动容器失败: %w", err)
 	}
 
-	EmitStream(w, "✓ 升级完成，新容器 ID: %s", shortID(resp.ID))
+	EmitDone(w, resp.ID, "✓ 升级完成，新容器 ID: %s", shortID(resp.ID))
 	return resp.ID, nil
 }
 

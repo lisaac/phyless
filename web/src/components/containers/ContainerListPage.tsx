@@ -8,6 +8,7 @@ import { containerName } from "./containerActions";
 import { inspectToRunCmd } from "../../api/inspect";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { BulkRunModal } from "./BulkRunModal";
+import { ConsoleModal } from "./ConsoleModal";
 import type { ContainerSummary } from "../../types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -133,6 +134,7 @@ export const ContainerListPage: Component = () => {
   const [showCreate, setShowCreate] = createSignal(false);
   const [pending, setPending] = createSignal<Set<string>>(new Set());
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
+  const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [bulkRunIds, setBulkRunIds] = createSignal<string[] | null>(null);
 
   onMount(() => store.startPolling());
@@ -317,6 +319,10 @@ export const ContainerListPage: Component = () => {
 
                           <IBtn title="查看 Run/Compose 命令" onClick={() => setRunTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>⧉</IBtn>
 
+                          <Show when={running()}>
+                            <IBtn title="控制台" onClick={() => setConsoleTarget({ id: c.Id, name: name || c.Id.slice(0, 8) })}>&gt;_</IBtn>
+                          </Show>
+
                           <Show when={!running()}>
                             <span class="mx-0.5 text-zinc-400">│</span>
                             <IBtn title="删除容器" danger loading={isP(c.Id, "delete")} onClick={() => void act(c.Id, "delete")}>⊖</IBtn>
@@ -409,6 +415,7 @@ export const ContainerListPage: Component = () => {
 
       {/* ── Run/Compose modal ───────────────────────────────────────────────── */}
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
+      <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
       <Show when={bulkRunIds()}>
         {(ids) => <BulkRunModal ids={ids()} onClose={() => setBulkRunIds(null)} />}
       </Show>

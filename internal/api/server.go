@@ -168,6 +168,7 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Post("/api/containers/{id}/files/upload", s.handleContainerUploadFile)
 	r.Delete("/api/containers/{id}/files", s.handleContainerDeleteFile)
 	r.Post("/api/containers/{id}/files/rename", s.handleContainerRenameFile)
+	r.Post("/api/containers/{id}/files/copy-to", s.handleContainerCopyToContainer)
 
 	// Images — id passed as ?id= (query string), not a path segment: image
 	// refs routinely contain colons ("sha256:abc", "nginx:latest"), and colons

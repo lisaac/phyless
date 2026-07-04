@@ -6,6 +6,7 @@ import { ToastHost } from "./components/shared/Toast";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ContainerListPage } from "./components/containers/ContainerListPage";
 import { ContainerDetailPage } from "./components/containers/ContainerDetailPage";
+import { TerminalWindowPage } from "./components/containers/TerminalWindowPage";
 import { ImageListPage } from "./components/images/ImageListPage";
 import { ComposeListPage } from "./components/compose/ComposeListPage";
 import { ComposeDetailPage } from "./components/compose/ComposeDetailPage";
@@ -42,6 +43,9 @@ export const App: Component = () => {
       <ToastHost />
       <Router>
         <Route path="/login" component={LoginPage} />
+        {/* Outside Guard/Layout on purpose — opened as a chrome-less popup
+            window (see ConsoleModal), not part of the normal app navigation. */}
+        <Route path="/terminal/:id" component={TerminalWindowPage} />
         <Route path="/" component={Guard}>
           <Route path="/" component={() => <Navigate href="/containers" />} />
           <Route path="/containers" component={ContainerListPage} />

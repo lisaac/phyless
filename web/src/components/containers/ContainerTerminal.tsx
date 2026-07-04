@@ -1,12 +1,14 @@
-import { Component, createSignal, onMount, onCleanup } from "solid-js";
+import { Component, onMount, onCleanup } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL } from "../../api/ws";
 
-export const ContainerTerminal: Component<{ id: string }> = (props) => {
-  const [cmd, setCmd] = createSignal("/bin/sh");
-  const [user, setUser] = createSignal("");
+// Renders a live terminal for a fixed cmd/user, connecting immediately on
+// mount. cmd/user are chosen up front (via ConsoleModal) rather than edited
+// here — this component now only ever runs inside the standalone terminal
+// popup window (see TerminalWindowPage), which has no other controls around it.
+export const ContainerTerminal: Component<{ id: string; cmd?: string; user?: string }> = (props) => {
   let host!: HTMLDivElement;
   let ws: WebSocket | undefined;
   let term: Terminal | undefined;
@@ -16,8 +18,8 @@ export const ContainerTerminal: Component<{ id: string }> = (props) => {
     ws?.close();
     term?.clear();
     const params = new URLSearchParams();
-    if (cmd() && cmd() !== "/bin/sh") params.set("cmd", cmd());
-    if (user()) params.set("user", user());
+    if (props.cmd && props.cmd !== "/bin/sh") params.set("cmd", props.cmd);
+    if (props.user) params.set("user", props.user);
     const qs = params.toString();
     ws = new WebSocket(wsURL(`/ws/containers/${props.id}/terminal${qs ? "?" + qs : ""}`));
     ws.binaryType = "arraybuffer";
@@ -49,27 +51,5 @@ export const ContainerTerminal: Component<{ id: string }> = (props) => {
   });
   onCleanup(() => { ws?.close(); term?.dispose(); });
 
-  const fieldCls = "rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 font-mono text-xs text-zinc-200 outline-none focus:border-indigo-500 w-44";
-
-  return (
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center gap-3">
-        <label class="flex items-center gap-1.5">
-          <span class="text-[11px] uppercase tracking-widest text-zinc-400">CMD</span>
-          <input class={fieldCls} value={cmd()} onInput={(e) => setCmd(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && connect()} placeholder="/bin/sh" />
-        </label>
-        <label class="flex items-center gap-1.5">
-          <span class="text-[11px] uppercase tracking-widest text-zinc-400">UID</span>
-          <input class={fieldCls} value={user()} onInput={(e) => setUser(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && connect()} placeholder="root" />
-        </label>
-        <button
-          class="border border-zinc-700 px-2 py-1 text-xs text-zinc-500 hover:border-zinc-500 hover:text-zinc-200 transition-colors"
-          onClick={connect}
-        >连接</button>
-      </div>
-      <div ref={host} class="h-[62vh] bg-[#0c0c0c] p-1" />
-    </div>
-  );
+  return <div ref={host} class="h-full w-full bg-[#0c0c0c] p-1" />;
 };

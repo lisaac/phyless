@@ -236,7 +236,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditFromCtx(r, "container.create", body.Name, "ok")
-	dockercontainer.EmitStream(w, "✓ 创建完成，容器 ID: %s", resp.ID[:12])
+	dockercontainer.EmitDone(w, resp.ID, "✓ 创建完成，容器 ID: %s", resp.ID[:12])
 }
 
 func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
@@ -598,4 +598,31 @@ func (s *Server) handleContainerUploadFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleContainerCopyToContainer(w http.ResponseWriter, r *http.Request) {
+	srcID := chi.URLParam(r, "id")
+	srcPath := r.URL.Query().Get("path")
+	if srcPath == "" {
+		writeError(w, http.StatusBadRequest, "missing path")
+		return
+	}
+	var body struct {
+		TargetID   string `json:"target_id"`
+		TargetPath string `json:"target_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TargetID == "" || body.TargetPath == "" {
+		writeError(w, http.StatusBadRequest, "target_id and target_path required")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Accel-Buffering", "no")
+	dockercontainer.EmitStream(w, "正在复制 %s → %s:%s …", srcPath, body.TargetID[:min(12, len(body.TargetID))], body.TargetPath)
+	if err := dockercontainer.CopyBetweenContainers(r.Context(), s.docker, srcID, srcPath, body.TargetID, body.TargetPath); err != nil {
+		dockercontainer.EmitError(w, err)
+		return
+	}
+	s.auditFromCtx(r, "container.file.copy", srcID+" -> "+body.TargetID, "ok")
+	dockercontainer.EmitStream(w, "✓ 复制完成")
 }
