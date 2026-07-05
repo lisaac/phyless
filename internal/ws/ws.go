@@ -3,9 +3,11 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
@@ -146,7 +148,32 @@ func Stats(cli *client.Client) http.HandlerFunc {
 	}
 }
 
-// Events streams Docker daemon events over WebSocket.
+// formatEvent renders one docker event as a single readable log line instead
+// of raw JSON — shared/LogsView.tsx (reused for the events page) just pipes
+// through whatever text arrives, so the formatting has to happen here where
+// the typed events.Message fields are actually available.
+func formatEvent(e events.Message) string {
+	ts := time.Unix(e.Time, 0).Format("2006-01-02 15:04:05")
+	name := e.Actor.Attributes["name"]
+	if name == "" {
+		name = e.Actor.ID
+		if len(name) > 12 {
+			name = name[:12]
+		}
+	}
+	line := fmt.Sprintf("%s  %-10s %-12s %s", ts, e.Type, e.Action, name)
+	if e.Type == events.ContainerEventType {
+		if image := e.Actor.Attributes["image"]; image != "" {
+			line += "  (" + image + ")"
+		}
+	}
+	return line
+}
+
+// Events streams Docker daemon events over WebSocket. since/until (unix
+// seconds, query params) let the events page show a past time range instead
+// of only live-tailing — Docker replays history up to `until` (or now, if
+// omitted) and then keeps streaming live only when `until` is unset/future.
 func Events(cli *client.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -155,16 +182,16 @@ func Events(cli *client.Client) http.HandlerFunc {
 		}
 		defer conn.Close()
 
-		eventCh, errCh := cli.Events(r.Context(), events.ListOptions{})
+		opts := events.ListOptions{
+			Since: r.URL.Query().Get("since"),
+			Until: r.URL.Query().Get("until"),
+		}
+		eventCh, errCh := cli.Events(r.Context(), opts)
 		for {
 			select {
 			case e := <-eventCh:
-				data, _ := json.Marshal(e)
-				// Trailing newline so each event lands on its own line for
-				// consumers that just concatenate raw text across messages
-				// (shared/LogsView.tsx, reused by the events page) — without
-				// it, back-to-back events would run together unreadably.
-				conn.WriteMessage(websocket.TextMessage, append(data, '\n'))
+				line := formatEvent(e) + "\n"
+				conn.WriteMessage(websocket.TextMessage, []byte(line))
 			case <-errCh:
 				return
 			}

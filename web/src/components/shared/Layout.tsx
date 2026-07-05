@@ -1,4 +1,4 @@
-import { Component, JSX, createSignal, createEffect, onMount, startTransition, For, Show } from "solid-js";
+import { Component, JSX, createSignal, createEffect, onMount, onCleanup, startTransition, For, Show } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
@@ -71,6 +71,13 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const [drawerOpen, setDrawerOpen] = createSignal(false);
   const location = useLocation();
   const navigate = useNavigate();
+
+  createEffect(() => {
+    if (!drawerOpen()) return;
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerOpen(false); };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
 
   // Every navigation (sidebar click, clicking into a row, back/forward) flows
   // through here — the single integration point that keeps the tab strip in

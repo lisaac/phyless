@@ -290,6 +290,12 @@ export const ContainerDetailPage: Component = () => {
 
   // ── Network actions ────────────────────────────────────────────────────────────
   const [netDlg, setNetDlg] = createSignal(false);
+  createEffect(() => {
+    if (!netDlg()) return;
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setNetDlg(false); };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
   const doConnectNet = async (netName: string) => {
     try {
       await post(`/api/networks/${encodeURIComponent(netName)}/connect`, { container: id() });
