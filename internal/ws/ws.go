@@ -32,6 +32,7 @@ func Logs(cli *client.Client) http.HandlerFunc {
 
 		rc, err := cli.ContainerLogs(r.Context(), id, container.LogsOptions{
 			ShowStdout: true, ShowStderr: true, Follow: true, Timestamps: true,
+			Since: r.URL.Query().Get("since"), Until: r.URL.Query().Get("until"),
 		})
 		if err != nil {
 			conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))

@@ -406,7 +406,19 @@ func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	cmd := exec.CommandContext(r.Context(), "docker", "compose", "-f", p.ComposeFile, "logs", "-f")
+	// -t: docker compose logs has no timestamp by default, unlike `docker
+	// logs` shown elsewhere in the app — without one there's no way to tell
+	// when a line was written. --no-color: belt-and-suspenders against the
+	// service-name-prefix ANSI coloring `--ansi auto` would otherwise still
+	// try to emit here despite stdout being a pipe, not a real terminal.
+	args := []string{"compose", "-f", p.ComposeFile, "logs", "-f", "-t", "--no-color"}
+	if since := r.URL.Query().Get("since"); since != "" {
+		args = append(args, "--since", since)
+	}
+	if until := r.URL.Query().Get("until"); until != "" {
+		args = append(args, "--until", until)
+	}
+	cmd := exec.CommandContext(r.Context(), "docker", args...)
 	cmd.Dir = p.BaseDir
 	rc, err := cmd.StdoutPipe()
 	if err != nil {

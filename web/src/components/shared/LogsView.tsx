@@ -5,7 +5,7 @@ import { connectWS } from "../../api/ws";
 // flush (throttled so a fast-scrolling log doesn't thrash layout). Driven
 // entirely by a websocket URL so both a single container's logs and a whole
 // compose project's `docker compose logs -f` stream can share it.
-export const LogsView: Component<{ wsUrl: string; startPaused?: boolean }> = (props) => {
+export const LogsView: Component<{ wsUrl: string; startPaused?: boolean; heightClass?: string }> = (props) => {
   const [text, setText] = createSignal("");
   const [autoScroll, setAutoScroll] = createSignal(true);
   const [paused, setPaused] = createSignal(!!props.startPaused);
@@ -60,7 +60,7 @@ export const LogsView: Component<{ wsUrl: string; startPaused?: boolean }> = (pr
       </div>
       <pre
         ref={box}
-        class="h-[65vh] overflow-auto whitespace-pre-wrap bg-zinc-950 p-3 font-mono text-xs text-zinc-300 leading-5"
+        class={`${props.heightClass ?? "h-[65vh]"} overflow-auto whitespace-pre-wrap bg-zinc-950 p-3 font-mono text-xs text-zinc-300 leading-5`}
       >{text()}</pre>
     </div>
   );

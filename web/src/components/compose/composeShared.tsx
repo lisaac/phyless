@@ -39,6 +39,6 @@ export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => 
 // bulk-bar and container detail page) that also stops the click from
 // bubbling — compose action buttons sit inside a row whose own onClick
 // toggles the expand/collapse state.
-export const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; children: JSX.Element }> = (p) => (
-  <Btn title={p.title} danger={p.danger} onClick={(e) => { e.stopPropagation(); p.onClick(); }}>{p.children}</Btn>
+export const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; loading?: boolean; children: JSX.Element }> = (p) => (
+  <Btn title={p.title} danger={p.danger} loading={p.loading} onClick={(e) => { e.stopPropagation(); p.onClick(); }}>{p.children}</Btn>
 );

@@ -27,6 +27,7 @@ export const ComposeListPage: Component = () => {
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [composeAction, setComposeAction] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
+  const isRunning = (id: string, verb: ComposeVerb) => composeAction()?.id === id && composeAction()?.verb === verb;
   // Run/Compose reuses the same flow as the container list's own Run/Compose
   // button: feed CreateContainerModal the merged run commands and let its
   // own single-vs-multi detection decide between "创建容器" and "注册
@@ -120,15 +121,16 @@ export const ComposeListPage: Component = () => {
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <Show when={hasRole("operator")}>
-                      <ActBtn title="docker compose up -d" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
-                      <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
-                      <ActBtn title="docker compose stop" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
+                      <ActBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
+                      <ActBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
+                      <ActBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
                       <ActBtn
                         danger
                         title="docker compose down（停止并移除容器、网络）"
+                        loading={isRunning(p.id, "down")}
                         onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) setComposeAction({ id: p.id, name: p.name, verb: "down" }); }}
                       >⊘ Down</ActBtn>
-                      <ActBtn title="docker compose pull" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
+                      <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <ActBtn

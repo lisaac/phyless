@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { useParams, useSearchParams } from "@solidjs/router";
-import { get, put, post, del, getToken, setToken, imageInspectUrl } from "../../api/client";
+import { get, put, post, del, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { createResourceStore } from "../../stores/resource";
@@ -9,8 +9,10 @@ import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
 import { FileBrowser } from "../shared/FileBrowser";
 import { LogsView } from "../shared/LogsView";
+import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/TimeRangePicker";
 import { KV, Sec } from "../shared/KV";
 import { Tabs } from "../shared/Tabs";
+import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions } from "../containers/containerActions";
@@ -18,7 +20,7 @@ import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
-import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb } from "./composeShared";
+import { containersOf, representative, ActBtn, ComposeIcon, VERB_LABEL, type ComposeVerb } from "./composeShared";
 import type { ComposeProject, ContainerSummary, FileEntry } from "../../types";
 
 type Tab = "info" | "files" | "logs";
@@ -58,36 +60,13 @@ export const ComposeDetailPage: Component = () => {
     if (p?.name) setTabLabel(`/compose/${id()}`, p.name);
   });
 
-  // ── up/stop/down/restart/pull — output shown regardless of active tab ───
-  const [output, setOutput] = createSignal("");
-  const runCmd = async (verb: ComposeVerb) => {
-    try {
-      setOutput("");
-      const res = await fetch(`/api/compose/${verb}?id=${encodeURIComponent(id())}`, {
-        method: "POST", headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      if (res.status === 401) { setToken(null); window.dispatchEvent(new CustomEvent("phyless:unauthorized")); return; }
-      const reader = res.body?.getReader();
-      if (!reader) return;
-      const dec = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const evt = JSON.parse(line);
-            setOutput((o) => o + (evt.stream ?? evt.error ?? "") + "\n");
-          } catch { /* ignore malformed line */ }
-        }
-      }
-    } catch (e) { toast.error((e as Error).message); }
-    finally { void store.refresh(); void containers.refresh(); }
-  };
+  // ── up/stop/down/restart/pull — same PullStatusWidget-driven flow as
+  // ComposeListPage's row buttons (icon spinner while running + a floating
+  // progress popup), instead of this page's own bespoke fetch-and-append-to-
+  // a-<pre> implementation with no button feedback and no popup.
+  const [composeAction, setComposeAction] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
+  const isRunning = (verb: ComposeVerb) => composeAction()?.verb === verb;
+  const [logRange, setLogRange] = createSignal<TimeRange>({});
   // Run/Compose reuses the same flow as the container list's own Run/Compose
   // button — feed CreateContainerModal the merged run commands and let its
   // single-vs-multi detection decide "创建容器" vs "注册 Compose", instead of
@@ -195,22 +174,19 @@ export const ComposeDetailPage: Component = () => {
 
       <Show when={hasRole("operator")}>
         <div class="mb-3 flex flex-wrap items-center gap-0.5 border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
-          <ActBtn title="docker compose up -d" onClick={() => void runCmd("up")}>▶ Up</ActBtn>
-          <ActBtn title="docker compose restart" onClick={() => void runCmd("restart")}>↺ Restart</ActBtn>
-          <ActBtn title="docker compose stop" onClick={() => void runCmd("stop")}>■ Stop</ActBtn>
+          <ActBtn title="docker compose up -d" loading={isRunning("up")} onClick={() => setComposeAction({ id: id(), name: project()?.name ?? id(), verb: "up" })}>▶ Up</ActBtn>
+          <ActBtn title="docker compose restart" loading={isRunning("restart")} onClick={() => setComposeAction({ id: id(), name: project()?.name ?? id(), verb: "restart" })}>↺ Restart</ActBtn>
+          <ActBtn title="docker compose stop" loading={isRunning("stop")} onClick={() => setComposeAction({ id: id(), name: project()?.name ?? id(), verb: "stop" })}>■ Stop</ActBtn>
           <ActBtn
             danger
             title="docker compose down（停止并移除容器、网络）"
-            onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) void runCmd("down"); }}
+            loading={isRunning("down")}
+            onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) setComposeAction({ id: id(), name: project()?.name ?? id(), verb: "down" }); }}
           >⊘ Down</ActBtn>
-          <ActBtn title="docker compose pull" onClick={() => void runCmd("pull")}>↓ Pull</ActBtn>
+          <ActBtn title="docker compose pull" loading={isRunning("pull")} onClick={() => setComposeAction({ id: id(), name: project()?.name ?? id(), verb: "pull" })}>↓ Pull</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>⧉ Run/Compose</ActBtn>
         </div>
-      </Show>
-
-      <Show when={output()}>
-        <pre class="mb-3 max-h-40 overflow-auto whitespace-pre-wrap border border-zinc-800 bg-zinc-950 p-2 font-mono text-xs text-zinc-400">{output()}</pre>
       </Show>
 
       <div class="mb-3">
@@ -276,7 +252,7 @@ export const ComposeDetailPage: Component = () => {
 
       <Show when={tab() === "files"}>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div class="h-[40vh] overflow-auto border border-zinc-800 p-2 sm:h-[60vh]">
+          <div class="h-[calc(100vh-19rem)] overflow-auto border border-zinc-800 p-2">
             <FileBrowser
               listPath={(sub) => get<FileEntry[]>(`/api/compose/files?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub)}`)}
               onOpenFile={openFile}
@@ -286,7 +262,7 @@ export const ComposeDetailPage: Component = () => {
               instanceKey={id()}
             />
           </div>
-          <div class="sticky top-4 flex h-[40vh] flex-col sm:h-[60vh]">
+          <div class="sticky top-4 flex h-[calc(100vh-19rem)] flex-col">
             <div class="mb-1 flex items-center justify-between">
               <span class="truncate font-mono text-xs text-zinc-400">{selectedFile() ?? "未选择文件"}</span>
               <Show when={hasRole("operator") && selectedFile()}>
@@ -311,7 +287,8 @@ export const ComposeDetailPage: Component = () => {
       </Show>
 
       <Show when={tab() === "logs"}>
-        <LogsView wsUrl={`/ws/compose/logs?id=${encodeURIComponent(id())}`} />
+        <div class="mb-2"><TimeRangePicker onChange={setLogRange} /></div>
+        <LogsView wsUrl={appendTimeRange(`/ws/compose/logs?id=${encodeURIComponent(id())}`, logRange())} />
       </Show>
 
       <CreateContainerModal
@@ -322,6 +299,14 @@ export const ComposeDetailPage: Component = () => {
       />
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
+
+      <PullStatusWidget
+        active={!!composeAction()}
+        title={`${VERB_LABEL[composeAction()?.verb ?? "up"]} — ${composeAction()?.name ?? ""}`}
+        url={`/api/compose/${composeAction()?.verb ?? "up"}?id=${encodeURIComponent(composeAction()?.id ?? "")}`}
+        onDone={() => { void store.refresh(); void containers.refresh(); }}
+        onClose={() => setComposeAction(null)}
+      />
     </div>
   );
 };

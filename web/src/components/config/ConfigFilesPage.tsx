@@ -67,7 +67,7 @@ export const ConfigFilesPage: Component = () => {
     <div>
       <h1 class="mb-3 text-xl font-semibold">配置文件</h1>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div class="h-[40vh] overflow-auto border border-zinc-800 p-2 sm:h-[60vh]">
+        <div class="h-[calc(100vh-13rem)] overflow-auto border border-zinc-800 p-2">
           <FileBrowser
             listPath={listFiles}
             onOpenFile={openFile}
@@ -76,7 +76,7 @@ export const ConfigFilesPage: Component = () => {
             onRename={hasRole("operator") ? renameFile : undefined}
           />
         </div>
-        <div class="sticky top-4 flex h-[40vh] flex-col sm:h-[60vh]">
+        <div class="sticky top-4 flex h-[calc(100vh-13rem)] flex-col">
           <div class="mb-1 flex items-center justify-between">
             <span class="truncate font-mono text-xs text-zinc-400">{openPath() || "未选择文件"}</span>
             <Show when={hasRole("operator") && openPath()}>
