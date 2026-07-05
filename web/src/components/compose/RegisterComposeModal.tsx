@@ -102,7 +102,11 @@ export const RegisterComposeModal: Component<{
           <span class="mb-1 block text-xs text-zinc-400">路径</span>
           <PathPicker value={baseDir()} onChange={setBaseDir} placeholder="/opt/stacks/app" />
         </label>
-        <label class="block">
+        {/* Not a <label> — a <label> wrapping both the filename input AND the
+            code editor below meant clicking anywhere in the editor (native
+            label→control focus behavior) redirected focus straight back to
+            the filename input, making the editor unclickable. */}
+        <div class="block">
           <div class="mb-1 flex items-center gap-2">
             <span class="shrink-0 text-xs text-zinc-400">文件名</span>
             <input
@@ -118,7 +122,7 @@ export const RegisterComposeModal: Component<{
           <div class="h-64 border border-zinc-800">
             <CodeEditor value={composeContent()} onChange={setComposeContent} language="yaml" />
           </div>
-        </label>
+        </div>
         <label class="block">
           <span class="mb-1 block text-xs text-zinc-400">env 文件路径（可选）</span>
           <input class={fieldCls} placeholder="/opt/stacks/app/.env" value={envFile()} onInput={(e) => setEnvFile(e.currentTarget.value)} />

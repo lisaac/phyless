@@ -98,6 +98,10 @@ export const ComposeListPage: Component = () => {
                     <div class="mt-0.5 text-[11px] text-zinc-400">{p.compose_file}</div>
                   </div>
                   <div class="flex shrink-0 flex-wrap items-center gap-0.5 sm:ml-auto sm:justify-end" onClick={(e) => e.stopPropagation()}>
+                    <Show when={hasRole("operator") && !p.discovered}>
+                      <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>
+                      <span class="mx-0.5 text-zinc-600">│</span>
+                    </Show>
                     <Show when={hasRole("operator")}>
                       <ActBtn title="docker compose up -d" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
                       <ActBtn title="docker compose restart" onClick={() => setComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
@@ -114,9 +118,6 @@ export const ComposeListPage: Component = () => {
                       title="查看 docker run 命令（inspect 项目下所有容器）"
                       onClick={() => setRunProject({ id: p.id, name: p.name, containerIds: cs().map((c) => c.Id) })}
                     >⧉ Run/Compose</ActBtn>
-                    <Show when={hasRole("operator") && !p.discovered}>
-                      <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>删除</ActBtn>
-                    </Show>
                   </div>
                 </div>
                 {/* CSS grid-rows 0fr→1fr animates height without knowing the
