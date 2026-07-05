@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { useParams, useSearchParams } from "@solidjs/router";
-import { get, put, getToken, setToken, imageInspectUrl } from "../../api/client";
+import { get, put, post, del, getToken, setToken, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { createResourceStore } from "../../stores/resource";
@@ -119,6 +119,22 @@ export const ComposeDetailPage: Component = () => {
   const [fileContent, setFileContent] = createSignal("");
   const [fileTruncated, setFileTruncated] = createSignal(false);
   const [savingFile, setSavingFile] = createSignal(false);
+
+  // Create/delete/rename operate directly on the project's BaseDir on the
+  // host filesystem (internal/api/compose.go's handleCompose{Delete,Rename}
+  // File) — creating is just a PUT with empty content, same endpoint the
+  // editor already saves through.
+  const createFile = async (path: string) => {
+    await put(`/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(path)}`, "");
+  };
+  const deleteFile = async (path: string) => {
+    await del(`/api/compose/files?id=${encodeURIComponent(id())}&path=${encodeURIComponent(path)}`);
+    if (selectedFile() === path) setSelectedFile(null);
+  };
+  const renameFile = async (oldPath: string, newPath: string) => {
+    await post(`/api/compose/files/rename?id=${encodeURIComponent(id())}`, { old_path: oldPath, new_path: newPath });
+    if (selectedFile() === oldPath) setSelectedFile(newPath);
+  };
 
   // Auto-select the compose file once per project — guarded by an id marker
   // rather than "selectedFile() === null" so store polling (which changes
@@ -264,6 +280,9 @@ export const ComposeDetailPage: Component = () => {
             <FileBrowser
               listPath={(sub) => get<FileEntry[]>(`/api/compose/files?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub)}`)}
               onOpenFile={openFile}
+              onCreate={hasRole("operator") ? createFile : undefined}
+              onDelete={hasRole("operator") ? deleteFile : undefined}
+              onRename={hasRole("operator") ? renameFile : undefined}
               instanceKey={id()}
             />
           </div>

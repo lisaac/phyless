@@ -40,6 +40,8 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Get("/api/compose/files", s.handleComposeListFiles)
 	r.Get("/api/compose/files/content", s.handleComposeGetFileContent)
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
+	r.Delete("/api/compose/files", s.handleComposeDeleteFile)
+	r.Post("/api/compose/files/rename", s.handleComposeRenameFile)
 }
 
 const (
@@ -336,6 +338,59 @@ func (s *Server) handleComposePutFileContent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.auditFromCtx(r, "compose.file.write", p.Name+":"+subPath, "ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleComposeDeleteFile/handleComposeRenameFile operate directly on the
+// host filesystem (unlike containers.go's file delete/rename, which shells
+// out via docker exec since a container's files aren't otherwise reachable)
+// — a compose project's BaseDir already lives on the same filesystem the
+// phyless process itself sees.
+func (s *Server) handleComposeDeleteFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	subPath := r.URL.Query().Get("path")
+	fullPath := filepath.Join(p.BaseDir, subPath)
+	if !isSubPath(p.BaseDir, fullPath) || fullPath == p.BaseDir {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	if err := os.RemoveAll(fullPath); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "compose.file.delete", p.Name+":"+subPath, "ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleComposeRenameFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var body struct {
+		OldPath string `json:"old_path"`
+		NewPath string `json:"new_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.OldPath == "" || body.NewPath == "" {
+		writeError(w, http.StatusBadRequest, "old_path and new_path required")
+		return
+	}
+	oldFull := filepath.Join(p.BaseDir, body.OldPath)
+	newFull := filepath.Join(p.BaseDir, body.NewPath)
+	if !isSubPath(p.BaseDir, oldFull) || !isSubPath(p.BaseDir, newFull) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	if err := os.Rename(oldFull, newFull); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "compose.file.rename", p.Name+":"+body.OldPath+" -> "+body.NewPath, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -25,6 +25,7 @@ export const FileBrowser: Component<{
   listPath: (sub: string) => Promise<FileEntry[]>;
   downloadURL?: (sub: string) => string;
   onUpload?: (sub: string, file: File) => Promise<void>;
+  onCreate?: (sub: string) => Promise<void>;
   onDelete?: (sub: string) => Promise<void>;
   onRename?: (oldPath: string, newPath: string) => Promise<void>;
   onCopyToContainer?: (fullPath: string) => void;
@@ -95,6 +96,15 @@ export const FileBrowser: Component<{
 
   const upload = async (file: File | undefined) => {
     if (file && props.onUpload) { await props.onUpload(path(), file); refetch(); }
+  };
+
+  const [creating, setCreating] = createSignal(false);
+  const [createVal, setCreateVal] = createSignal("");
+  const startCreate = () => { setCreateVal(""); setCreating(true); };
+  const commitCreate = async () => {
+    const val = createVal().trim();
+    setCreating(false);
+    if (val && props.onCreate) { await props.onCreate(join(val).replace(/^\/+/, "/")); refetch(); }
   };
 
   const doDelete = async (e: FileEntry) => {
@@ -169,6 +179,25 @@ export const FileBrowser: Component<{
             }}
             onBlur={commitEditPath}
           />
+        </Show>
+
+        <Show when={props.onCreate}>
+          <Show
+            when={!creating()}
+            fallback={
+              <input
+                class="w-28 shrink-0 border border-indigo-500/50 bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-100 outline-none"
+                placeholder="新文件名"
+                value={createVal()}
+                onInput={(e) => setCreateVal(e.currentTarget.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void commitCreate(); if (e.key === "Escape") setCreating(false); }}
+                onBlur={() => void commitCreate()}
+                ref={(el) => setTimeout(() => el?.focus(), 0)}
+              />
+            }
+          >
+            <button class="shrink-0 px-2 py-0.5 text-xs text-zinc-500 hover:text-zinc-200 transition-colors" onClick={startCreate}>+ 新建</button>
+          </Show>
         </Show>
 
         <Show when={props.onUpload}>

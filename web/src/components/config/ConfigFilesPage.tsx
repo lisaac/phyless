@@ -2,7 +2,7 @@ import { Component, createSignal, Show } from "solid-js";
 import { FileBrowser } from "../shared/FileBrowser";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
-import { get, put } from "../../api/client";
+import { get, put, post, del } from "../../api/client";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -48,12 +48,33 @@ export const ConfigFilesPage: Component = () => {
     finally { setSaving(false); }
   };
 
+  // Create/delete/rename operate directly on /etc (internal/api/config.go's
+  // handleConfig{Delete,Rename}File) — creating is just a PUT with empty
+  // content, same endpoint the editor already saves through.
+  const createFile = async (path: string) => {
+    await put(`/api/config/files/content?path=${encodeURIComponent(path)}`, "");
+  };
+  const deleteFile = async (path: string) => {
+    await del(`/api/config/files?path=${encodeURIComponent(path)}`);
+    if (openPath() === path) setOpenPath("");
+  };
+  const renameFile = async (oldPath: string, newPath: string) => {
+    await post("/api/config/files/rename", { old_path: oldPath, new_path: newPath });
+    if (openPath() === oldPath) setOpenPath(newPath);
+  };
+
   return (
     <div>
       <h1 class="mb-3 text-xl font-semibold">配置文件</h1>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div class="h-[40vh] overflow-auto border border-zinc-800 p-2 sm:h-[60vh]">
-          <FileBrowser listPath={listFiles} onOpenFile={openFile} />
+          <FileBrowser
+            listPath={listFiles}
+            onOpenFile={openFile}
+            onCreate={hasRole("operator") ? createFile : undefined}
+            onDelete={hasRole("operator") ? deleteFile : undefined}
+            onRename={hasRole("operator") ? renameFile : undefined}
+          />
         </div>
         <div class="sticky top-4 flex h-[40vh] flex-col sm:h-[60vh]">
           <div class="mb-1 flex items-center justify-between">

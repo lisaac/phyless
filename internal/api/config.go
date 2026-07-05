@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -19,6 +20,8 @@ func (s *Server) mountConfigRoutes(r chi.Router) {
 	r.Get("/api/config/files", s.handleConfigListFiles)
 	r.Get("/api/config/files/content", s.handleConfigGetFile)
 	r.Put("/api/config/files/content", s.handleConfigPutFile)
+	r.Delete("/api/config/files", s.handleConfigDeleteFile)
+	r.Post("/api/config/files/rename", s.handleConfigRenameFile)
 }
 
 func (s *Server) handleConfigListFiles(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +65,44 @@ func (s *Server) handleConfigPutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditFromCtx(r, "config.file.write", subPath, "ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleConfigDeleteFile(w http.ResponseWriter, r *http.Request) {
+	subPath := r.URL.Query().Get("path")
+	fullPath := filepath.Join(configRoot, subPath)
+	if !isSubPath(configRoot, fullPath) || fullPath == configRoot {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	if err := os.RemoveAll(fullPath); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "config.file.delete", subPath, "ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleConfigRenameFile(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OldPath string `json:"old_path"`
+		NewPath string `json:"new_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.OldPath == "" || body.NewPath == "" {
+		writeError(w, http.StatusBadRequest, "old_path and new_path required")
+		return
+	}
+	oldFull := filepath.Join(configRoot, body.OldPath)
+	newFull := filepath.Join(configRoot, body.NewPath)
+	if !isSubPath(configRoot, oldFull) || !isSubPath(configRoot, newFull) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	if err := os.Rename(oldFull, newFull); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "config.file.rename", body.OldPath+" -> "+body.NewPath, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 
