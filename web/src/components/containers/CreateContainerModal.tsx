@@ -626,10 +626,12 @@ export const CreateContainerModal: Component<{
           <div class="mt-3 flex justify-end gap-2 border-t border-zinc-800 pt-3">
             <Button onClick={() => setSavingTpl(true)}>存为模版</Button>
             <Button onClick={props.onClose}>取消</Button>
-            <Show
-              when={!isMulti()}
-              fallback={<Button variant="primary" onClick={() => setShowRegister(true)}>注册 Compose</Button>}
-            >
+            <Button variant="primary" onClick={() => setShowRegister(true)}>注册 Compose</Button>
+            {/* "创建容器" only makes sense for a single service — POST
+                /api/containers creates exactly one container, it can't fan
+                out to N. For multiple services, 注册 Compose above is the
+                only available action. */}
+            <Show when={!isMulti()}>
               <Button
                 variant="primary"
                 onClick={() => {
