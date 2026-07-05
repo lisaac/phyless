@@ -98,7 +98,7 @@ export const ComposeListPage: Component = () => {
                       <ComposeIcon size={14} />
                       <a
                         href={`/compose/${p.id}`}
-                        class={`hover:text-indigo-400 hover:underline transition-colors ${nameColor()}`}
+                        class={`border-b border-dashed border-zinc-600 transition-colors hover:border-indigo-400 hover:text-indigo-400 ${nameColor()}`}
                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                       >{p.name}</a>
                     </div>

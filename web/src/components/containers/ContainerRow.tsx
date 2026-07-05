@@ -76,7 +76,7 @@ export const ContainerRow: Component<{
         <div class="flex items-center gap-1.5">
           <span class={`h-2 w-2 shrink-0 ${STATE_DOT[c().State] ?? "bg-zinc-600"}`} />
           <a
-            class="max-w-[9rem] truncate font-medium text-zinc-200 hover:text-indigo-400 hover:underline transition-colors"
+            class="max-w-[9rem] truncate border-b border-dashed border-zinc-600 font-medium text-zinc-200 transition-colors hover:border-indigo-400 hover:text-indigo-400"
             href={`/containers/${c().Id}`}
             title={name() || "(unnamed)"}
             onClick={goto(`/containers/${c().Id}`)}
