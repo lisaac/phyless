@@ -1,35 +1,8 @@
 import { Component, createResource, createEffect, createSignal, Show } from "solid-js";
-import { runToCompose, composeToRuns } from "../../api/convert";
+import { runToCompose, mergeComposeYamls, cliToCompose, composeToCli } from "../../api/convert";
+import { copyToClipboard } from "../../api/clipboard";
 import { CodeEditor } from "../shared/CodeEditor";
-
-function mergeComposeYamls(yamls: string[]): string {
-  const blocks = yamls.map((yaml) => {
-    const lines = yaml.split("\n");
-    const idx = lines.findIndex((l) => l.trimStart().startsWith("services:"));
-    return idx === -1 ? "" : lines.slice(idx + 1).join("\n").trimEnd();
-  });
-  return "services:\n" + blocks.filter(Boolean).join("\n");
-}
-
-// Split multi-line CLI text into individual flat docker run commands.
-function splitCmds(text: string): string[] {
-  return text
-    .split(/\n{2,}/)
-    .map((chunk) => chunk.replace(/\\\n\s*/g, " ").trim())
-    .filter((cmd) => cmd.startsWith("docker run"));
-}
-
-function cliToCompose(text: string): string {
-  const cmds = splitCmds(text);
-  if (cmds.length === 0) throw new Error("未找到 docker run 命令");
-  return mergeComposeYamls(cmds.map(runToCompose));
-}
-
-function composeToCli(yaml: string): string {
-  const cmds = composeToRuns(yaml);
-  if (cmds.length === 0) throw new Error("未找到 services");
-  return cmds.join("\n\n");
-}
+import { toast } from "../shared/Toast";
 
 // Generic "N run commands" editor — reused by ContainerListPage's bulk
 // Run/Compose and the Compose pages' Run/Compose. Both derive fetchCmds the
@@ -74,6 +47,11 @@ export const BulkRunModal: Component<{
     catch (e) { setErr((e as Error).message); }
   };
 
+  const copy = async (label: string, text: string) => {
+    if (await copyToClipboard(text)) toast.success(`已复制${label}`);
+    else toast.error(`复制${label}失败`);
+  };
+
   return (
     <div
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
@@ -102,13 +80,25 @@ export const BulkRunModal: Component<{
         >
           <div class="grid min-h-0 flex-1 grid-cols-1 gap-px overflow-y-auto bg-zinc-800 sm:grid-cols-2 sm:overflow-visible">
             <div class="flex min-h-[40vh] flex-col bg-zinc-950 p-3 sm:min-h-0">
-              <div class="mb-1 text-xs text-zinc-400">命令行</div>
+              <div class="mb-1 flex items-center justify-between">
+                <span class="text-xs text-zinc-400">命令行</span>
+                <button
+                  class="border border-zinc-700 px-2 py-0.5 text-xs text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100"
+                  onClick={() => void copy("Run", cli())}
+                >复制 Run</button>
+              </div>
               <div class="min-h-0 flex-1">
                 <CodeEditor value={cli()} onChange={onCliEdit} language="text" />
               </div>
             </div>
             <div class="flex min-h-[40vh] flex-col bg-zinc-950 p-3 sm:min-h-0">
-              <div class="mb-1 text-xs text-zinc-400">compose.yaml</div>
+              <div class="mb-1 flex items-center justify-between">
+                <span class="text-xs text-zinc-400">compose.yaml</span>
+                <button
+                  class="border border-zinc-700 px-2 py-0.5 text-xs text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100"
+                  onClick={() => void copy("Compose", compose())}
+                >复制 Compose</button>
+              </div>
               <div class="min-h-0 flex-1">
                 <CodeEditor value={compose()} onChange={onComposeEdit} language="yaml" />
               </div>

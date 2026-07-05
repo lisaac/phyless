@@ -3,15 +3,16 @@ import { createResourceStore } from "../../stores/resource";
 import { get, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
-import { containerName, createContainerActions } from "./containerActions";
+import { createContainerActions } from "./containerActions";
 import { CreateContainerModal } from "./CreateContainerModal";
-import { BulkRunModal } from "./BulkRunModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { ViewCmdModal } from "./ViewCmdModal";
 import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
 import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
 import type { ContainerSummary } from "../../types";
+
+const DEFAULT_BULK_RUN = "docker run -d --name my-container nginx:latest";
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 export const ContainerListPage: Component = () => {
@@ -22,7 +23,11 @@ export const ContainerListPage: Component = () => {
   const [showImport, setShowImport] = createSignal(false);
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
-  const [bulkRunIds, setBulkRunIds] = createSignal<string[] | null>(null);
+  // Bulk Run/Compose no longer opens a separate read-only viewer — it feeds
+  // the same CreateContainerModal used for "+新建容器", which detects (from
+  // the compose.yaml content itself) whether this is one service or many
+  // and switches between "创建容器" and "注册 Compose" accordingly.
+  const [bulkRunText, setBulkRunText] = createSignal<string | null>(null);
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
@@ -37,17 +42,16 @@ export const ContainerListPage: Component = () => {
     setSelected(new Set());
   };
 
-  const bulkRun = () => {
+  const bulkRun = async () => {
     const ids = [...selected()];
-    if (ids.length === 1) {
-      const c = store.items().find((c) => c.Id === ids[0]);
-      if (c) setRunTarget({ id: c.Id, name: containerName(c) });
-    } else {
-      // 0 selected falls through here too — opens BulkRunModal with an empty
-      // ids array, which resolves to no commands (an empty CLI/compose.yaml)
-      // rather than the button being disabled.
-      setBulkRunIds(ids);
-    }
+    if (ids.length === 0) { setBulkRunText(DEFAULT_BULK_RUN); return; }
+    const cmds = await Promise.all(ids.map(async (id) => {
+      const container = await get<any>(`/api/containers/${id}/inspect`);
+      let image: any = {};
+      try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
+      return inspectToRunCmd(container, image);
+    }));
+    setBulkRunText(cmds.join("\n\n"));
   };
 
   const n = () => selected().size;
@@ -90,7 +94,7 @@ export const ContainerListPage: Component = () => {
         </Show>
 
         <span class="text-zinc-400">│</span>
-        <Btn title="查看 Run/Compose 命令" onClick={bulkRun}>⧉ Run/Compose</Btn>
+        <Btn title="基于选中容器创建容器 / 注册 Compose" onClick={() => void bulkRun()}>⧉ Run/Compose</Btn>
 
         <Show when={n() > 0}>
           <button class="ml-auto text-zinc-400 hover:text-zinc-400" onClick={() => setSelected(new Set())}>
@@ -128,30 +132,24 @@ export const ContainerListPage: Component = () => {
         </Show>
       </div>
 
-      {/* ── Run/Compose modal ───────────────────────────────────────────────── */}
+      {/* ── Run/Compose modal (per-row "⧉" button — single container only) ── */}
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
-      <Show when={bulkRunIds()}>
-        {(ids) => (
-          <BulkRunModal
-            reqKey={ids().join(",")}
-            title={`${ids().length} 个容器`}
-            fetchCmds={() => Promise.all(ids().map(async (id) => {
-              const container = await get<any>(`/api/containers/${id}/inspect`);
-              let image: any = {};
-              try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
-              return inspectToRunCmd(container, image);
-            }))}
-            onClose={() => setBulkRunIds(null)}
-          />
-        )}
-      </Show>
 
       {/* ── Create container modal ───────────────────────────────────────────── */}
       <CreateContainerModal
         open={showCreate()}
         onClose={() => setShowCreate(false)}
         onCreated={() => { setShowCreate(false); void store.refresh(); }}
+      />
+
+      {/* ── Bulk Run/Compose modal — same component, fed the selected
+          containers' merged run commands ────────────────────────────────── */}
+      <CreateContainerModal
+        open={bulkRunText() !== null}
+        initialRun={bulkRunText() ?? undefined}
+        onClose={() => setBulkRunText(null)}
+        onCreated={() => { setBulkRunText(null); void store.refresh(); }}
       />
 
       {/* ── Import container (tar → image) modal ─────────────────────────────── */}

@@ -5,9 +5,12 @@ import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
 import { get, post, del, imageInspectUrl } from "../../api/client";
+import { copyToClipboard } from "../../api/clipboard";
+import { countComposeServices } from "../../api/convert";
 import { toast } from "../shared/Toast";
 import { emptyForm, formToPayload, formToRunCmd, parseRunIntoForm, type CreateForm } from "./containerForm";
 import { inspectToRunCmd } from "../../api/inspect";
+import { RegisterComposeModal } from "../compose/RegisterComposeModal";
 import type { ImageSummary, NetworkSummary, ContainerSummary, Template } from "../../types";
 
 type Tab = "form" | "cmd";
@@ -57,6 +60,14 @@ export const CreateContainerModal: Component<{
   const [form, setForm] = createSignal<CreateForm>(emptyForm());
   const [runCmd, setRunCmd] = createSignal(props.initialRun ?? DEFAULT_RUN);
   const [liveRun, setLiveRun] = createSignal(runCmd());
+  const [liveCompose, setLiveCompose] = createSignal("");
+  const [showRegister, setShowRegister] = createSignal(false);
+  // Detected live from the compose.yaml content, not from how the modal was
+  // opened — pasting a multi-service compose.yaml into the box (or loading
+  // a batch of containers' run commands) hides the 表单 tab and swaps the
+  // primary action to "注册 Compose", same as it would for a single service.
+  const serviceCount = () => countComposeServices(liveCompose());
+  const isMulti = () => serviceCount() > 1;
   const [savingTpl, setSavingTpl] = createSignal(false);
   const [tplName, setTplName] = createSignal("");
   const [creating, setCreating] = createSignal(false);
@@ -87,6 +98,14 @@ export const CreateContainerModal: Component<{
     setSelectedContainerId("");
     setSavingTpl(false);
     setTplName("");
+  });
+
+  // The 表单 tab only makes sense for a single service — if the compose
+  // content turns out to describe more than one (however that happened:
+  // pasted in, converted from a batch of containers' run commands, or just
+  // edited into that shape), force back to the cmd tab.
+  createEffect(() => {
+    if (isMulti() && tab() === "form") setTab("cmd");
   });
 
   // Cap dropdowns (Add + Drop share same close listener)
@@ -293,7 +312,9 @@ export const CreateContainerModal: Component<{
 
   return (
     <>
-    <Modal open={props.open} onClose={props.onClose} title="新建容器" wide noBackdropClose>
+    {/* Hidden (not unmounted — state must survive) while the register-compose
+        modal is up, so the two don't visually stack on top of each other. */}
+    <Modal open={props.open && !showRegister()} onClose={props.onClose} title="新建容器" wide noBackdropClose>
 
       {/* ── Quick selectors ────────────────────────────────────────────────── */}
       <div class={`mb-3 flex flex-wrap gap-2${props.initialRun ? " hidden" : ""}`}>
@@ -361,10 +382,10 @@ export const CreateContainerModal: Component<{
         </div>
       </div>
 
-      {/* ── Tabs ──────────────────────────────────────────────────────────── */}
+      {/* ── Tabs — 表单 hidden once the content describes >1 service ────── */}
       <div class="mb-4">
         <Tabs
-          tabs={[{ key: "form", label: "表单" }, { key: "cmd", label: "命令行 / Compose" }]}
+          tabs={isMulti() ? [{ key: "cmd", label: "命令行 / Compose" }] : [{ key: "form", label: "表单" }, { key: "cmd", label: "命令行 / Compose" }]}
           active={tab()}
           onChange={switchTab}
         />
@@ -579,10 +600,16 @@ export const CreateContainerModal: Component<{
               initialRun={runCmd()}
               actions={(s) => {
                 setLiveRun(s.run);
+                setLiveCompose(s.compose);
+                const copy = async (label: string, text: string) => {
+                  if (await copyToClipboard(text)) toast.success(`已复制${label}`);
+                  else toast.error(`复制${label}失败`);
+                };
                 return (
                   <div class="flex flex-wrap items-center justify-end gap-2">
                     <Button onClick={() => setRunCmd(DEFAULT_RUN)}>清空</Button>
-                    <Button onClick={() => { void navigator.clipboard.writeText(s.run); toast.success("已复制"); }}>复制命令</Button>
+                    <Button onClick={() => void copy("Run", s.run)}>复制 Run</Button>
+                    <Button onClick={() => void copy("Compose", s.compose)}>复制 Compose</Button>
                   </div>
                 );
               }}
@@ -591,19 +618,30 @@ export const CreateContainerModal: Component<{
           <div class="mt-3 flex justify-end gap-2 border-t border-zinc-800 pt-3">
             <Button onClick={() => setSavingTpl(true)}>存为模版</Button>
             <Button onClick={props.onClose}>取消</Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                const partial = parseRunIntoForm(liveRun() || runCmd());
-                if (!partial.image) { toast.error("无法识别镜像名称"); return; }
-                setForm((f) => ({ ...f, ...partial }));
-                void submit();
-              }}
-            >创建容器</Button>
+            <Show
+              when={!isMulti()}
+              fallback={<Button variant="primary" onClick={() => setShowRegister(true)}>注册 Compose</Button>}
+            >
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const partial = parseRunIntoForm(liveRun() || runCmd());
+                  if (!partial.image) { toast.error("无法识别镜像名称"); return; }
+                  setForm((f) => ({ ...f, ...partial }));
+                  void submit();
+                }}
+              >创建容器</Button>
+            </Show>
           </div>
         </div>
       </Show>
     </Modal>
+    <RegisterComposeModal
+      open={showRegister()}
+      initialCompose={liveCompose()}
+      onClose={() => setShowRegister(false)}
+      onRegistered={() => { setShowRegister(false); props.onClose(); }}
+    />
     <PullStatusWidget
       active={creating()}
       onClose={() => setCreating(false)}

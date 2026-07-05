@@ -80,6 +80,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		srv.mountDockerRoutes(r)
 		srv.mountComposeRoutes(r)
 		srv.mountConfigRoutes(r)
+		srv.mountFsRoutes(r)
 		srv.mountRegistryRoutes(r)
 		srv.mountTemplateRoutes(r)
 	})

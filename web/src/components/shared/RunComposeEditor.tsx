@@ -1,6 +1,6 @@
 import { Component, JSX, createSignal, createEffect } from "solid-js";
 import { CodeEditor } from "./CodeEditor";
-import { runToCompose, composeToRun } from "../../api/convert";
+import { cliToCompose, composeToCli } from "../../api/convert";
 
 export const RunComposeEditor: Component<{
   initialRun?: string;
@@ -11,24 +11,28 @@ export const RunComposeEditor: Component<{
   const [compose, setCompose] = createSignal(props.initialCompose ?? "");
   const [err, setErr] = createSignal("");
 
-  // React to external initialRun changes (template loaded, container cloned).
-  // Runs on mount AND whenever props.initialRun changes.
+  // React to external initialRun changes (template loaded, container cloned,
+  // or a whole batch of containers' run commands joined by blank lines).
+  // Runs on mount AND whenever props.initialRun changes. cliToCompose/
+  // composeToCli (not the single-command runToCompose/composeToRun) so this
+  // editor transparently handles either one command or many — the same
+  // conversion BulkRunModal uses, just shared instead of duplicated.
   createEffect(() => {
     const v = props.initialRun;
     if (!v) return;
     setRun(v);
-    try { setCompose(runToCompose(v)); setErr(""); }
+    try { setCompose(cliToCompose(v)); setErr(""); }
     catch (e) { setErr((e as Error).message); }
   });
 
   const onRunEdit = (v: string) => {
     setRun(v);
-    try { setCompose(runToCompose(v)); setErr(""); }
+    try { setCompose(cliToCompose(v)); setErr(""); }
     catch (e) { setErr((e as Error).message); }
   };
   const onComposeEdit = (v: string) => {
     setCompose(v);
-    try { setRun(composeToRun(v)); setErr(""); }
+    try { setRun(composeToCli(v)); setErr(""); }
     catch (e) { setErr((e as Error).message); }
   };
 
