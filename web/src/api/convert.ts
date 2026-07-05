@@ -36,8 +36,8 @@ export function composeToRuns(yaml: string): string[] {
     .filter((l) => l.startsWith("docker run"));
 }
 
-// ── Multi-command aware conversion — shared by RunComposeEditor (single OR
-// multiple services, detected live from the content) and BulkRunModal ──────
+// ── Multi-command aware conversion — used by RunComposeEditor to handle
+// either one service or many, detected live from the content ───────────────
 
 // Merges each service's individually-composerized yaml into one document.
 // Previously this just string-sliced out each yaml's "services:" section and

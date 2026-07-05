@@ -17,7 +17,7 @@ import { createContainerActions } from "../containers/containerActions";
 import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
-import { BulkRunModal } from "../containers/BulkRunModal";
+import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb } from "./composeShared";
 import type { ComposeProject, ContainerSummary, FileEntry } from "../../types";
 
@@ -27,6 +27,8 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "files", label: "文件" },
   { key: "logs", label: "日志" },
 ];
+
+const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
 
 export const ComposeDetailPage: Component = () => {
   const params = useParams();
@@ -86,7 +88,22 @@ export const ComposeDetailPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
     finally { void store.refresh(); void containers.refresh(); }
   };
-  const [showRun, setShowRun] = createSignal(false);
+  // Run/Compose reuses the same flow as the container list's own Run/Compose
+  // button — feed CreateContainerModal the merged run commands and let its
+  // single-vs-multi detection decide "创建容器" vs "注册 Compose", instead of
+  // a separate read-only viewer.
+  const [runText, setRunText] = createSignal<string | null>(null);
+  const runProject = async () => {
+    const ids = cs().map((c) => c.Id);
+    if (ids.length === 0) { setRunText(DEFAULT_RUN); return; }
+    const cmds = await Promise.all(ids.map(async (cid) => {
+      const container = await get<any>(`/api/containers/${cid}/inspect`);
+      let image: any = {};
+      try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
+      return inspectToRunCmd(container, image);
+    }));
+    setRunText(cmds.join("\n\n"));
+  };
 
   // ── files tab — browse BaseDir on the left, edit the selected file on the
   // right (FileBrowser is already generic: listPath/onOpenFile callbacks).
@@ -172,7 +189,7 @@ export const ComposeDetailPage: Component = () => {
           >⊘ Down</ActBtn>
           <ActBtn title="docker compose pull" onClick={() => void runCmd("pull")}>↓ Pull</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
-          <ActBtn title="查看 docker run 命令（inspect 项目下所有容器）" onClick={() => setShowRun(true)}>⧉ Run/Compose</ActBtn>
+          <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>⧉ Run/Compose</ActBtn>
         </div>
       </Show>
 
@@ -278,19 +295,12 @@ export const ComposeDetailPage: Component = () => {
         <LogsView wsUrl={`/ws/compose/logs?id=${encodeURIComponent(id())}`} />
       </Show>
 
-      <Show when={showRun()}>
-        <BulkRunModal
-          reqKey={id()}
-          title={project()?.name ?? id()}
-          fetchCmds={() => Promise.all(cs().map(async (c) => {
-            const container = await get<any>(`/api/containers/${c.Id}/inspect`);
-            let image: any = {};
-            try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
-            return inspectToRunCmd(container, image);
-          }))}
-          onClose={() => setShowRun(false)}
-        />
-      </Show>
+      <CreateContainerModal
+        open={runText() !== null}
+        initialRun={runText() ?? undefined}
+        onClose={() => setRunText(null)}
+        onCreated={() => { setRunText(null); void store.refresh(); void containers.refresh(); }}
+      />
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
     </div>

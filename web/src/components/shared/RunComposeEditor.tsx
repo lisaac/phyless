@@ -15,8 +15,7 @@ export const RunComposeEditor: Component<{
   // or a whole batch of containers' run commands joined by blank lines).
   // Runs on mount AND whenever props.initialRun changes. cliToCompose/
   // composeToCli (not the single-command runToCompose/composeToRun) so this
-  // editor transparently handles either one command or many — the same
-  // conversion BulkRunModal uses, just shared instead of duplicated.
+  // editor transparently handles either one command or many.
   createEffect(() => {
     const v = props.initialRun;
     if (!v) return;

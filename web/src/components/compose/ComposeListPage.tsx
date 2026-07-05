@@ -11,10 +11,12 @@ import { createContainerActions, fmtContainerStatus, fmtRelTime } from "../conta
 import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
-import { BulkRunModal } from "../containers/BulkRunModal";
+import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb, VERB_LABEL } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
+
+const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
 
 export const ComposeListPage: Component = () => {
   const navigate = useNavigate();
@@ -25,7 +27,11 @@ export const ComposeListPage: Component = () => {
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [composeAction, setComposeAction] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
-  const [runProject, setRunProject] = createSignal<{ id: string; name: string; containerIds: string[] } | null>(null);
+  // Run/Compose reuses the same flow as the container list's own Run/Compose
+  // button: feed CreateContainerModal the merged run commands and let its
+  // own single-vs-multi detection decide between "创建容器" and "注册
+  // Compose", instead of a separate read-only viewer.
+  const [runText, setRunText] = createSignal<string | null>(null);
   const [show, setShow] = createSignal(false);
 
   onMount(() => { store.startPolling(); containers.startPolling(); });
@@ -33,6 +39,17 @@ export const ComposeListPage: Component = () => {
 
   const toggleExpand = (id: string) =>
     setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const runProject = async (containerIds: string[]) => {
+    if (containerIds.length === 0) { setRunText(DEFAULT_RUN); return; }
+    const cmds = await Promise.all(containerIds.map(async (id) => {
+      const container = await get<any>(`/api/containers/${id}/inspect`);
+      let image: any = {};
+      try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
+      return inspectToRunCmd(container, image);
+    }));
+    setRunText(cmds.join("\n\n"));
+  };
 
   const remove = async (id: string, name: string) => {
     if (!confirm(`删除 Compose 项目 ${name}？`)) return;
@@ -115,8 +132,8 @@ export const ComposeListPage: Component = () => {
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <ActBtn
-                      title="查看 docker run 命令（inspect 项目下所有容器）"
-                      onClick={() => setRunProject({ id: p.id, name: p.name, containerIds: cs().map((c) => c.Id) })}
+                      title="基于项目下所有容器创建容器 / 注册 Compose"
+                      onClick={() => void runProject(cs().map((c) => c.Id))}
                     >⧉ Run/Compose</ActBtn>
                   </div>
                 </div>
@@ -176,21 +193,12 @@ export const ComposeListPage: Component = () => {
 
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
-      <Show when={runProject()}>
-        {(p) => (
-          <BulkRunModal
-            reqKey={p().id}
-            title={p().name}
-            fetchCmds={() => Promise.all(p().containerIds.map(async (id) => {
-              const container = await get<any>(`/api/containers/${id}/inspect`);
-              let image: any = {};
-              try { image = await get<any>(imageInspectUrl(container.Image)); } catch { /* ignore */ }
-              return inspectToRunCmd(container, image);
-            }))}
-            onClose={() => setRunProject(null)}
-          />
-        )}
-      </Show>
+      <CreateContainerModal
+        open={runText() !== null}
+        initialRun={runText() ?? undefined}
+        onClose={() => setRunText(null)}
+        onCreated={() => { setRunText(null); void store.refresh(); void containers.refresh(); }}
+      />
 
       <PullStatusWidget
         active={!!composeAction()}
