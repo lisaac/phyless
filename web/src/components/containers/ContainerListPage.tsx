@@ -39,11 +39,13 @@ export const ContainerListPage: Component = () => {
 
   const bulkRun = () => {
     const ids = [...selected()];
-    if (ids.length === 0) return;
     if (ids.length === 1) {
       const c = store.items().find((c) => c.Id === ids[0]);
       if (c) setRunTarget({ id: c.Id, name: containerName(c) });
     } else {
+      // 0 selected falls through here too — opens BulkRunModal with an empty
+      // ids array, which resolves to no commands (an empty CLI/compose.yaml)
+      // rather than the button being disabled.
       setBulkRunIds(ids);
     }
   };
@@ -88,7 +90,7 @@ export const ContainerListPage: Component = () => {
         </Show>
 
         <span class="text-zinc-400">│</span>
-        <Btn title="查看 Run/Compose 命令" disabled={n() === 0} onClick={bulkRun}>⧉ Run/Compose</Btn>
+        <Btn title="查看 Run/Compose 命令" onClick={bulkRun}>⧉ Run/Compose</Btn>
 
         <Show when={n() > 0}>
           <button class="ml-auto text-zinc-400 hover:text-zinc-400" onClick={() => setSelected(new Set())}>
