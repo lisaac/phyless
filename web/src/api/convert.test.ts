@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runToCompose, composeToRun, composeToRuns, mergeComposeYamls } from "./convert";
+import { runToCompose, composeToRun, composeToRuns, mergeComposeYamls, formatRunCmdMultiline, composeToCli, cliToCompose } from "./convert";
 
 describe("runToCompose", () => {
   it("converts a docker run command to compose yaml", () => {
@@ -50,5 +50,37 @@ describe("mergeComposeYamls", () => {
     const merged = mergeComposeYamls(runs.map(runToCompose));
     expect(merged).toContain("nginx");
     expect(merged).toContain("redis");
+  });
+});
+
+describe("formatRunCmdMultiline", () => {
+  it("puts each flag (and its value) on its own backslash-continued line", () => {
+    const out = formatRunCmdMultiline('docker run --name web -p 8080:80 -e "FOO=hello world" nginx');
+    expect(out).toBe('docker run \\\n  --name web \\\n  -p 8080:80 \\\n  -e "FOO=hello world" \\\n  nginx');
+  });
+
+  it("does not flag-parse past the image (entrypoint/cmd args stay their own lines)", () => {
+    const out = formatRunCmdMultiline("docker run --name web nginx sh -c echo hi");
+    expect(out).toBe("docker run \\\n  --name web \\\n  nginx \\\n  sh \\\n  -c \\\n  echo \\\n  hi");
+  });
+
+  it("leaves non-docker-run input untouched", () => {
+    expect(formatRunCmdMultiline("echo hello")).toBe("echo hello");
+  });
+});
+
+describe("composeToCli / cliToCompose round-trip with multiline formatting", () => {
+  it("composeToCli formats each command as multiline", () => {
+    const yaml = `services:\n  web:\n    image: nginx\n    ports:\n      - "8080:80"\n`;
+    const cli = composeToCli(yaml);
+    expect(cli).toContain(" \\\n  ");
+  });
+
+  it("cliToCompose still parses the multiline output composeToCli produces", () => {
+    const yaml = `services:\n  a:\n    image: nginx\n  b:\n    image: redis\n`;
+    const cli = composeToCli(yaml);
+    const back = cliToCompose(cli);
+    expect(back).toContain("nginx");
+    expect(back).toContain("redis");
   });
 });

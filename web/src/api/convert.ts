@@ -36,6 +36,51 @@ export function composeToRuns(yaml: string): string[] {
     .filter((l) => l.startsWith("docker run"));
 }
 
+// Whitespace-splits a command line, treating a quoted segment as one token
+// (decomposerize already quotes values containing spaces, e.g.
+// `-e "FOO=hello world"`, so this must not split inside the quotes).
+function tokenizeCmd(cmd: string): string[] {
+  const re = /"[^"]*"|'[^']*'|\S+/g;
+  return cmd.match(re) ?? [];
+}
+
+// decomposerize (and composerize's --network path) have no "one flag per
+// line" option, and we were asked not to patch the library itself — this is
+// the wrapper instead. Reformats decomposerize's single-line output into the
+// same multi-line, backslash-continued style inspectToRunCmd already uses
+// (api/inspect.ts), purely for readability. Not a full docker-CLI parser:
+// it doesn't know which flags take a value, so it uses the one heuristic
+// that's actually reliable here — `docker run [OPTIONS] IMAGE [CMD...]`
+// means every flag (a token starting with "-") pairs with the next token
+// UNLESS that next token is itself a flag, and once the first non-flag
+// token (the image) appears, everything after it is positional and gets
+// its own line without further flag-parsing (so `sh -c "..."` after the
+// image doesn't get mistaken for more docker options).
+export function formatRunCmdMultiline(cmd: string): string {
+  const tokens = tokenizeCmd(cmd.trim());
+  if (tokens.length < 2 || tokens[0] !== "docker" || tokens[1] !== "run") return cmd;
+  const lines: string[] = ["docker run"];
+  let i = 2;
+  let pastFlags = false;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (!pastFlags && tok.startsWith("-")) {
+      if (i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
+        lines.push(`${tok} ${tokens[i + 1]}`);
+        i += 2;
+      } else {
+        lines.push(tok);
+        i += 1;
+      }
+    } else {
+      pastFlags = true;
+      lines.push(tok);
+      i += 1;
+    }
+  }
+  return lines.join(" \\\n  ");
+}
+
 // ── Multi-command aware conversion — used by RunComposeEditor to handle
 // either one service or many, detected live from the content ───────────────
 
@@ -86,7 +131,10 @@ export function cliToCompose(text: string): string {
 export function composeToCli(yaml: string): string {
   const cmds = composeToRuns(yaml);
   if (cmds.length === 0) throw new Error("未找到 services");
-  return cmds.join("\n\n");
+  // Multi-line per command for readability. splitRunCmds (the reverse
+  // direction) already un-wraps "\\\n"-continued lines back to one line per
+  // command before re-parsing, so this round-trips cleanly.
+  return cmds.map(formatRunCmdMultiline).join("\n\n");
 }
 
 // How many services the current compose.yaml content describes — drives
