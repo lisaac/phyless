@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runToCompose, composeToRun, composeToRuns } from "./convert";
+import { runToCompose, composeToRun, composeToRuns, mergeComposeYamls } from "./convert";
 
 describe("runToCompose", () => {
   it("converts a docker run command to compose yaml", () => {
@@ -27,5 +27,28 @@ describe("composeToRuns", () => {
     const runs = composeToRuns(yaml);
     expect(runs.length).toBe(2);
     expect(runs.every((r) => r.startsWith("docker run"))).toBe(true);
+  });
+});
+
+describe("mergeComposeYamls", () => {
+  it("preserves the external network marking composerize already adds for named networks", () => {
+    // composerize marks any named --network external by default (it can't
+    // know whether the network is meant to be created fresh) — the old
+    // string-slicing merge discarded this top-level networks: block
+    // entirely, which is the bug this fix addresses.
+    const runs = [
+      "docker run -d --name a --network pod_default nginx",
+      "docker run -d --name b --network pod_default redis",
+    ];
+    const merged = mergeComposeYamls(runs.map(runToCompose));
+    expect(merged).toContain("external: true");
+    expect(merged).toContain("name: pod_default");
+  });
+
+  it("keeps both services in the merged services block", () => {
+    const runs = ["docker run -d --name a nginx", "docker run -d --name b redis"];
+    const merged = mergeComposeYamls(runs.map(runToCompose));
+    expect(merged).toContain("nginx");
+    expect(merged).toContain("redis");
   });
 });

@@ -1,5 +1,6 @@
 import composerize from "composerize";
 import decomposerize from "decomposerize";
+import YAML from "yaml";
 
 export function runToCompose(cmd: string): string {
   const trimmed = cmd.trim();
@@ -38,13 +39,32 @@ export function composeToRuns(yaml: string): string[] {
 // ── Multi-command aware conversion — shared by RunComposeEditor (single OR
 // multiple services, detected live from the content) and BulkRunModal ──────
 
+// Merges each service's individually-composerized yaml into one document.
+// Previously this just string-sliced out each yaml's "services:" section and
+// discarded everything else — silently dropping composerize's own top-level
+// networks:/volumes: blocks. That mattered specifically for named networks:
+// composerize already marks any named (non-default) --network as
+// `external: true` + `name:` by default (it has no way to know whether the
+// network is meant to be created fresh or already exists, so it conserva-
+// tively assumes external and leaves a comment explaining how to change
+// that) — the merge was throwing that away, so `docker compose` ended up
+// trying to create a brand new project-namespaced network instead of
+// joining the real one. Parsing for real instead of slicing text preserves it.
 export function mergeComposeYamls(yamls: string[]): string {
-  const blocks = yamls.map((yaml) => {
-    const lines = yaml.split("\n");
-    const idx = lines.findIndex((l) => l.trimStart().startsWith("services:"));
-    return idx === -1 ? "" : lines.slice(idx + 1).join("\n").trimEnd();
-  });
-  return "services:\n" + blocks.filter(Boolean).join("\n");
+  const services: Record<string, unknown> = {};
+  const networks: Record<string, unknown> = {};
+  const volumes: Record<string, unknown> = {};
+  for (const yaml of yamls) {
+    let doc: Record<string, unknown>;
+    try { doc = YAML.parse(yaml) ?? {}; } catch { continue; }
+    Object.assign(services, doc.services as Record<string, unknown> | undefined);
+    Object.assign(networks, doc.networks as Record<string, unknown> | undefined);
+    Object.assign(volumes, doc.volumes as Record<string, unknown> | undefined);
+  }
+  const out: Record<string, unknown> = { services };
+  if (Object.keys(networks).length > 0) out.networks = networks;
+  if (Object.keys(volumes).length > 0) out.volumes = volumes;
+  return YAML.stringify(out);
 }
 
 // Split multi-line CLI text into individual flat docker run commands. A
