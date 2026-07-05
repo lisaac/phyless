@@ -6,7 +6,7 @@ import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
 import { get, post, del, imageInspectUrl } from "../../api/client";
 import { copyToClipboard } from "../../api/clipboard";
-import { countComposeServices } from "../../api/convert";
+import { countComposeServices, cliToCompose } from "../../api/convert";
 import { toast } from "../shared/Toast";
 import { emptyForm, formToPayload, formToRunCmd, parseRunIntoForm, type CreateForm } from "./containerForm";
 import { inspectToRunCmd } from "../../api/inspect";
@@ -87,12 +87,20 @@ export const CreateContainerModal: Component<{
     if (props.initialRun) {
       setRunCmd(props.initialRun);
       setLiveRun(props.initialRun);
+      // Compute liveCompose here too, synchronously, rather than waiting for
+      // RunComposeEditor to mount and report it back through the actions
+      // render-prop a tick later — isMulti()/the tab list read liveCompose
+      // on the very first render, and without this the 表单 tab briefly (or
+      // persistently, if the effect below lost the race) showed even for a
+      // batch of multiple containers.
+      try { setLiveCompose(cliToCompose(props.initialRun)); } catch { setLiveCompose(""); }
       setTab("cmd");
       return;
     }
     setForm(emptyForm());
     setRunCmd(DEFAULT_RUN);
     setLiveRun(DEFAULT_RUN);
+    setLiveCompose("");
     setTab("form");
     setSelectedTplId("");
     setSelectedContainerId("");

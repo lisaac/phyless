@@ -72,6 +72,9 @@ export const RegisterComposeModal: Component<{
     if (!n || !dir) { toast.error("请填写名称和路径"); return; }
     setSaving(true);
     try {
+      // /api/fs/file's PUT handler (internal/api/fs.go) MkdirAlls the file's
+      // parent directory before writing, so a base_dir that doesn't exist
+      // yet gets created as a side effect of writing the compose file here.
       const composeFilePath = joinPath(dir, composeName() || "compose.yaml");
       await put(`/api/fs/file?path=${encodeURIComponent(composeFilePath)}`, composeContent());
       await post("/api/compose", {
@@ -100,9 +103,18 @@ export const RegisterComposeModal: Component<{
           <PathPicker value={baseDir()} onChange={setBaseDir} placeholder="/opt/stacks/app" />
         </label>
         <label class="block">
-          <span class="mb-1 block text-xs text-zinc-400">
-            {composeName()}{composeName() !== "compose.yaml" ? "（已检测到现有文件）" : "（路径下不存在则会新建此文件）"}
-          </span>
+          <div class="mb-1 flex items-center gap-2">
+            <span class="shrink-0 text-xs text-zinc-400">文件名</span>
+            <input
+              class={`${fieldCls} max-w-[16rem]`}
+              value={composeName()}
+              onInput={(e) => setComposeName(e.currentTarget.value)}
+              placeholder="compose.yaml"
+            />
+            <span class="truncate text-xs text-zinc-500">
+              {COMPOSE_NAMES.includes(composeName()) ? "路径下不存在则会新建此文件" : "自定义文件名"}
+            </span>
+          </div>
           <div class="h-64 border border-zinc-800">
             <CodeEditor value={composeContent()} onChange={setComposeContent} language="yaml" />
           </div>
