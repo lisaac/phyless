@@ -5,10 +5,10 @@ import { connectWS } from "../../api/ws";
 // flush (throttled so a fast-scrolling log doesn't thrash layout). Driven
 // entirely by a websocket URL so both a single container's logs and a whole
 // compose project's `docker compose logs -f` stream can share it.
-export const LogsView: Component<{ wsUrl: string; startPaused?: boolean; heightClass?: string }> = (props) => {
+export const LogsView: Component<{ wsUrl: string; heightClass?: string }> = (props) => {
   const [text, setText] = createSignal("");
   const [autoScroll, setAutoScroll] = createSignal(true);
-  const [paused, setPaused] = createSignal(!!props.startPaused);
+  const [paused, setPaused] = createSignal(false);
   let box!: HTMLPreElement;
   let ws: WebSocket | undefined;
   let buf = "";
@@ -16,10 +16,12 @@ export const LogsView: Component<{ wsUrl: string; startPaused?: boolean; heightC
 
   const flush = () => {
     if (!buf) return;
-    if (!paused()) {
-      setText((t) => (t + buf).slice(-200_000)); // ponytail: cap at 200k chars
-      if (autoScroll()) queueMicrotask(() => box?.scrollTo(0, box.scrollHeight));
-    }
+    // "暂停" only freezes auto-scroll, not the content — it used to drop
+    // buf outright while paused, which silently ate the entire backlog a
+    // stopped container's logs arrive as in one initial burst (the view
+    // started paused for stopped containers, so nothing ever showed).
+    setText((t) => (t + buf).slice(-200_000)); // ponytail: cap at 200k chars
+    if (!paused() && autoScroll()) queueMicrotask(() => box?.scrollTo(0, box.scrollHeight));
     buf = "";
   };
 

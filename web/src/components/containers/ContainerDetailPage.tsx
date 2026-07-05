@@ -714,7 +714,7 @@ export const ContainerDetailPage: Component = () => {
       {/* ── Tab: 日志 ──────────────────────────────────────────────────────── */}
       <Show when={tab() === "logs"}>
         <div class="mb-2"><TimeRangePicker onChange={setLogRange} /></div>
-        <LogsView wsUrl={appendTimeRange(`/ws/containers/${id()}/logs`, logRange())} startPaused={!running()} />
+        <LogsView wsUrl={appendTimeRange(`/ws/containers/${id()}/logs`, logRange())} />
       </Show>
 
       {/* ── Tab: Inspect ──────────────────────────────────────────────────── */}
