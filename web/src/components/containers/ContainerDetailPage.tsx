@@ -7,6 +7,7 @@ import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
+import { streamDownload, fmtBytes } from "../../api/download";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { CopyToContainerModal } from "./CopyToContainerModal";
@@ -104,13 +105,6 @@ const EditableKV: Component<{
 function fmtTime(unix: number): string {
   if (!unix) return "—";
   return new Date(unix * 1000).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
-function fmtBytes(b: number): string {
-  if (!b) return "—";
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
-  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(0)} MB`;
-  return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 function fmtSince(isoStr: string | undefined, now: number, suffix = ""): string {
@@ -245,8 +239,19 @@ export const ContainerDetailPage: Component = () => {
   // ── File actions ──────────────────────────────────────────────────────────────
   const listFiles = (sub: string) =>
     get<FileEntry[]>(`/api/containers/${id()}/files?path=${encodeURIComponent(sub)}`);
-  const downloadURL = (sub: string) =>
-    `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`;
+  const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
+  const downloadFile = async (sub: string, name: string) => {
+    const filename = `${name}.tar`;
+    setDownloadState({ active: true, filename, bytes: 0, done: false, error: "" });
+    try {
+      await streamDownload(
+        `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
+        filename,
+        (bytes) => setDownloadState((s) => ({ ...s, bytes })),
+      );
+      setDownloadState((s) => ({ ...s, done: true }));
+    } catch (e) { setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message })); }
+  };
   // fetch() exposes no upload-progress events, so use XHR to drive the widget.
   const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
     setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
@@ -701,7 +706,7 @@ export const ContainerDetailPage: Component = () => {
         <FileBrowser
           instanceKey={id()}
           listPath={listFiles}
-          downloadURL={downloadURL}
+          onDownload={downloadFile}
           onUpload={hasRole("operator") ? uploadFile : undefined}
           onDelete={hasRole("operator") ? deleteFile : undefined}
           onRename={hasRole("operator") ? renameFile : undefined}
@@ -757,6 +762,17 @@ export const ContainerDetailPage: Component = () => {
         done={uploadState().done}
         error={uploadState().error}
         onClose={() => { uploadXhr?.abort(); setUploadState((s) => ({ ...s, active: false })); }}
+      />
+
+      {/* ── Download progress — non-blocking floating card ───────────────── */}
+      <UploadStatusWidget
+        active={downloadState().active}
+        label="下载"
+        filename={downloadState().filename}
+        bytesLabel={fmtBytes(downloadState().bytes)}
+        done={downloadState().done}
+        error={downloadState().error}
+        onClose={() => setDownloadState((s) => ({ ...s, active: false }))}
       />
     </div>
   );

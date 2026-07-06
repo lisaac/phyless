@@ -2,8 +2,10 @@ import { Component, createSignal, Show } from "solid-js";
 import { FileBrowser } from "../shared/FileBrowser";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
-import { get, put, post, del } from "../../api/client";
+import { UploadStatusWidget } from "../shared/UploadStatusWidget";
+import { get, put, post, del, getToken, setToken } from "../../api/client";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
+import { streamDownload, fmtBytes } from "../../api/download";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import type { FileEntry } from "../../types";
@@ -63,6 +65,63 @@ export const ConfigFilesPage: Component = () => {
     if (openPath() === oldPath) setOpenPath(newPath);
   };
 
+  // Upload/download — same PUT-raw-bytes endpoint the editor saves through
+  // for upload (XHR, since fetch() has no upload-progress events), and the
+  // tar-streaming endpoint for download (fetch + a reader loop, since the
+  // exact tar size isn't known upfront to compute a percentage).
+  const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
+  let uploadXhr: XMLHttpRequest | undefined;
+  const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
+    setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
+    const xhr = new XMLHttpRequest();
+    uploadXhr = xhr;
+    xhr.open("PUT", `/api/config/files/content?path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        setToken(null);
+        window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
+        reject(new Error("unauthorized"));
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setUploadState((s) => ({ ...s, progress: 100, done: true }));
+        resolve();
+      } else {
+        const msg = xhr.responseText || `上传失败 (${xhr.status})`;
+        setUploadState((s) => ({ ...s, done: true, error: msg }));
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => {
+      setUploadState((s) => ({ ...s, done: true, error: "网络错误" }));
+      reject(new Error("network error"));
+    };
+    xhr.onabort = () => {
+      setUploadState((s) => ({ ...s, done: true }));
+      reject(new Error("aborted"));
+    };
+    xhr.send(file);
+  });
+
+  const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
+  const downloadFile = async (sub: string, name: string) => {
+    const filename = `${name}.tar`;
+    setDownloadState({ active: true, filename, bytes: 0, done: false, error: "" });
+    try {
+      await streamDownload(
+        `/api/config/files/download?path=${encodeURIComponent(sub)}`,
+        filename,
+        (bytes) => setDownloadState((s) => ({ ...s, bytes })),
+      );
+      setDownloadState((s) => ({ ...s, done: true }));
+    } catch (e) { setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message })); }
+  };
+
   return (
     <div>
       <h1 class="mb-3 text-xl font-semibold">配置文件</h1>
@@ -74,6 +133,8 @@ export const ConfigFilesPage: Component = () => {
             onCreate={hasRole("operator") ? createFile : undefined}
             onDelete={hasRole("operator") ? deleteFile : undefined}
             onRename={hasRole("operator") ? renameFile : undefined}
+            onUpload={hasRole("operator") ? uploadFile : undefined}
+            onDownload={downloadFile}
           />
         </div>
         <div class="sticky top-4 flex h-[calc(100vh-13rem)] flex-col">
@@ -98,6 +159,24 @@ export const ConfigFilesPage: Component = () => {
           </div>
         </div>
       </div>
+
+      <UploadStatusWidget
+        active={uploadState().active}
+        filename={uploadState().filename}
+        progress={uploadState().progress}
+        done={uploadState().done}
+        error={uploadState().error}
+        onClose={() => { uploadXhr?.abort(); setUploadState((s) => ({ ...s, active: false })); }}
+      />
+      <UploadStatusWidget
+        active={downloadState().active}
+        label="下载"
+        filename={downloadState().filename}
+        bytesLabel={fmtBytes(downloadState().bytes)}
+        done={downloadState().done}
+        error={downloadState().error}
+        onClose={() => setDownloadState((s) => ({ ...s, active: false }))}
+      />
     </div>
   );
 };

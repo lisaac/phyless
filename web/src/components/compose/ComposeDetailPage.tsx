@@ -1,8 +1,9 @@
 import { Component, createSignal, createResource, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { useParams, useSearchParams } from "@solidjs/router";
-import { get, put, post, del, imageInspectUrl } from "../../api/client";
+import { get, put, post, del, getToken, setToken, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
+import { streamDownload, fmtBytes } from "../../api/download";
 import { createResourceStore } from "../../stores/resource";
 import { setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
@@ -13,6 +14,7 @@ import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/Time
 import { KV, Sec } from "../shared/KV";
 import { Tabs } from "../shared/Tabs";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { UploadStatusWidget } from "../shared/UploadStatusWidget";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { createContainerActions } from "../containers/containerActions";
@@ -113,6 +115,63 @@ export const ComposeDetailPage: Component = () => {
   const renameFile = async (oldPath: string, newPath: string) => {
     await post(`/api/compose/files/rename?id=${encodeURIComponent(id())}`, { old_path: oldPath, new_path: newPath });
     if (selectedFile() === oldPath) setSelectedFile(newPath);
+  };
+
+  // Upload/download — same PUT-raw-bytes endpoint the editor saves through
+  // for upload (XHR, since fetch() has no upload-progress events), and the
+  // new tar-streaming endpoint for download (fetch + a reader loop, since
+  // the exact tar size isn't known upfront to compute a percentage).
+  const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
+  let uploadXhr: XMLHttpRequest | undefined;
+  const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
+    setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
+    const xhr = new XMLHttpRequest();
+    uploadXhr = xhr;
+    xhr.open("PUT", `/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        setToken(null);
+        window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
+        reject(new Error("unauthorized"));
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setUploadState((s) => ({ ...s, progress: 100, done: true }));
+        resolve();
+      } else {
+        const msg = xhr.responseText || `上传失败 (${xhr.status})`;
+        setUploadState((s) => ({ ...s, done: true, error: msg }));
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => {
+      setUploadState((s) => ({ ...s, done: true, error: "网络错误" }));
+      reject(new Error("network error"));
+    };
+    xhr.onabort = () => {
+      setUploadState((s) => ({ ...s, done: true }));
+      reject(new Error("aborted"));
+    };
+    xhr.send(file);
+  });
+
+  const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
+  const downloadFile = async (sub: string, name: string) => {
+    const filename = `${name}.tar`;
+    setDownloadState({ active: true, filename, bytes: 0, done: false, error: "" });
+    try {
+      await streamDownload(
+        `/api/compose/files/download?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub)}`,
+        filename,
+        (bytes) => setDownloadState((s) => ({ ...s, bytes })),
+      );
+      setDownloadState((s) => ({ ...s, done: true }));
+    } catch (e) { setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message })); }
   };
 
   // Auto-select the compose file once per project — guarded by an id marker
@@ -259,6 +318,8 @@ export const ComposeDetailPage: Component = () => {
               onCreate={hasRole("operator") ? createFile : undefined}
               onDelete={hasRole("operator") ? deleteFile : undefined}
               onRename={hasRole("operator") ? renameFile : undefined}
+              onUpload={hasRole("operator") ? uploadFile : undefined}
+              onDownload={downloadFile}
               instanceKey={id()}
             />
           </div>
@@ -306,6 +367,24 @@ export const ComposeDetailPage: Component = () => {
         url={`/api/compose/${composeAction()?.verb ?? "up"}?id=${encodeURIComponent(composeAction()?.id ?? "")}`}
         onDone={() => { void store.refresh(); void containers.refresh(); }}
         onClose={() => setComposeAction(null)}
+      />
+
+      <UploadStatusWidget
+        active={uploadState().active}
+        filename={uploadState().filename}
+        progress={uploadState().progress}
+        done={uploadState().done}
+        error={uploadState().error}
+        onClose={() => { uploadXhr?.abort(); setUploadState((s) => ({ ...s, active: false })); }}
+      />
+      <UploadStatusWidget
+        active={downloadState().active}
+        label="下载"
+        filename={downloadState().filename}
+        bytesLabel={fmtBytes(downloadState().bytes)}
+        done={downloadState().done}
+        error={downloadState().error}
+        onClose={() => setDownloadState((s) => ({ ...s, active: false }))}
       />
     </div>
   );

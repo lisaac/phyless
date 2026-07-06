@@ -42,6 +42,7 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
 	r.Delete("/api/compose/files", s.handleComposeDeleteFile)
 	r.Post("/api/compose/files/rename", s.handleComposeRenameFile)
+	r.Get("/api/compose/files/download", s.handleComposeDownloadFile)
 }
 
 const (
@@ -364,6 +365,20 @@ func (s *Server) handleComposeDeleteFile(w http.ResponseWriter, r *http.Request)
 	}
 	s.auditFromCtx(r, "compose.file.delete", p.Name+":"+subPath, "ok")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleComposeDownloadFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	fullPath := filepath.Join(p.BaseDir, r.URL.Query().Get("path"))
+	if !isSubPath(p.BaseDir, fullPath) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	streamTar(w, fullPath)
 }
 
 func (s *Server) handleComposeRenameFile(w http.ResponseWriter, r *http.Request) {

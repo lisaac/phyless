@@ -23,7 +23,9 @@ function pathSegments(p: string) {
 
 export const FileBrowser: Component<{
   listPath: (sub: string) => Promise<FileEntry[]>;
-  downloadURL?: (sub: string) => string;
+  // (fullSubPath, displayName) — the caller drives the actual transfer
+  // (progress widget, auth, etc.); this just tells it what got clicked.
+  onDownload?: (sub: string, name: string) => void;
   onUpload?: (sub: string, file: File) => Promise<void>;
   onCreate?: (sub: string) => Promise<void>;
   onDelete?: (sub: string) => Promise<void>;
@@ -283,16 +285,11 @@ export const FileBrowser: Component<{
                         <Show when={props.onRename}>
                           <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => startRename(e)}>重命名</button>
                         </Show>
-                        <Show when={props.downloadURL}>
+                        <Show when={props.onDownload}>
                           <button
                             class="text-[11px] text-zinc-400 hover:text-zinc-300"
-                            title="下载 tar（Docker 的容器文件导出接口始终返回 tar 归档）"
-                            onClick={() => {
-                              const a = document.createElement("a");
-                              a.href = props.downloadURL!(join(e.name));
-                              a.download = `${e.name}.tar`;
-                              a.click();
-                            }}
+                            title="下载 tar"
+                            onClick={() => props.onDownload!(join(e.name), e.name)}
                           >下载 tar</button>
                         </Show>
                         <Show when={props.onCopyToContainer}>

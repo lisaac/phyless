@@ -22,6 +22,7 @@ func (s *Server) mountConfigRoutes(r chi.Router) {
 	r.Put("/api/config/files/content", s.handleConfigPutFile)
 	r.Delete("/api/config/files", s.handleConfigDeleteFile)
 	r.Post("/api/config/files/rename", s.handleConfigRenameFile)
+	r.Get("/api/config/files/download", s.handleConfigDownloadFile)
 }
 
 func (s *Server) handleConfigListFiles(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +82,16 @@ func (s *Server) handleConfigDeleteFile(w http.ResponseWriter, r *http.Request) 
 	}
 	s.auditFromCtx(r, "config.file.delete", subPath, "ok")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleConfigDownloadFile(w http.ResponseWriter, r *http.Request) {
+	subPath := r.URL.Query().Get("path")
+	fullPath := filepath.Join(configRoot, subPath)
+	if !isSubPath(configRoot, fullPath) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	streamTar(w, fullPath)
 }
 
 func (s *Server) handleConfigRenameFile(w http.ResponseWriter, r *http.Request) {
