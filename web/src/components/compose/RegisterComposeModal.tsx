@@ -23,11 +23,11 @@ function joinPath(dir: string, name: string): string {
 //    compose.yaml already in the box) — submitting WRITES composeContent()
 //    to that path, then registers it.
 //  - Already exists: this is "register a project that's already sitting on
-//    disk" — submitting does NOT write anything, just points base_dir/
-//    compose_file at the existing file. "加载现有内容" lets the user peek at
-//    that file's real content first, purely for review — loading it (or
-//    editing what gets loaded) never gets written back, since the existing-
-//    file path skips the write entirely regardless of what's in the box.
+//    disk" — submitting does NOT write anything by default, just points
+//    base_dir/compose_file at the existing file. "加载现有内容" lets the user
+//    peek at that file's real content first, purely for review. To actually
+//    save edits over an existing file the user must tick 覆盖 (overwrite());
+//    without it the write is skipped regardless of what's in the box.
 //
 // This used to auto-load an existing file's content into the box the moment
 // a matching path was typed, which silently clobbered whatever draft the
@@ -46,6 +46,7 @@ export const RegisterComposeModal: Component<{
   const [composeContent, setComposeContent] = createSignal("");
   const [composeName, setComposeName] = createSignal("compose.yaml");
   const [envFile, setEnvFile] = createSignal("");
+  const [overwrite, setOverwrite] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   // Names present in baseDir() right now, for the live "already exists"
@@ -60,6 +61,7 @@ export const RegisterComposeModal: Component<{
     setComposeContent(props.initialCompose ?? "");
     setComposeName("compose.yaml");
     setEnvFile("");
+    setOverwrite(false);
     setDirNames(new Set<string>());
   });
 
@@ -112,7 +114,7 @@ export const RegisterComposeModal: Component<{
       } catch { /* directory doesn't exist yet — nothing to conflict with, MkdirAll below creates it */ }
 
       const composeFilePath = joinPath(dir, cName);
-      if (!targetExists) {
+      if (!targetExists || overwrite()) {
         // /api/fs/file's PUT handler (internal/api/fs.go) MkdirAlls the
         // file's parent directory before writing, so a base_dir that
         // doesn't exist yet gets created as a side effect of writing here.
@@ -168,7 +170,10 @@ export const RegisterComposeModal: Component<{
               when={fileExists()}
               fallback={<p class="text-xs text-zinc-500">路径下不存在则会新建此文件</p>}
             >
-              <p class="text-xs text-amber-400">已检测到现有文件，注册时会直接使用它，不会写入下方内容</p>
+              <label class="flex cursor-pointer items-center gap-1.5 text-xs text-amber-400">
+                <input type="checkbox" checked={overwrite()} onChange={(e) => setOverwrite(e.currentTarget.checked)} />
+                {overwrite() ? "将用下方内容覆盖现有文件" : "已检测到现有文件，默认不写入下方内容（勾选可覆盖）"}
+              </label>
               <Button disabled={loading()} onClick={() => void loadExisting()}>加载现有内容</Button>
             </Show>
           </div>

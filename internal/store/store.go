@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 
@@ -51,5 +52,9 @@ func (s *Store) Write(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0600)
+	if err := os.WriteFile(s.path, data, 0600); err != nil {
+		log.Printf("store: write %s failed: %v", s.path, err)
+		return err
+	}
+	return nil
 }
