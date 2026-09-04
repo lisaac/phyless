@@ -9,6 +9,7 @@ import { setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
 import { FileBrowser } from "../shared/FileBrowser";
+import { Modal } from "../shared/Modal";
 import { LogsView } from "../shared/LogsView";
 import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/TimeRangePicker";
 import { KV, Sec } from "../shared/KV";
