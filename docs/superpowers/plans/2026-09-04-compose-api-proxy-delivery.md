@@ -107,6 +107,7 @@ go-containerregistry 采用 v0.20.6，避免 v0.22.0 拉入 Docker CLI 29 的类
 - `TestComposeAPIRealAcceptance`：三个服务，覆盖缓存镜像、本地 Dockerfile 构建、profile、健康依赖、命名卷、Config、Ps、Logs、Up/Stop/Restart/Down；约 47.37 秒通过。默认 Down 保留卷和构建镜像，测试独立清理自己创建的资源。
 - `TestComposeAPIProxyPullAcceptance`：实际 SDK → ImagePull 薄封装 → HTTP 代理 → Registry → ImageLoad；三个场景约 38.86 秒通过。每个场景使用唯一 tag/project，`missing` 两次 Up 共拉 1 次，`always` 两次 Up 共拉 2 次，显式 Pull 后 Up 共拉 1 次。
 - 最终提交 `2ef8481` 再次运行这三个代理场景，约 **38.97 秒通过**。
+- 后续复测的代理镜像用例通过（小层 **5.20 秒**、1 GiB+ 压缩层 **71.80 秒**）；同一 tag 第二次代理拉取未增加 Registry layer 字节，确认在 `ImageLoad` 前命中 config digest 预检。
 - `TestComposeAPIHandlerRealAcceptance`：从 HTTP handler 进入，已覆盖 YAML 真实项目名与登记显示名区分（无 COMPOSE_PROJECT_NAME 强制覆盖），以及配置文件丢失后的生命周期回退，最终约 22.76 秒通过。
 - 上述 Compose 测试容器是只读 scratch，只有 `/tmp` tmpfs 用于 Compose 项目/构建元数据；没有 Docker、Compose 或 buildx 可执行文件。测试 harness 在宿主机使用 Docker CLI 创建测试容器，不属于应用运行链路。
 - HTTP CONNECT 与 SOCKS5 有自动化网络测试；真实 daemon 验收使用 HTTP 代理。未连接公网私有 Registry 或实际 ARM daemon，不将模拟检查等同于这些环境的实测。
@@ -146,6 +147,6 @@ npm run build
 
 先用 `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o <binary> <package>` 构建；在无 CLI 的测试容器中只读挂载二进制和 Docker socket，传入上述变量。大层用例额外设置 `PHYLESS_PROXY_TEST_PAYLOAD_BYTES=1073741825`，容器采用 `--read-only --memory=256m --memory-swap=256m`，不要提供可写镜像缓存目录。Compose 用例须有缓存的固定 busybox digest（测试文件中列出）和可写的临时项目目录。
 
-本次不部署/替换现有 phyless 服务、不推送远端。上线只替换 phyless，不改 daemon 配置、不重启 dockerd；回退也只替换 phyless，不删除卷、容器或镜像。原计划检查项保留历史状态，以此交付记录的实测结果和限制为准。
+本次已按授权将最新 backend binary 与前端静态资源部署到 `docker.example.test` 的 `phyless-app`；只重启应用容器，没有重启 dockerd、修改 daemon 配置或操作业务容器。回退也只替换 phyless，不删除卷、容器或镜像。原计划检查项保留历史状态，以此交付记录的实测结果和限制为准。
 
-验收后已清理本次 8 个 runner 容器、2 个 runner 镜像及其无引用父镜像、唯一命名的测试项目资源和远端临时文件；本地临时二进制已移到废纸篓，可恢复或重新构建。没有全局 prune，daemon 可保留正常构建缓存。最终检查无本次测试容器/网络/卷/镜像标签残留，原有 10 个业务容器的 ID/状态未变，`phyless:latest` 仍为 `4cfdb8a61c7d`。
+验收后已清理本次 runner 容器、唯一命名的测试项目资源和远端临时文件；本地临时二进制已移到废纸篓，可恢复或重新构建。没有全局 prune，daemon 可保留正常构建缓存。最终检查无本次测试容器/网络/卷/镜像标签残留；`protected-container` 仍为验收前的 stopped 状态，phyless 应用容器为 running，监听 `0.0.0.0:8080`。
