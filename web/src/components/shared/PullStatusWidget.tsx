@@ -65,6 +65,7 @@ export const PullStatusWidget: Component<{
     if (evt.errorDetail && typeof evt.errorDetail.message === "string" && evt.errorDetail.message.trim()) {
       return evt.errorDetail.message;
     }
+    if (evt.errorDetail != null || (evt.error != null && evt.error !== "")) return "镜像操作失败";
     return "";
   };
 
@@ -97,8 +98,6 @@ export const PullStatusWidget: Component<{
     } else if (evt.stream) {
       setNotes((n) => [...n, String(evt.stream).trim()]);
       if (evt.container_id) setContainerId(evt.container_id);
-    } else if (evt.error) {
-      setErr(evt.error);
     }
   };
 

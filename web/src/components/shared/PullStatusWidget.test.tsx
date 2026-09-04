@@ -32,6 +32,7 @@ describe("pull progress outcome", () => {
   it.each([
     '{"id":"layer","status":"Pull complete","errorDetail":{"message":"denied"}}',
     '{"error":"denied"}',
+    '{"id":"layer","status":"done","errorDetail":{"code":403}}',
     "null", "invalid JSON",
   ])("does not report HTTP 200 errors as success: %s", (line) => {
     const done = vi.fn(), settled = vi.fn();

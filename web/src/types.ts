@@ -50,6 +50,8 @@ export interface ComposeProject {
   base_dir: string;
   compose_file: string;
   env_file?: string;
+  // Actual Compose label name; the registered name remains a display name.
+  project_name?: string;
   // Present on list responses: merged with projects discovered live from
   // each container's com.docker.compose.project label.
   discovered?: boolean;

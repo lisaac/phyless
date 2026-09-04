@@ -5,13 +5,17 @@ import type { ComposeProject, ContainerSummary } from "../../types";
 export const LABEL_PROJECT = "com.docker.compose.project";
 export const LABEL_CONFIG_FILES = "com.docker.compose.project.config_files";
 
-// Mirrors the matching handleListCompose (internal/api/compose.go) does
-// server-side: discovered projects match by the project label directly, but
-// registered ones match by compose_file — a registered project's `name` is
-// user-typed and may not equal the actual docker compose project name.
+// Prefer the server-resolved label name. File matching is only a fallback for
+// older responses; registered display names are not Docker project names.
 export function containersOf(p: ComposeProject, all: ContainerSummary[]): ContainerSummary[] {
-  if (p.discovered) return all.filter((c) => c.Labels?.[LABEL_PROJECT] === p.name);
-  return all.filter((c) => c.Labels?.[LABEL_CONFIG_FILES]?.split(",")[0] === p.compose_file);
+  const name = p.project_name || (p.discovered ? p.name : undefined);
+  if (name) return all.filter((c) => c.Labels?.[LABEL_PROJECT] === name);
+  const files = p.compose_file.split(",").map((file) => file.trim()).filter(Boolean);
+  if (!files.length) return [];
+  return all.filter((c) => {
+    const actual = c.Labels?.[LABEL_CONFIG_FILES]?.split(",").map((file) => file.trim());
+    return files.every((file, index) => actual?.[index] === file);
+  });
 }
 
 // The container whose status best represents the whole project's uptime —
