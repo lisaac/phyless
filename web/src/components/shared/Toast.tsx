@@ -6,13 +6,14 @@ interface ToastMsg { id: number; text: string; kind: Kind; }
 const [messages, setMessages] = createSignal<ToastMsg[]>([]);
 let nextId = 1;
 let lastErrorAt = 0;
+let lastErrorText = "";
 
 function push(text: string, kind: Kind) {
   const now = Date.now();
-  // Backend/WS outages can emit several identical errors in one render
-  // cycle. Keep the first useful message and suppress the burst globally.
-  if (kind === "error" && now - lastErrorAt < 4000) return;
-  if (kind === "error") lastErrorAt = now;
+  // Backend/WS outages can emit the same error several times in one render
+  // cycle. Keep the first useful message and suppress that repeated burst.
+  if (kind === "error" && text === lastErrorText && now - lastErrorAt < 4000) return;
+  if (kind === "error") { lastErrorAt = now; lastErrorText = text; }
   const id = nextId++;
   setMessages((m) => [...m, { id, text, kind }]);
   setTimeout(() => setMessages((m) => m.filter((x) => x.id !== id)), 7000);
