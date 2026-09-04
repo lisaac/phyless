@@ -5,7 +5,9 @@ import { useParams, useSearchParams, useNavigate } from "@solidjs/router";
 import { get, post, del, put, getToken, setToken, imageInspectUrl } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
+import { Button } from "../shared/Button";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { CreateContainerModal } from "./CreateContainerModal";
@@ -149,6 +151,10 @@ export const ContainerDetailPage: Component = () => {
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
   const [upgrading, setUpgrading] = createSignal(false);
+  const [showUpgradeOptions, setShowUpgradeOptions] = createSignal(false);
+  const [upgradeProxyUrl, setUpgradeProxyUrl] = createSignal("");
+  const [upgradeRegistryId, setUpgradeRegistryId] = createSignal("");
+  const [upgradeBody, setUpgradeBody] = createSignal<unknown>(undefined);
   const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
   let uploadXhr: XMLHttpRequest | undefined;
 
@@ -202,7 +208,16 @@ export const ContainerDetailPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  const doUpgrade = () => setUpgrading(true);
+  const clearUpgradeOptions = () => { setUpgradeProxyUrl(""); setUpgradeRegistryId(""); };
+  const closeUpgradeOptions = () => { setShowUpgradeOptions(false); clearUpgradeOptions(); };
+  const doUpgrade = () => { clearUpgradeOptions(); setShowUpgradeOptions(true); };
+  const startUpgrade = () => {
+    if (upgrading()) { toast.error("请先关闭当前进度卡片"); return; }
+    const options = pullOptionsPayload({ proxyUrl: upgradeProxyUrl(), registryId: upgradeRegistryId() });
+    setUpgradeBody(Object.keys(options).length > 0 ? options : undefined);
+    setShowUpgradeOptions(false);
+    setUpgrading(true);
+  };
 
   // ── Inline resource save ──────────────────────────────────────────────────────
   const saveResources = async (patch: Record<string, unknown>) => {
@@ -745,13 +760,29 @@ export const ContainerDetailPage: Component = () => {
       {/* ── Copy a file/dir to another container ─────────────────────────── */}
       <CopyToContainerModal source={copySource()} onClose={() => setCopySource(null)} />
 
+      <Modal open={showUpgradeOptions()} onClose={closeUpgradeOptions} title={`升级 — ${name()}`}>
+        <p class="mb-3 text-xs text-zinc-500">先按本次选项拉取镜像，成功后再替换容器；留空则沿用 Docker 默认行为。</p>
+        <PullOptions
+          proxyUrl={upgradeProxyUrl()}
+          registryId={upgradeRegistryId()}
+          onProxyUrlChange={setUpgradeProxyUrl}
+          onRegistryIdChange={setUpgradeRegistryId}
+        />
+        <div class="mt-4 flex justify-end gap-2">
+          <Button onClick={closeUpgradeOptions}>取消</Button>
+          <Button variant="primary" onClick={startUpgrade}>升级</Button>
+        </div>
+      </Modal>
+
       {/* ── Upgrade progress — non-blocking floating card ────────────────── */}
       <PullStatusWidget
         active={upgrading()}
-        onClose={() => setUpgrading(false)}
+        onClose={() => { setUpgrading(false); setUpgradeBody(undefined); clearUpgradeOptions(); }}
         title={`升级 — ${name()}`}
         url={`/api/containers/${id()}/upgrade`}
+        body={upgradeBody()}
         onDone={() => void refetch()}
+        onSettled={() => { setUpgradeBody(undefined); clearUpgradeOptions(); }}
       />
 
       {/* ── Upload progress — non-blocking floating card ─────────────────── */}

@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { Component, createSignal, createEffect, onCleanup, untrack, Show, For } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { getToken } from "../../api/client";
 import { useFloatingSlot } from "../../stores/floatingStack";
@@ -34,6 +34,7 @@ export const PullStatusWidget: Component<{
   body?: unknown;
   file?: File;
   onDone?: () => void;
+  onSettled?: () => void;
   onClose: () => void;
   // Overrides the auto-detected "查看容器详情" link (from a {container_id}
   // event) — for callers that already know exactly where they want the link
@@ -45,6 +46,7 @@ export const PullStatusWidget: Component<{
   const [notes, setNotes] = createSignal<string[]>([]);
   const [done, setDone] = createSignal(false);
   const [err, setErr] = createSignal("");
+  const [cancelled, setCancelled] = createSignal(false);
   const [collapsed, setCollapsed] = createSignal(false);
   const [containerId, setContainerId] = createSignal("");
   // Only meaningful while props.file is set and the browser is still
@@ -57,11 +59,31 @@ export const PullStatusWidget: Component<{
   let readLen = 0;
   const layerMap = new Map<string, LayerProgress>();
 
+  const eventError = (evt: any): string => {
+    if (typeof evt.error === "string" && evt.error.trim()) return evt.error;
+    if (typeof evt.errorDetail === "string" && evt.errorDetail.trim()) return evt.errorDetail;
+    if (evt.errorDetail && typeof evt.errorDetail.message === "string" && evt.errorDetail.message.trim()) {
+      return evt.errorDetail.message;
+    }
+    return "";
+  };
+
   const applyLine = (line: string) => {
     if (!line.trim()) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let evt: any;
-    try { evt = JSON.parse(line); } catch { return; }
+    try { evt = JSON.parse(line); } catch { setErr("无效的进度响应"); return; }
+    if (!evt || typeof evt !== "object" || Array.isArray(evt)) {
+      setErr("无效的进度响应");
+      return;
+    }
+    // Docker reports failures as either {error} or {errorDetail:{message}};
+    // inspect them before status/id so a terminal error cannot look complete.
+    const failure = eventError(evt);
+    if (failure) {
+      setErr(failure);
+      return;
+    }
     if (evt.id) {
       layerMap.set(evt.id, {
         id: evt.id,
@@ -94,21 +116,32 @@ export const PullStatusWidget: Component<{
   // fetch's reader gave us — one transport covers both directions.
   createEffect(() => {
     if (!props.active) { xhr?.abort(); return; }
-    setLayers([]); setNotes([]); setDone(false); setErr(""); setCollapsed(false); setContainerId("");
-    setUploadPct(props.file ? 0 : null);
+    // Start once per active transition. Callers may clear the request body
+    // after completion while keeping this card open; changing a prop must not
+    // replay an already-started POST.
+    const { url, body, file } = untrack(() => ({ url: props.url, body: props.body, file: props.file }));
+    setLayers([]); setNotes([]); setDone(false); setErr(""); setCancelled(false); setCollapsed(false); setContainerId("");
+    setUploadPct(file ? 0 : null);
     layerMap.clear();
     buf = ""; readLen = 0;
+    let failed = false;
 
     const req = new XMLHttpRequest();
     xhr = req;
-    req.open("POST", props.url);
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      props.onSettled?.();
+    };
+    req.open("POST", url);
     req.setRequestHeader("Authorization", `Bearer ${getToken()}`);
-    if (props.file) {
+    if (file) {
       req.setRequestHeader("Content-Type", "application/x-tar");
       req.upload.onprogress = (e) => {
         if (e.lengthComputable) setUploadPct((e.loaded / e.total) * 100);
       };
-    } else if (props.body) {
+    } else if (body) {
       req.setRequestHeader("Content-Type", "application/json");
     }
     req.onprogress = () => {
@@ -121,18 +154,22 @@ export const PullStatusWidget: Component<{
     };
     req.onload = () => {
       if (req.status < 200 || req.status >= 300) {
+        failed = true;
         setErr(req.responseText || `请求失败 (${req.status})`);
         setDone(true);
+        settle();
         return;
       }
       if (req.responseText.length > readLen) consumeChunk(req.responseText.slice(readLen));
       if (buf) applyLine(buf);
       setDone(true);
-      props.onDone?.();
+      if (err()) failed = true;
+      if (!failed && !cancelled()) props.onDone?.();
+      settle();
     };
-    req.onerror = () => { setErr("网络错误"); setDone(true); };
-    req.onabort = () => setDone(true);
-    req.send(props.file ?? (props.body ? JSON.stringify(props.body) : undefined));
+    req.onerror = () => { failed = true; setErr("网络错误"); setDone(true); settle(); };
+    req.onabort = () => { failed = true; setCancelled(true); setErr("已取消"); setDone(true); settle(); };
+    req.send(file ?? (body ? JSON.stringify(body) : undefined));
   });
 
   onCleanup(() => xhr?.abort());
@@ -147,7 +184,7 @@ export const PullStatusWidget: Component<{
         <div class="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
           <div class="flex min-w-0 items-center gap-2">
             <span class={`h-2 w-2 shrink-0 rounded-full ${
-              done() ? (err() ? "bg-red-500" : "bg-emerald-500") : "animate-pulse bg-indigo-500"
+              done() ? (err() || cancelled() ? "bg-red-500" : "bg-emerald-500") : "animate-pulse bg-indigo-500"
             }`} />
             <span class="truncate text-sm font-medium text-zinc-200">{props.title}</span>
           </div>
@@ -199,7 +236,7 @@ export const PullStatusWidget: Component<{
             <For each={notes()}>
               {(n) => <div class="mt-1.5 text-zinc-400">{n}</div>}
             </For>
-            <Show when={done() && (props.doneLink || containerId())}>
+            <Show when={done() && !err() && !cancelled() && (props.doneLink || containerId())}>
               <a
                 href={props.doneLink?.href ?? `/containers/${containerId()}`}
                 class="mt-1.5 block text-indigo-400 hover:text-indigo-300 hover:underline"

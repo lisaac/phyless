@@ -4,6 +4,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
@@ -124,6 +125,9 @@ export const ImageListPage: Component = () => {
   const [taskUrl, setTaskUrl] = createSignal("");
   const [taskBody, setTaskBody] = createSignal<unknown>(undefined);
   const [taskFile, setTaskFile] = createSignal<File | undefined>(undefined);
+  const [pullProxyUrl, setPullProxyUrl] = createSignal("");
+  const [pullRegistryId, setPullRegistryId] = createSignal("");
+  const [pullPlatform, setPullPlatform] = createSignal("");
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
   const [deletingId, setDeletingId] = createSignal("");
@@ -137,18 +141,28 @@ export const ImageListPage: Component = () => {
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
 
+  const clearPullOptions = () => {
+    setPullProxyUrl(""); setPullRegistryId(""); setPullPlatform("");
+  };
+  const closePullInput = () => { setShowPullInput(false); clearPullOptions(); };
+
   const startPull = () => {
+    // ponytail: one progress card per page; close it before starting another task.
+    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
     const ref = pullRef().trim();
     if (!ref) return;
     setTaskTitle(`拉取 ${ref}`);
     setTaskUrl("/api/images/pull");
-    setTaskBody({ image: ref });
+    setTaskBody({ image: ref, ...pullOptionsPayload({
+      proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform(),
+    }) });
     setTaskFile(undefined);
     setShowPullInput(false);
     setTaskActive(true);
   };
 
   const startImport = (file: File) => {
+    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
     setTaskTitle(`导入 ${file.name}`);
     setTaskUrl("/api/images/load");
     setTaskBody(undefined);
@@ -321,7 +335,7 @@ export const ImageListPage: Component = () => {
       </div>
 
       {/* Pull input modal */}
-      <Modal open={showPullInput()} onClose={() => setShowPullInput(false)} title="拉取镜像">
+      <Modal open={showPullInput()} onClose={closePullInput} title="拉取镜像">
         <input
           class="mb-3 w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-colors"
           placeholder="nginx:latest"
@@ -331,8 +345,17 @@ export const ImageListPage: Component = () => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={(el: any) => setTimeout(() => el?.focus(), 50)}
         />
+        <PullOptions
+          proxyUrl={pullProxyUrl()}
+          registryId={pullRegistryId()}
+          platform={pullPlatform()}
+          showPlatform
+          onProxyUrlChange={setPullProxyUrl}
+          onRegistryIdChange={setPullRegistryId}
+          onPlatformChange={setPullPlatform}
+        />
         <div class="flex justify-end gap-2">
-          <Button onClick={() => setShowPullInput(false)}>取消</Button>
+          <Button onClick={closePullInput}>取消</Button>
           <Button variant="primary" onClick={startPull}>拉取</Button>
         </div>
       </Modal>
@@ -340,12 +363,13 @@ export const ImageListPage: Component = () => {
       {/* Pull/import progress — non-blocking floating card, rest of the page stays usable */}
       <PullStatusWidget
         active={taskActive()}
-        onClose={() => { setTaskActive(false); setPullRef(""); }}
+        onClose={() => { setTaskActive(false); setPullRef(""); clearPullOptions(); }}
         title={taskTitle()}
         url={taskUrl()}
         body={taskBody()}
         file={taskFile()}
         onDone={() => void store.refresh()}
+        onSettled={() => { setTaskBody(undefined); setTaskFile(undefined); clearPullOptions(); }}
       />
 
       {/* Tag modal */}

@@ -1,6 +1,7 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
@@ -73,6 +74,9 @@ export const CreateContainerModal: Component<{
   const [creating, setCreating] = createSignal(false);
   const [createTitle, setCreateTitle] = createSignal("");
   const [createBody, setCreateBody] = createSignal<unknown>(undefined);
+  const [pullProxyUrl, setPullProxyUrl] = createSignal("");
+  const [pullRegistryId, setPullRegistryId] = createSignal("");
+  const [pullPlatform, setPullPlatform] = createSignal("");
 
   // Keep select boxes on the user's choice (not auto-reset)
   const [selectedTplId, setSelectedTplId] = createSignal("");
@@ -84,6 +88,9 @@ export const CreateContainerModal: Component<{
   // onClose), so this can no longer rely on remount-time signal init.
   createEffect(() => {
     if (!props.open) return;
+    setPullProxyUrl("");
+    setPullRegistryId("");
+    setPullPlatform("");
     if (props.initialRun) {
       setRunCmd(props.initialRun);
       setLiveRun(props.initialRun);
@@ -169,15 +176,23 @@ export const CreateContainerModal: Component<{
   // Creation streams progress via PullStatusWidget (non-blocking), so close
   // this form immediately and hand off to the floating widget below.
   const submit = () => {
+    if (creating()) { toast.error("请先关闭当前进度卡片"); return; }
     if (!form().image.trim()) { toast.error("请填写镜像名称"); return; }
     setCreateTitle(`创建 ${form().name || form().image}`);
-    setCreateBody(formToPayload(form()));
+    setCreateBody({ ...formToPayload(form()), ...pullOptionsPayload({
+      proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform(),
+    }) });
     setCreating(true);
     setForm(emptyForm());
     setSelectedTplId("");
     setSelectedContainerId("");
-    props.onClose();
+    closeModal();
   };
+
+  const clearPullOptions = () => {
+    setPullProxyUrl(""); setPullRegistryId(""); setPullPlatform("");
+  };
+  const closeModal = () => { clearPullOptions(); props.onClose(); };
 
   const loadTemplate = (cmd: string) => {
     setRunCmd(cmd);
@@ -322,7 +337,7 @@ export const CreateContainerModal: Component<{
     <>
     {/* Hidden (not unmounted — state must survive) while the register-compose
         modal is up, so the two don't visually stack on top of each other. */}
-    <Modal open={props.open && !showRegister()} onClose={props.onClose} title="新建容器" wide noBackdropClose>
+    <Modal open={props.open && !showRegister()} onClose={closeModal} title="新建容器" wide noBackdropClose>
 
       {/* ── Quick selectors ────────────────────────────────────────────────── */}
       <div class={`mb-3 flex flex-wrap gap-2${props.initialRun ? " hidden" : ""}`}>
@@ -398,6 +413,18 @@ export const CreateContainerModal: Component<{
           onChange={switchTab}
         />
       </div>
+
+      <Show when={!isMulti()}>
+        <PullOptions
+          proxyUrl={pullProxyUrl()}
+          registryId={pullRegistryId()}
+          platform={pullPlatform()}
+          showPlatform
+          onProxyUrlChange={setPullProxyUrl}
+          onRegistryIdChange={setPullRegistryId}
+          onPlatformChange={setPullPlatform}
+        />
+      </Show>
 
       {/* ── Save template bar ─────────────────────────────────────────────── */}
       <Show when={savingTpl()}>
@@ -595,7 +622,7 @@ export const CreateContainerModal: Component<{
         {/* Form footer */}
         <div class="mt-5 flex items-center justify-end gap-2 border-t border-zinc-800 pt-4">
           <Button onClick={() => setSavingTpl(true)}>存为模版</Button>
-          <Button onClick={props.onClose}>取消</Button>
+          <Button onClick={closeModal}>取消</Button>
           <Button variant="primary" onClick={submit}>创建容器</Button>
         </div>
       </Show>
@@ -625,7 +652,7 @@ export const CreateContainerModal: Component<{
           </div>
           <div class="mt-3 flex justify-end gap-2 border-t border-zinc-800 pt-3">
             <Button onClick={() => setSavingTpl(true)}>存为模版</Button>
-            <Button onClick={props.onClose}>取消</Button>
+            <Button onClick={closeModal}>取消</Button>
             <Button variant="primary" onClick={() => setShowRegister(true)}>注册 Compose</Button>
             {/* "创建容器" only makes sense for a single service — POST
                 /api/containers creates exactly one container, it can't fan
@@ -650,15 +677,16 @@ export const CreateContainerModal: Component<{
       open={showRegister()}
       initialCompose={liveCompose()}
       onClose={() => setShowRegister(false)}
-      onRegistered={() => { setShowRegister(false); props.onClose(); }}
+      onRegistered={() => { setShowRegister(false); closeModal(); }}
     />
     <PullStatusWidget
       active={creating()}
-      onClose={() => setCreating(false)}
+      onClose={() => { setCreating(false); clearPullOptions(); }}
       title={createTitle()}
       url="/api/containers"
       body={createBody()}
       onDone={() => props.onCreated()}
+      onSettled={() => { setCreateBody(undefined); clearPullOptions(); }}
     />
     </>
   );
