@@ -10,7 +10,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o infra-manager ./cmd/server/
+RUN go build -trimpath -ldflags="-s -w" -o infra-manager ./cmd/server/
 
 FROM alpine:latest
 # Compose is embedded through the Go API; the runtime image intentionally has
