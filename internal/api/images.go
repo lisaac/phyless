@@ -9,6 +9,8 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"phyless/internal/docker"
+	dockercontainer "phyless/internal/docker/container"
 )
 
 type containerRef struct {
@@ -88,43 +90,43 @@ func (s *Server) handleImageHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Image      string `json:"image"`
-		RegistryID string `json:"registry_id,omitempty"`
+		requestPullOptions
+		Image string `json:"image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	opts := image.PullOptions{}
-	if body.RegistryID != "" {
-		opts.RegistryAuth = s.registryAuth(body.RegistryID)
-	}
-	rc, err := s.docker.ImagePull(r.Context(), body.Image, opts)
+	result := "failed"
+	defer func() {
+		if result != "ok" && r.Context().Err() != nil {
+			result = "canceled"
+		}
+		s.auditFromCtx(r, "image.pull", safePullTarget(body.Image), result)
+	}()
+	ctx, err := s.pullContext(r.Context(), body.ProxyURL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	defer rc.Close()
+	encoded, err := s.registryAuthForImage(body.Image, body.RegistryID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	opts := image.PullOptions{RegistryAuth: encoded, Platform: body.Platform}
+	rc, err := s.docker.ImagePull(ctx, body.Image, opts)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("X-Accel-Buffering", "no")
-	io.Copy(w, rc) //nolint:errcheck
-	s.auditFromCtx(r, "image.pull", body.Image, "ok")
-}
-
-// registryAuth fetches encoded registry auth from store by registry ID.
-func (s *Server) registryAuth(registryID string) string {
-	cfg, _ := s.store.Read()
-	if cfg == nil {
-		return ""
+	if err := docker.ConsumeProgress(ctx, w, rc); err != nil {
+		dockercontainer.EmitError(w, err)
+		return
 	}
-	for _, reg := range cfg.Registries {
-		if reg.ID == registryID {
-			// ponytail: base64-encode {"username":"...","password":"..."} per Docker API spec
-			payload := `{"username":"` + reg.Username + `","password":"` + decrypt(reg.PasswordEnc) + `"}`
-			return base64Encode(payload)
-		}
-	}
-	return ""
+	result = "ok"
 }
 
 func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {

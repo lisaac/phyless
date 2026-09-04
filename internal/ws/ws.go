@@ -21,7 +21,7 @@ var upgrader = websocket.Upgrader{
 }
 
 // Logs streams container logs over WebSocket.
-func Logs(cli *client.Client) http.HandlerFunc {
+func Logs(cli client.APIClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -55,7 +55,7 @@ func Logs(cli *client.Client) http.HandlerFunc {
 
 // Terminal runs an exec session and pipes stdin/stdout over WebSocket.
 // Query params: cmd (space-separated, default "/bin/sh"), user (default "")
-func Terminal(cli *client.Client) http.HandlerFunc {
+func Terminal(cli client.APIClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -130,7 +130,7 @@ func Terminal(cli *client.Client) http.HandlerFunc {
 }
 
 // Stats streams container resource stats over WebSocket.
-func Stats(cli *client.Client) http.HandlerFunc {
+func Stats(cli client.APIClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -175,7 +175,7 @@ func formatEvent(e events.Message) string {
 // seconds, query params) let the events page show a past time range instead
 // of only live-tailing — Docker replays history up to `until` (or now, if
 // omitted) and then keeps streaming live only when `until` is unset/future.
-func Events(cli *client.Client) http.HandlerFunc {
+func Events(cli client.APIClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {

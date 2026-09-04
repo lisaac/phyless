@@ -1,24 +1,26 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
-	"github.com/compose-spec/compose-go/v2/loader"
 	composetypes "github.com/compose-spec/compose-go/v2/types"
+	composeapi "github.com/docker/compose/v2/pkg/api"
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"phyless/internal/config"
+	phyDocker "phyless/internal/docker"
+	dockercompose "phyless/internal/docker/compose"
 	dockercontainer "phyless/internal/docker/container"
 	"phyless/internal/models"
 )
@@ -46,10 +48,53 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 }
 
 const (
-	labelProject     = "com.docker.compose.project"
-	labelConfigFiles = "com.docker.compose.project.config_files"
-	labelWorkingDir  = "com.docker.compose.project.working_dir"
+	labelProject         = composeapi.ProjectLabel
+	labelConfigFiles     = composeapi.ConfigFilesLabel
+	labelWorkingDir      = composeapi.WorkingDirLabel
+	labelEnvironmentFile = composeapi.EnvironmentFileLabel
 )
+
+type composeLookupError struct {
+	status  int
+	message string
+}
+
+func (e *composeLookupError) Error() string { return e.message }
+
+type composeResolution struct {
+	display     models.ComposeProject
+	effective   models.ComposeProject
+	projectName string
+	running     bool
+}
+
+// Compose lifecycle operations share a project-name lock. The lock is
+// ponytail: process-local and reject-only; add distributed locking for multiple instances.
+// Requests for different
+// projects remain concurrent, while a second operation for the same actual
+// Compose project receives 409 instead of interleaving Docker API calls.
+var composeOperationState = struct {
+	sync.Mutex
+	active map[string]struct{}
+}{active: make(map[string]struct{})}
+
+func tryComposeOperation(projectName string) (func(), bool) {
+	projectName = strings.TrimSpace(strings.ToLower(projectName))
+	if projectName == "" {
+		return nil, false
+	}
+	composeOperationState.Lock()
+	defer composeOperationState.Unlock()
+	if _, exists := composeOperationState.active[projectName]; exists {
+		return nil, false
+	}
+	composeOperationState.active[projectName] = struct{}{}
+	return func() {
+		composeOperationState.Lock()
+		delete(composeOperationState.active, projectName)
+		composeOperationState.Unlock()
+	}, true
+}
 
 // ComposeInfo is a project as shown in the list: registered ones (saved via
 // handleCreateCompose) merged with ones discovered live from the compose
@@ -57,16 +102,20 @@ const (
 // the list reflects what's actually deployed, not just what a user typed in.
 type ComposeInfo struct {
 	models.ComposeProject
-	Discovered bool `json:"discovered"`
-	Running    int  `json:"running"`
-	Total      int  `json:"total"`
+	ProjectName string `json:"project_name,omitempty"`
+	Discovered  bool   `json:"discovered"`
+	Running     int    `json:"running"`
+	Total       int    `json:"total"`
 }
 
 // discoverProjects groups all containers by their compose project label.
-func (s *Server) discoverProjects(ctx context.Context) map[string][]container.Summary {
+func (s *Server) discoverProjectsWithError(ctx context.Context) (map[string][]container.Summary, error) {
+	if s.docker == nil {
+		return nil, nil
+	}
 	containers, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	groups := make(map[string][]container.Summary)
 	for _, c := range containers {
@@ -74,44 +123,93 @@ func (s *Server) discoverProjects(ctx context.Context) map[string][]container.Su
 			groups[proj] = append(groups[proj], c)
 		}
 	}
+	return groups, nil
+}
+
+func (s *Server) discoverProjects(ctx context.Context) map[string][]container.Summary {
+	groups, _ := s.discoverProjectsWithError(ctx)
 	return groups
 }
 
+func composeContainerLabel(cs []container.Summary, key string) string {
+	for _, c := range cs {
+		if value := c.Labels[key]; value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func discoveredComposeProject(projectName string, cs []container.Summary) models.ComposeProject {
+	return models.ComposeProject{
+		ID:          "auto:" + projectName,
+		Name:        projectName,
+		BaseDir:     composeContainerLabel(cs, labelWorkingDir),
+		ComposeFile: composeContainerLabel(cs, labelConfigFiles),
+		EnvFile:     composeContainerLabel(cs, labelEnvironmentFile),
+	}
+}
+
+func composeRunningCounts(cs []container.Summary) (running, total int) {
+	for _, c := range cs {
+		total++
+		if c.State == "running" {
+			running++
+		}
+	}
+	return running, total
+}
+
 func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := s.store.Read()
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read compose projects")
+		return
+	}
 	groups := s.discoverProjects(r.Context())
 
-	byFile := make(map[string]int) // compose_file -> index in out
 	var out []ComposeInfo
 	for _, p := range cfg.ComposeProjects {
-		byFile[p.ComposeFile] = len(out)
 		out = append(out, ComposeInfo{ComposeProject: p})
 	}
 
-	for proj, cs := range groups {
-		configFiles := cs[0].Labels[labelConfigFiles]
-		composeFile := strings.Split(configFiles, ",")[0]
-		running := 0
-		for _, c := range cs {
-			if c.State == "running" {
-				running++
+	// A single registered entry may match one running stack. If several
+	// registered entries or several project names match the same file, keep
+	// each discovered stack visible instead of assigning runtime state at
+	// random to one display row.
+	registeredMatches := make([][]string, len(cfg.ComposeProjects))
+	owners := make(map[string][]int)
+	for i, p := range cfg.ComposeProjects {
+		for projectName, cs := range groups {
+			discovered := discoveredComposeProject(projectName, cs)
+			if composeProjectsMatch(p, discovered) {
+				registeredMatches[i] = append(registeredMatches[i], projectName)
+				owners[projectName] = append(owners[projectName], i)
 			}
 		}
-		if idx, ok := byFile[composeFile]; ok {
-			out[idx].Running = running
-			out[idx].Total = len(cs)
+	}
+	for i, matches := range registeredMatches {
+		if len(matches) != 1 || len(owners[matches[0]]) != 1 {
 			continue
 		}
+		running, total := composeRunningCounts(groups[matches[0]])
+		out[i].Running = running
+		out[i].Total = total
+		out[i].ProjectName = matches[0]
+	}
+
+	for projectName, cs := range groups {
+		if owners[projectName] != nil && len(owners[projectName]) == 1 && len(registeredMatches[owners[projectName][0]]) == 1 {
+			continue
+		}
+		discovered := discoveredComposeProject(projectName, cs)
+		running, total := composeRunningCounts(cs)
 		out = append(out, ComposeInfo{
-			ComposeProject: models.ComposeProject{
-				ID:          "auto:" + proj,
-				Name:        proj,
-				BaseDir:     cs[0].Labels[labelWorkingDir],
-				ComposeFile: composeFile,
-			},
-			Discovered: true,
-			Running:    running,
-			Total:      len(cs),
+			ComposeProject: discovered,
+			ProjectName:    discovered.Name,
+			Discovered:     true,
+			Running:        running,
+			Total:          total,
 		})
 	}
 
@@ -125,7 +223,11 @@ func (s *Server) handleCreateCompose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	cfg, _ := s.store.Read()
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read compose projects")
+		return
+	}
 	p.ID = fmt.Sprintf("%d", len(cfg.ComposeProjects)+1)
 	cfg.ComposeProjects = append(cfg.ComposeProjects, p)
 	if err := s.store.Write(cfg); err != nil {
@@ -136,36 +238,214 @@ func (s *Server) handleCreateCompose(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": p.ID})
 }
 
-// composeServices parses the project's compose file (if present on disk) via
-// compose-go — the spec-parsing library — into the services it defines. This
-// covers services that aren't currently running, unlike inspecting containers.
-func composeServices(p models.ComposeProject) composetypes.Services {
-	data, err := os.ReadFile(p.ComposeFile)
-	if err != nil {
+func composeProjectOptions(p models.ComposeProject) dockercompose.ProjectOptions {
+	options := dockercompose.ProjectOptions{
+		WorkingDir:  p.BaseDir,
+		ConfigPaths: splitComposePaths(p.ComposeFile),
+		EnvFiles:    splitComposePaths(p.EnvFile),
+		Environment: os.Environ(),
+	}
+	// Registered project names are display names. The old CLI invocation did
+	// not pass --project-name for them, so let compose-go honor the YAML name or
+	// working-directory fallback. Discovered projects come from Compose's
+	// project label and must retain that exact name for lifecycle filtering.
+	return options
+}
+
+func splitComposePaths(value string) []string {
+	if value == "" {
 		return nil
 	}
-	proj, err := loader.LoadWithContext(context.Background(), composetypes.ConfigDetails{
-		WorkingDir: p.BaseDir,
-		ConfigFiles: []composetypes.ConfigFile{
-			{Filename: p.ComposeFile, Content: data},
-		},
-	}, func(o *loader.Options) { o.SkipValidation = true; o.SkipInterpolation = true; o.SkipResolveEnvironment = true })
-	if err != nil {
+	parts := strings.Split(value, ",")
+	paths := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			paths = append(paths, part)
+		}
+	}
+	return paths
+}
+
+func normalizeComposePaths(baseDir, value string) []string {
+	paths := splitComposePaths(value)
+	if len(paths) == 0 {
 		return nil
 	}
-	return proj.Services
+	if baseDir == "" {
+		baseDir = "."
+	}
+	baseDir, err := filepath.Abs(baseDir)
+	if err != nil {
+		return paths
+	}
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path == "-" {
+			result = append(result, path)
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDir, path)
+		}
+		result = append(result, filepath.Clean(path))
+	}
+	return result
+}
+
+func composePathListsMatch(registered, discovered []string) bool {
+	if len(registered) == 0 || len(discovered) < len(registered) {
+		return false
+	}
+	for i, path := range registered {
+		if path != discovered[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func composeProjectsMatch(registered, discovered models.ComposeProject) bool {
+	registeredFiles := normalizeComposePaths(registered.BaseDir, registered.ComposeFile)
+	discoveredFiles := normalizeComposePaths(discovered.BaseDir, discovered.ComposeFile)
+	if !composePathListsMatch(registeredFiles, discoveredFiles) {
+		return false
+	}
+	if registered.BaseDir != "" && discovered.BaseDir != "" {
+		registeredDir, err1 := filepath.Abs(registered.BaseDir)
+		discoveredDir, err2 := filepath.Abs(discovered.BaseDir)
+		if err1 != nil || err2 != nil || filepath.Clean(registeredDir) != filepath.Clean(discoveredDir) {
+			return false
+		}
+	}
+	if registered.EnvFile != "" {
+		registeredEnv := normalizeComposePaths(registered.BaseDir, registered.EnvFile)
+		discoveredEnv := normalizeComposePaths(discovered.BaseDir, discovered.EnvFile)
+		if len(registeredEnv) != len(discoveredEnv) {
+			return false
+		}
+		for i := range registeredEnv {
+			if registeredEnv[i] != discoveredEnv[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func mergeDiscoveredCompose(registered, discovered models.ComposeProject) models.ComposeProject {
+	effective := registered
+	effective.Name = discovered.Name
+	if discovered.BaseDir != "" {
+		effective.BaseDir = discovered.BaseDir
+	}
+	if discovered.ComposeFile != "" {
+		effective.ComposeFile = discovered.ComposeFile
+	}
+	if discovered.EnvFile != "" {
+		effective.EnvFile = discovered.EnvFile
+	}
+	return effective
+}
+
+func (s *Server) resolveCompose(ctx context.Context, id string) (composeResolution, error) {
+	if name, ok := strings.CutPrefix(id, "auto:"); ok {
+		groups, err := s.discoverProjectsWithError(ctx)
+		if err != nil {
+			return composeResolution{}, &composeLookupError{status: http.StatusServiceUnavailable, message: "cannot inspect Docker Compose labels"}
+		}
+		cs, found := groups[name]
+		if !found || len(cs) == 0 {
+			return composeResolution{}, &composeLookupError{status: http.StatusNotFound, message: "not found"}
+		}
+		discovered := discoveredComposeProject(name, cs)
+		return composeResolution{display: discovered, effective: discovered, projectName: name, running: true}, nil
+	}
+	cfg, err := s.store.Read()
+	if err != nil {
+		return composeResolution{}, &composeLookupError{status: http.StatusInternalServerError, message: "failed to read compose projects"}
+	}
+	for _, registered := range cfg.ComposeProjects {
+		if registered.ID != id {
+			continue
+		}
+		groups, err := s.discoverProjectsWithError(ctx)
+		if err != nil {
+			return composeResolution{}, &composeLookupError{status: http.StatusServiceUnavailable, message: "cannot inspect Docker Compose labels"}
+		}
+		var matches []models.ComposeProject
+		for projectName, cs := range groups {
+			discovered := discoveredComposeProject(projectName, cs)
+			if composeProjectsMatch(registered, discovered) {
+				matches = append(matches, discovered)
+			}
+		}
+		if len(matches) > 1 {
+			var names []string
+			for _, match := range matches {
+				names = append(names, match.Name)
+			}
+			sort.Strings(names)
+			return composeResolution{}, &composeLookupError{
+				status:  http.StatusConflict,
+				message: fmt.Sprintf("compose project %q matches multiple running projects: %s", registered.ID, strings.Join(names, ", ")),
+			}
+		}
+		if len(matches) == 1 {
+			return composeResolution{
+				display:     registered,
+				effective:   mergeDiscoveredCompose(registered, matches[0]),
+				projectName: matches[0].Name,
+				running:     true,
+			}, nil
+		}
+		return composeResolution{display: registered, effective: registered}, nil
+	}
+	return composeResolution{}, &composeLookupError{status: http.StatusNotFound, message: "not found"}
+}
+
+func writeComposeLookupError(w http.ResponseWriter, err error) {
+	var lookupErr *composeLookupError
+	if errors.As(err, &lookupErr) {
+		writeError(w, lookupErr.status, lookupErr.message)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
+func (s *Server) loadResolvedComposeProject(ctx context.Context, resolved composeResolution) (*composetypes.Project, error) {
+	if s.composeRuntime == nil {
+		return nil, fmt.Errorf("compose runtime is not initialized")
+	}
+	options := composeProjectOptions(resolved.effective)
+	if resolved.projectName != "" {
+		options.Name = resolved.projectName
+	}
+	return s.composeRuntime.LoadProject(ctx, options)
 }
 
 func (s *Server) handleGetCompose(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	resolved, err := s.resolveCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
+	}
+	project, err := s.loadResolvedComposeProject(r.Context(), resolved)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	services := make(composetypes.Services, len(project.Services)+len(project.DisabledServices))
+	for name, service := range project.Services {
+		services[name] = service
+	}
+	for name, service := range project.DisabledServices {
+		services[name] = service
 	}
 	writeJSON(w, http.StatusOK, struct {
 		models.ComposeProject
-		Services composetypes.Services `json:"services"`
-	}{p, composeServices(p)})
+		ProjectName string                `json:"project_name,omitempty"`
+		Services    composetypes.Services `json:"services"`
+	}{resolved.display, project.Name, services})
 }
 
 func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +454,11 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "自动发现的项目无法删除，使用「停止」将其下线")
 		return
 	}
-	cfg, _ := s.store.Read()
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read compose projects")
+		return
+	}
 	for i, p := range cfg.ComposeProjects {
 		if p.ID == id {
 			cfg.ComposeProjects = append(cfg.ComposeProjects[:i], cfg.ComposeProjects[i+1:]...)
@@ -191,87 +475,259 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleComposeUp(w http.ResponseWriter, r *http.Request) {
-	s.runComposeCmd(w, r, "up", "--detach")
+	s.runComposeOperation(w, r, "up")
 }
 
 func (s *Server) handleComposeStop(w http.ResponseWriter, r *http.Request) {
-	s.runComposeCmd(w, r, "stop")
+	s.runComposeOperation(w, r, "stop")
 }
 
 func (s *Server) handleComposeDown(w http.ResponseWriter, r *http.Request) {
-	s.runComposeCmd(w, r, "down")
+	s.runComposeOperation(w, r, "down")
 }
 
 func (s *Server) handleComposePull(w http.ResponseWriter, r *http.Request) {
-	s.runComposeCmd(w, r, "pull")
+	s.runComposeOperation(w, r, "pull")
 }
 
 func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
-	s.runComposeCmd(w, r, "restart")
+	s.runComposeOperation(w, r, "restart")
 }
 
-// runComposeCmd executes `docker compose -f <file> <args>` and streams
-// stdout+stderr to w as newline-delimited {stream}/{error} JSON — the same
-// shape docker pull/load/copy progress already uses, so PullStatusWidget
-// can render it without any format-specific handling.
-//
-// ponytail: docker/compose/v2 exists as an embeddable Go library, but it's
-// built for the CLI (cobra commands, global service wiring) and is painful
-// to embed directly — shelling out to the same `docker compose` binary every
-// other tool (Portainer included) uses is simpler and just as reliable.
-func (s *Server) runComposeCmd(w http.ResponseWriter, r *http.Request, args ...string) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+// runComposeOperation invokes the official Compose service API and streams
+// progress to w as the existing newline-delimited {stream}/{error} format.
+func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, operation string) {
+	resolved, err := s.resolveCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
-	}
-	cmdArgs := append([]string{"compose", "-f", p.ComposeFile}, args...)
-	cmd := exec.CommandContext(r.Context(), "docker", cmdArgs...)
-	cmd.Dir = p.BaseDir
-	if p.EnvFile != "" {
-		cmd.Env = append(os.Environ(), "COMPOSE_ENV_FILES="+p.EnvFile)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	rc, err := cmd.StdoutPipe()
-	if err != nil {
-		dockercontainer.EmitError(w, err)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	output := dockercompose.NewNDJSONWriter(w, cancel)
+	if s.composeRuntime == nil {
+		finalErr := finishComposeOperation(w, output, ctx, fmt.Errorf("compose runtime is not initialized"))
+		s.auditFromCtx(r, "compose."+operation, resolved.display.Name, composeOperationResult(finalErr))
 		return
 	}
-	cmd.Stderr = cmd.Stdout // merge stderr into the same pipe
-	if err := cmd.Start(); err != nil {
-		dockercontainer.EmitError(w, err)
-		return
+	ctx, request, err := s.composeRequest(ctx, r, output)
+	if err == nil {
+		var project *composetypes.Project
+		project, err = s.loadResolvedComposeProject(ctx, resolved)
+		if err != nil && composeCanUseRunningFallback(operation, resolved, err) {
+			// Stop/down/restart/logs can reconstruct the project from trusted
+			// Compose labels. Keep Up/Pull strict: they need the file and must
+			// never silently deploy a different configuration.
+			err = nil
+			project = nil
+		}
+		projectName := resolved.effective.Name
+		if project != nil {
+			projectName = project.Name
+		}
+		if resolved.running && resolved.effective.Name != "" {
+			projectName = resolved.effective.Name
+		}
+		var release func()
+		if err == nil {
+			var acquired bool
+			release, acquired = tryComposeOperation(projectName)
+			if !acquired {
+				writeError(w, http.StatusConflict, fmt.Sprintf("compose project %q already has an active operation", projectName))
+				s.auditFromCtx(r, "compose."+operation, projectName, "failed")
+				return
+			}
+			defer release()
+		}
+		if err == nil {
+			err = validateComposeOperation(ctx, operation, project)
+		}
+		if err == nil {
+			service, serviceErr := s.composeRuntime.NewService(ctx, request)
+			err = serviceErr
+			if err == nil {
+				switch operation {
+				case "up":
+					if project == nil {
+						err = fmt.Errorf("compose up requires a readable project file")
+						break
+					}
+					err = service.Compose().Up(ctx, project, composeapi.UpOptions{
+						Create: composeapi.CreateOptions{
+							Build: &composeapi.BuildOptions{
+								Deps:     true,
+								Quiet:    true,
+								Progress: "quiet",
+								Out:      output,
+							},
+							Recreate:             composeapi.RecreateDiverged,
+							RecreateDependencies: composeapi.RecreateDiverged,
+							Inherit:              true,
+						},
+						Start: composeapi.StartOptions{Project: project},
+					})
+				case "stop":
+					err = service.Compose().Stop(ctx, projectName, composeapi.StopOptions{Project: project})
+				case "down":
+					err = service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project})
+				case "pull":
+					if project == nil {
+						err = fmt.Errorf("compose pull requires a readable project file")
+						break
+					}
+					// ponytail: Compose v2.40.3 appends build fallbacks from concurrent pull
+					// goroutines without a lock. Keep this one operation serial until
+					// an upstream release fixes that race; Up retains normal parallelism.
+					service.MaxConcurrency(1)
+					err = service.Compose().Pull(ctx, project, composeapi.PullOptions{})
+				case "restart":
+					err = service.Compose().Restart(ctx, projectName, composeapi.RestartOptions{Project: project})
+				default:
+					err = fmt.Errorf("unsupported compose operation %q", operation)
+				}
+			}
+		}
 	}
-	scanner := bufio.NewScanner(rc)
-	for scanner.Scan() {
-		dockercontainer.EmitStream(w, "%s", scanner.Text())
+	finalErr := finishComposeOperation(w, output, ctx, err)
+	auditTarget := resolved.display.Name
+	if auditTarget == "" {
+		auditTarget = resolved.effective.Name
 	}
-	if err := cmd.Wait(); err != nil {
-		dockercontainer.EmitError(w, err)
-		return
-	}
-	dockercontainer.EmitStream(w, "✓ 完成")
+	s.auditFromCtx(r, "compose."+operation, auditTarget, composeOperationResult(finalErr))
 }
 
-// handleComposeResolvedConfig runs `docker compose config`, which merges every
-// -f/override file, resolves `extends`, and substitutes environment variables
-// into a single flat YAML — the same effective config `up` would actually
-// deploy. Exposed mainly for reference/debugging; the Run/Compose feature
-// uses handleComposeRunCommands below, not this raw text.
+func (s *Server) composeRequest(ctx context.Context, r *http.Request, output io.Writer) (context.Context, dockercompose.ServiceOptions, error) {
+	var options requestPullOptions
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&options); err != nil && err != io.EOF {
+			return ctx, dockercompose.ServiceOptions{}, fmt.Errorf("invalid JSON")
+		}
+	}
+	ctx, err := s.pullContext(ctx, options.ProxyURL)
+	if err != nil {
+		return ctx, dockercompose.ServiceOptions{}, err
+	}
+	auths, err := s.composeRegistryAuth(options.RegistryIDs)
+	if err != nil {
+		return ctx, dockercompose.ServiceOptions{}, err
+	}
+	return ctx, dockercompose.ServiceOptions{Output: output, AuthConfigs: auths}, nil
+}
+
+func finishComposeOperation(w http.ResponseWriter, output *dockercompose.NDJSONWriter, ctx context.Context, err error) error {
+	output.Flush()
+	if outputErr := output.Err(); outputErr != nil {
+		err = outputErr
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		// A canceled request may close the HTTP writer first, causing Compose to
+		// return io.ErrClosedPipe. Preserve the request outcome for audit/status
+		// consumers when no more specific output failure occurred.
+		err = ctxErr
+	}
+	if err == nil {
+		_, _ = output.Write([]byte("✓ 完成\n"))
+		output.Flush()
+		err = output.Err()
+	}
+	if err != nil {
+		dockercontainer.EmitError(w, err)
+		return err
+	}
+	return nil
+}
+
+func composeOperationResult(err error) string {
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "canceled"
+		}
+		return "failed"
+	}
+	return "ok"
+}
+
+func composeCanUseRunningFallback(operation string, resolved composeResolution, err error) bool {
+	if !resolved.running || resolved.effective.Name == "" || !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	switch operation {
+	case "stop", "down", "restart", "logs":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateComposeOperation(ctx context.Context, operation string, project *composetypes.Project) error {
+	if project == nil {
+		return nil
+	}
+	for name, service := range project.Services {
+		if (operation == "up" || operation == "down") && service.Provider != nil {
+			provider := service.Provider.Type
+			if provider == "" {
+				provider = "unknown"
+			}
+			return fmt.Errorf("compose service %q uses external provider %q, which is not supported by the embedded API", name, provider)
+		}
+		if operation != "up" && operation != "pull" || service.Build == nil {
+			continue
+		}
+		if phyDocker.HasPullProxy(ctx) {
+			return fmt.Errorf("compose %s with a pull proxy is not supported for service %q because it has a build configuration", operation, name)
+		}
+		if remote := unsupportedComposeReference(service.Build.Context); remote != "" {
+			return fmt.Errorf("compose service %q uses unsupported remote build context %q", name, remote)
+		}
+		if remote := unsupportedComposeReference(service.Build.Dockerfile); remote != "" {
+			return fmt.Errorf("compose service %q uses unsupported remote Dockerfile %q", name, remote)
+		}
+		for contextName, contextValue := range service.Build.AdditionalContexts {
+			if remote := unsupportedComposeReference(contextValue); remote != "" {
+				return fmt.Errorf("compose service %q uses unsupported remote additional context %q=%q", name, contextName, remote)
+			}
+		}
+	}
+	for name, service := range project.Services {
+		if service.Extends != nil {
+			if remote := unsupportedComposeReference(service.Extends.File); remote != "" {
+				return fmt.Errorf("compose service %q uses unsupported remote extends file %q", name, remote)
+			}
+		}
+	}
+	return nil
+}
+
+func unsupportedComposeReference(value string) string {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{
+		"http://", "https://", "git://", "git+", "ssh://", "oci://", "docker-image://",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return value
+		}
+	}
+	return ""
+}
+
+// handleComposeResolvedConfig returns compose-go's effective merged project,
+// resolving overrides and environment interpolation without invoking a CLI.
 func (s *Server) handleComposeResolvedConfig(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	resolved, err := s.resolveCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
 	}
-	cmd := exec.CommandContext(r.Context(), "docker", "compose", "-f", p.ComposeFile, "config")
-	cmd.Dir = p.BaseDir
-	if p.EnvFile != "" {
-		cmd.Env = append(os.Environ(), "COMPOSE_ENV_FILES="+p.EnvFile)
+	project, err := s.loadResolvedComposeProject(r.Context(), resolved)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	out, err := cmd.Output()
+	out, err := project.MarshalYAML()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -410,9 +866,18 @@ func (s *Server) handleComposeRenameFile(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		http.Error(w, "not found", http.StatusNotFound)
+	resolved, err := s.resolveCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		var lookupErr *composeLookupError
+		if errors.As(err, &lookupErr) {
+			http.Error(w, lookupErr.message, lookupErr.status)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+	if s.composeRuntime == nil {
+		http.Error(w, "compose runtime is not initialized", http.StatusInternalServerError)
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -420,66 +885,114 @@ func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 
-	// -t: docker compose logs has no timestamp by default, unlike `docker
-	// logs` shown elsewhere in the app — without one there's no way to tell
-	// when a line was written. --no-color: belt-and-suspenders against the
-	// service-name-prefix ANSI coloring `--ansi auto` would otherwise still
-	// try to emit here despite stdout being a pipe, not a real terminal.
-	args := []string{"compose", "-f", p.ComposeFile, "logs", "-f", "-t", "--no-color"}
-	if since := r.URL.Query().Get("since"); since != "" {
-		args = append(args, "--since", since)
-	}
-	if until := r.URL.Query().Get("until"); until != "" {
-		args = append(args, "--until", until)
-	}
-	cmd := exec.CommandContext(r.Context(), "docker", args...)
-	cmd.Dir = p.BaseDir
-	rc, err := cmd.StdoutPipe()
+	service, err := s.composeRuntime.NewService(ctx, dockercompose.ServiceOptions{})
 	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error())) //nolint:errcheck
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 		return
 	}
-	cmd.Stderr = cmd.Stdout // merge stderr into same pipe
-	if err := cmd.Start(); err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte("error starting logs: "+err.Error())) //nolint:errcheck
+	project, err := s.loadResolvedComposeProject(ctx, resolved)
+	if err != nil && composeCanUseRunningFallback("logs", resolved, err) {
+		project = nil
+		err = nil
+	}
+	if err != nil {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 		return
 	}
-	defer cmd.Process.Kill() //nolint:errcheck
+	projectName := resolved.effective.Name
+	if project != nil {
+		projectName = project.Name
+	}
+	if resolved.running && resolved.effective.Name != "" {
+		projectName = resolved.effective.Name
+	}
 
-	buf := make([]byte, 4096)
-	for {
-		n, err := rc.Read(buf)
-		if n > 0 {
-			conn.WriteMessage(websocket.BinaryMessage, buf[:n]) //nolint:errcheck
+	consumer := &composeLogConsumer{conn: conn, cancel: cancel}
+	// A websocket close is not guaranteed to interrupt an HTTP request while
+	// no log bytes are in flight. Read control frames in the background so the
+	// Compose monitor always receives cancellation promptly.
+	go func() {
+		for {
+			if _, _, err := conn.NextReader(); err != nil {
+				cancel()
+				return
+			}
 		}
-		if err != nil {
-			return
-		}
+	}()
+
+	err = service.Compose().Logs(ctx, projectName, consumer, composeapi.LogOptions{
+		Project:    project,
+		Follow:     true,
+		Timestamps: true,
+		Since:      r.URL.Query().Get("since"),
+		Until:      r.URL.Query().Get("until"),
+	})
+	if err != nil && consumer.WriteErr() == nil && ctx.Err() == nil {
+		consumer.send("error: " + err.Error() + "\n")
 	}
 }
 
-// findCompose resolves both manually-registered projects (from the store)
-// and live-discovered ones ("auto:<project>" — reconstructed from the compose
-// labels on that project's containers, not persisted anywhere).
+type composeLogConsumer struct {
+	conn   *websocket.Conn
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	err    error
+}
+
+func (c *composeLogConsumer) Log(containerName, message string) {
+	c.send(containerName + " | " + message + "\n")
+}
+
+func (c *composeLogConsumer) Err(containerName, message string) {
+	c.send(containerName + " | error: " + message + "\n")
+}
+
+func (c *composeLogConsumer) Status(container, message string) {
+	c.send(container + " | " + message + "\n")
+}
+
+func (c *composeLogConsumer) send(message string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return
+	}
+	if err := c.conn.WriteMessage(websocket.BinaryMessage, []byte(message)); err != nil {
+		c.err = err
+		c.cancel()
+	}
+}
+
+func (c *composeLogConsumer) WriteErr() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+
+// findCompose keeps the simple lookup contract used by file-management
+// handlers. Registered projects are local configuration records and can still
+// be browsed or edited while the daemon is offline; only auto-discovered IDs
+// need a live label lookup. Lifecycle/detail handlers call resolveCompose
+// directly so they can return a useful 409 when labels identify more than one
+// real project and a daemon discovery error when mutation would be unsafe.
 func (s *Server) findCompose(ctx context.Context, id string) (models.ComposeProject, bool) {
-	if name, ok := strings.CutPrefix(id, "auto:"); ok {
-		cs, ok := s.discoverProjects(ctx)[name]
-		if !ok || len(cs) == 0 {
+	if strings.HasPrefix(id, "auto:") {
+		resolved, err := s.resolveCompose(ctx, id)
+		if err != nil {
 			return models.ComposeProject{}, false
 		}
-		configFiles := cs[0].Labels[labelConfigFiles]
-		return models.ComposeProject{
-			ID:          id,
-			Name:        name,
-			BaseDir:     cs[0].Labels[labelWorkingDir],
-			ComposeFile: strings.Split(configFiles, ",")[0],
-		}, true
+		return resolved.effective, true
 	}
-	cfg, _ := s.store.Read()
-	for _, p := range cfg.ComposeProjects {
-		if p.ID == id {
-			return p, true
+	cfg, err := s.store.Read()
+	if err != nil {
+		return models.ComposeProject{}, false
+	}
+	for _, project := range cfg.ComposeProjects {
+		if project.ID == id {
+			return project, true
 		}
 	}
 	return models.ComposeProject{}, false

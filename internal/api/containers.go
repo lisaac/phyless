@@ -9,12 +9,16 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/containerd/platforms"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-chi/chi/v5"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"phyless/internal/docker"
 	dockercontainer "phyless/internal/docker/container"
 )
 
@@ -51,6 +55,7 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		requestPullOptions
 		Name           string            `json:"name"`
 		Image          string            `json:"image"`
 		Cmd            []string          `json:"cmd,omitempty"`
@@ -94,7 +99,43 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	result := "failed"
+	defer func() {
+		if result != "ok" && r.Context().Err() != nil {
+			result = "canceled"
+		}
+		s.auditFromCtx(r, "container.create", body.Name, result)
+	}()
 	var baseCfg *container.Config
+	ctx, err := s.pullContext(r.Context(), body.ProxyURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	encoded, err := s.registryAuthForImage(body.Image, body.RegistryID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var platform *ocispec.Platform
+	if body.Platform != "" {
+		if !strings.Contains(body.Platform, "/") {
+			writeError(w, http.StatusBadRequest, "platform must include OS and architecture")
+			return
+		}
+		p, err := platforms.Parse(body.Platform)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid platform")
+			return
+		}
+		platform = &p
+	}
+	switch body.PullPolicy {
+	case "", "always", "missing", "never":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid pull policy")
+		return
+	}
 	var baseHostCfg *container.HostConfig
 	if body.TemplateID != "" {
 		info, err := s.docker.ContainerInspect(r.Context(), body.TemplateID)
@@ -242,24 +283,42 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	if body.PullPolicy == "always" {
+	pull := body.PullPolicy == "always"
+	if body.PullPolicy == "missing" {
+		local, err := s.docker.ImageInspect(ctx, body.Image)
+		if err != nil && !errdefs.IsNotFound(err) {
+			dockercontainer.EmitError(w, err)
+			return
+		}
+		pull = errdefs.IsNotFound(err)
+		if err == nil && platform != nil {
+			pull = !platforms.OnlyStrict(*platform).Match(ocispec.Platform{OS: local.Os, Architecture: local.Architecture, Variant: local.Variant})
+		}
+	}
+	if pull {
 		dockercontainer.EmitStream(w, "正在拉取镜像 %s …", body.Image)
-		rc, err := s.docker.ImagePull(r.Context(), body.Image, image.PullOptions{})
+		rc, err := s.docker.ImagePull(ctx, body.Image, image.PullOptions{RegistryAuth: encoded, Platform: body.Platform})
 		if err != nil {
 			dockercontainer.EmitError(w, fmt.Errorf("pull failed: %w", err))
 			return
 		}
-		io.Copy(w, rc) //nolint:errcheck
-		rc.Close()
+		if err := docker.ConsumeProgress(ctx, w, rc); err != nil {
+			dockercontainer.EmitError(w, err)
+			return
+		}
 	}
 
-	resp, err := s.docker.ContainerCreate(r.Context(), cfg, hostCfg, &network.NetworkingConfig{}, nil, body.Name)
+	if err := ctx.Err(); err != nil {
+		dockercontainer.EmitError(w, err)
+		return
+	}
+	resp, err := s.docker.ContainerCreate(ctx, cfg, hostCfg, &network.NetworkingConfig{}, platform, body.Name)
 	if err != nil {
 		dockercontainer.EmitError(w, err)
 		return
 	}
-	s.auditFromCtx(r, "container.create", body.Name, "ok")
-	dockercontainer.EmitDone(w, resp.ID, "✓ 创建完成，容器 ID: %s", resp.ID[:12])
+	result = "ok"
+	dockercontainer.EmitDone(w, resp.ID, "✓ 创建完成，容器 ID: %s", resp.ID)
 }
 
 func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +407,7 @@ func (s *Server) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(r.Body).Decode(&body)                //nolint:errcheck
 	s.docker.ContainerRename(r.Context(), id, body.Name) //nolint:errcheck
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -374,14 +433,41 @@ func (s *Server) handleContainerDuplicate(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	result := "failed"
+	defer func() {
+		if result != "ok" && r.Context().Err() != nil {
+			result = "canceled"
+		}
+		s.auditFromCtx(r, "container.upgrade", id, result)
+	}()
+	var body requestPullOptions
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	ctx, err := s.pullContext(r.Context(), body.ProxyURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	info, err := s.docker.ContainerInspect(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	encoded, err := s.registryAuthForImage(info.Config.Image, body.RegistryID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
-	newID, err := dockercontainer.Upgrade(r.Context(), s.docker, id, w)
+	newID, err := dockercontainer.Upgrade(ctx, s.docker, id, w, image.PullOptions{RegistryAuth: encoded})
 	if err != nil {
 		dockercontainer.EmitError(w, err)
 		return
 	}
-	s.auditFromCtx(r, "container.upgrade", id, "ok")
+	result = "ok"
 	_ = newID // output already written inside Upgrade
 }
 

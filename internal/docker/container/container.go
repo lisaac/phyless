@@ -12,11 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/platforms"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"phyless/internal/docker"
 )
 
 // streamEvent is one line of a newline-delimited JSON progress stream — the
@@ -58,11 +62,11 @@ type FileEntry struct {
 
 // ExecListDir lists direct children of path by running ls inside the container.
 // Only works for running containers; returns an error for stopped/distroless containers.
-func ExecListDir(ctx context.Context, cli *client.Client, containerID, path string) ([]FileEntry, error) {
+func ExecListDir(ctx context.Context, cli client.APIClient, containerID, path string) ([]FileEntry, error) {
 	return execLs(ctx, cli, containerID, path)
 }
 
-func execLs(ctx context.Context, cli *client.Client, containerID, path string) ([]FileEntry, error) {
+func execLs(ctx context.Context, cli client.APIClient, containerID, path string) ([]FileEntry, error) {
 	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          []string{"ls", "-la", path},
 		AttachStdout: true,
@@ -186,7 +190,7 @@ func filenameAfterFields(line string, n int) string {
 }
 
 // ListFiles lists files in a container at path by parsing a tar stream from docker cp.
-func ListFiles(ctx context.Context, cli *client.Client, containerID, path string) ([]tar.Header, error) {
+func ListFiles(ctx context.Context, cli client.APIClient, containerID, path string) ([]tar.Header, error) {
 	rc, _, err := cli.CopyFromContainer(ctx, containerID, path)
 	if err != nil {
 		return nil, err
@@ -208,13 +212,13 @@ func ListFiles(ctx context.Context, cli *client.Client, containerID, path string
 }
 
 // DownloadFile streams a single file from a container. Caller must close the returned ReadCloser.
-func DownloadFile(ctx context.Context, cli *client.Client, containerID, path string) (io.ReadCloser, error) {
+func DownloadFile(ctx context.Context, cli client.APIClient, containerID, path string) (io.ReadCloser, error) {
 	rc, _, err := cli.CopyFromContainer(ctx, containerID, path)
 	return rc, err
 }
 
 // UploadFile uploads content (as a tar stream) to destPath in the container.
-func UploadFile(ctx context.Context, cli *client.Client, containerID, destPath string, content io.Reader) error {
+func UploadFile(ctx context.Context, cli client.APIClient, containerID, destPath string, content io.Reader) error {
 	return cli.CopyToContainer(ctx, containerID, destPath, content, container.CopyToContainerOptions{})
 }
 
@@ -223,7 +227,7 @@ func UploadFile(ctx context.Context, cli *client.Client, containerID, destPath s
 // sides are containers (there's no single daemon endpoint for container-to-
 // container copy); CopyFromContainer's tar output is piped directly into
 // CopyToContainer without buffering the whole thing in memory.
-func CopyBetweenContainers(ctx context.Context, cli *client.Client, srcContainer, srcPath, dstContainer, dstPath string) error {
+func CopyBetweenContainers(ctx context.Context, cli client.APIClient, srcContainer, srcPath, dstContainer, dstPath string) error {
 	rc, err := DownloadFile(ctx, cli, srcContainer, srcPath)
 	if err != nil {
 		return err
@@ -237,13 +241,13 @@ func CreateTar(filename string, content []byte) io.Reader {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	tw.WriteHeader(&tar.Header{Name: filename, Size: int64(len(content)), Mode: 0644}) //nolint:errcheck
-	tw.Write(content)                                                                   //nolint:errcheck
+	tw.Write(content)                                                                  //nolint:errcheck
 	tw.Close()
 	return &buf
 }
 
 // Duplicate creates a new container using another as a config template.
-func Duplicate(ctx context.Context, cli *client.Client, sourceID, newName string) (string, error) {
+func Duplicate(ctx context.Context, cli client.APIClient, sourceID, newName string) (string, error) {
 	info, err := cli.ContainerInspect(ctx, sourceID)
 	if err != nil {
 		return "", err
@@ -265,24 +269,40 @@ func shortID(s string) string {
 // Upgrade pulls the latest image, compares it with the running container's image,
 // and recreates the container only when a newer image is available.
 // Returns the new container ID, or "" if already up to date.
-func Upgrade(ctx context.Context, cli *client.Client, containerID string, w io.Writer) (string, error) {
+func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions) (string, error) {
 	info, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return "", err
 	}
 
+	oldImage, err := cli.ImageInspect(ctx, info.Image)
+	if err != nil {
+		return "", fmt.Errorf("无法检查原镜像平台: %w", err)
+	}
+	if oldImage.Os == "" || oldImage.Architecture == "" {
+		return "", fmt.Errorf("原镜像平台信息缺失")
+	}
+	platform := platforms.Normalize(ocispec.Platform{OS: oldImage.Os, Architecture: oldImage.Architecture, Variant: oldImage.Variant})
+	opts.Platform = oldImage.Os + "/" + oldImage.Architecture
+	if oldImage.Variant != "" {
+		opts.Platform += "/" + oldImage.Variant
+	}
 	EmitStream(w, "正在拉取镜像 %s …", info.Config.Image)
 
-	rc, err := cli.ImagePull(ctx, info.Config.Image, image.PullOptions{})
+	rc, err := cli.ImagePull(ctx, info.Config.Image, opts)
 	if err != nil {
 		return "", fmt.Errorf("pull 失败: %w", err)
 	}
-	io.Copy(w, rc) //nolint:errcheck
-	rc.Close()
+	if err := docker.ConsumeProgress(ctx, w, rc); err != nil {
+		return "", fmt.Errorf("pull 失败: %w", err)
+	}
 
 	newImg, _, err := cli.ImageInspectWithRaw(ctx, info.Config.Image)
 	if err != nil {
 		return "", fmt.Errorf("无法检查新镜像: %w", err)
+	}
+	if newImg.ID == "" || !platforms.OnlyStrict(platform).Match(ocispec.Platform{OS: newImg.Os, Architecture: newImg.Architecture, Variant: newImg.Variant}) {
+		return "", fmt.Errorf("新镜像 ID 或平台信息不匹配，保留原容器")
 	}
 
 	EmitStream(w, "当前镜像 ID: %s ｜ 新镜像 ID: %s", shortID(info.Image), shortID(newImg.ID))
@@ -294,10 +314,17 @@ func Upgrade(ctx context.Context, cli *client.Client, containerID string, w io.W
 
 	EmitStream(w, "检测到新版本，开始重建容器…")
 
-	cli.ContainerStop(ctx, containerID, container.StopOptions{})               //nolint:errcheck
-	cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}) //nolint:errcheck
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := cli.ContainerStop(ctx, containerID, container.StopOptions{}); err != nil && !errdefs.IsNotModified(err) {
+		return "", fmt.Errorf("停止容器失败: %w", err)
+	}
+	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+		return "", fmt.Errorf("删除容器失败: %w", err)
+	}
 
-	resp, err := cli.ContainerCreate(ctx, info.Config, info.HostConfig, nil, nil, info.Name)
+	resp, err := cli.ContainerCreate(ctx, info.Config, info.HostConfig, nil, &platform, info.Name)
 	if err != nil {
 		return "", fmt.Errorf("创建容器失败: %w", err)
 	}
@@ -310,6 +337,6 @@ func Upgrade(ctx context.Context, cli *client.Client, containerID string, w io.W
 }
 
 // GetByFilters returns containers matching given label/name filters.
-func GetByFilters(ctx context.Context, cli *client.Client, args filters.Args) ([]container.Summary, error) {
+func GetByFilters(ctx context.Context, cli client.APIClient, args filters.Args) ([]container.Summary, error) {
 	return cli.ContainerList(ctx, container.ListOptions{All: true, Filters: args})
 }

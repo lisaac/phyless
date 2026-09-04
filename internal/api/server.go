@@ -11,6 +11,7 @@ import (
 	"phyless/internal/audit"
 	"phyless/internal/auth"
 	"phyless/internal/docker"
+	dockercompose "phyless/internal/docker/compose"
 	"phyless/internal/models"
 	"phyless/internal/store"
 	"phyless/internal/ws"
@@ -19,11 +20,12 @@ import (
 type contextKey struct{}
 
 type Server struct {
-	store     *store.Store
-	jwtSecret []byte
-	dataDir   string
-	audit     *audit.Logger
-	docker    *dockerclient.Client
+	store          *store.Store
+	jwtSecret      []byte
+	dataDir        string
+	audit          *audit.Logger
+	docker         dockerclient.APIClient
+	composeRuntime *dockercompose.Runtime
 }
 
 func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
@@ -31,12 +33,18 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 	if err != nil {
 		panic("cannot connect to Docker: " + err.Error())
 	}
+	composeRuntime, err := dockercompose.NewRuntime(dc)
+	if err != nil {
+		_ = dc.Close()
+		panic("cannot initialize Compose: " + err.Error())
+	}
 	srv := &Server{
-		store:     s,
-		jwtSecret: jwtSecret,
-		dataDir:   dataDir,
-		audit:     audit.New(dataDir + "/audit.log"),
-		docker:    dc,
+		store:          s,
+		jwtSecret:      jwtSecret,
+		dataDir:        dataDir,
+		audit:          audit.New(dataDir + "/audit.log"),
+		docker:         dc,
+		composeRuntime: composeRuntime,
 	}
 	r := chi.NewRouter()
 	// chi routes on r.URL.RawPath when set, which leaves path params percent-encoded
@@ -203,4 +211,3 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Get("/api/volumes/{id}/inspect", s.handleVolumeInspect)
 	r.Get("/api/volumes/{id}/files", s.handleVolumeListFiles)
 }
-
