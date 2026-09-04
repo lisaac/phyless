@@ -1,3 +1,10 @@
+FROM node:20-alpine AS frontend
+WORKDIR /web
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ .
+RUN npm run build
+
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -12,7 +19,7 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/infra-manager .
-COPY web/dist ./web/dist
+COPY --from=frontend /web/dist ./web/dist
 VOLUME /data
 EXPOSE 8080
 ENV COMPOSE_BAKE=false

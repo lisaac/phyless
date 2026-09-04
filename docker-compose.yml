@@ -1,6 +1,8 @@
 services:
   phyless:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: phyless:latest
     ports:
       - "8080:8080"
