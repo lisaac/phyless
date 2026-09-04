@@ -69,7 +69,7 @@ go-containerregistry 采用 v0.20.6，避免 v0.22.0 拉入 Docker CLI 29 的类
 
 | 检查 | 当前结果 |
 | --- | --- |
-| 前端测试 | `npm test -- --run`：15 个文件、45 项通过；含代理地址持久化、WS 错误回调和 Toast 节流 |
+| 前端测试 | `npm test -- --run`：15 个文件、46 项通过；含代理地址持久化、WS 错误回调和 Toast 节流 |
 | 前端构建 | 通过；保留原有大 chunk 警告 |
 | 公共流消费、升级 | HTTP 200 内错误、取消、短写、超长/坏 JSON、升级前失败门禁与平台保留测试通过 |
 | Compose 依赖接线 | 官方 service.Pull 命中注入的 APIClient，保留 context/platform/auth，错误流向上传播 |

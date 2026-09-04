@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { PullStatusWidget } from "./PullStatusWidget";
-import { pullOptionsPayload, readPullProxyUrl, rememberPullProxyUrl } from "./PullOptions";
+import { PullOptions, pullOptionsPayload, readPullProxyUrl, rememberPullProxyUrl } from "./PullOptions";
 
 vi.mock("@solidjs/router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn() }));
@@ -86,5 +86,12 @@ describe("pull progress outcome", () => {
     rememberPullProxyUrl("http://proxy.example:8080");
     rememberPullProxyUrl(" ");
     expect(readPullProxyUrl()).toBe("");
+  });
+
+  it("loads the remembered proxy when a pull form opens", () => {
+    rememberPullProxyUrl("http://proxy.example:8080");
+    const onChange = vi.fn();
+    render(() => <PullOptions proxyUrl="" onProxyUrlChange={onChange} />);
+    expect(onChange).toHaveBeenCalledWith("http://proxy.example:8080");
   });
 });
