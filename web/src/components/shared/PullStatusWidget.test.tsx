@@ -77,6 +77,9 @@ describe("pull progress outcome", () => {
     rememberPullProxyUrl("http://user:secret@proxy.example:8080");
     expect(readPullProxyUrl()).toBe("http://proxy.example:8080");
     expect(localStorage.getItem("phyless_pull_proxy_url")).not.toContain("secret");
+
+    rememberPullProxyUrl("socks5://proxy.example");
+    expect(readPullProxyUrl()).toBe("http://proxy.example:8080");
   });
 
   it("clears the remembered proxy when the field is emptied", () => {

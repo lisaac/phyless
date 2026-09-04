@@ -18,6 +18,8 @@ function rememberableProxyUrl(raw: string): string {
     const url = new URL(value);
     if (!["http:", "https:", "socks5:", "socks5h:"].includes(url.protocol)) return "";
     if (!url.hostname || url.username || url.password || url.search || url.hash) return "";
+    if (url.host.endsWith(":")) return "";
+    if ((url.protocol === "socks5:" || url.protocol === "socks5h:") && !url.port) return "";
     if (url.pathname !== "" && url.pathname !== "/") return "";
     return value;
   } catch {
