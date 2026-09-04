@@ -16,6 +16,7 @@
 - Docker `APIClient` 薄封装只覆盖 `ImagePull`。无请求代理时透传，有代理时下载数据流直接交给 Docker `ImageLoad`。
 - “不落盘”指应用侧没有中间镜像 tar、layer 或磁盘缓存；Docker daemon 自身存储不在此限制内。
 - 代理配置只在单次请求内生效，不写入 Compose 文件、容器环境或模板。
+- 前端会在浏览器 `localStorage` 记住有效的无认证代理地址，仍按单次请求发送；带用户名/密码的地址不持久化。
 - 代理首版不支持 digest 引用、全标签拉取、非 Linux 镜像及构建阶段 Registry 代理；未实现的能力必须明确报错，不能静默直连。
 - 普通无代理本地构建仍需保持；外部 builder/provider/credential helper 等路径不能借 API 化隐式执行 CLI。
 - 页面沿用单进度卡片：旧卡片未关闭时拒绝发起同一卡片的第二个任务，避免混流或漏发；没有新增任务队列。
@@ -58,6 +59,9 @@ go-containerregistry 采用 v0.20.6，避免 v0.22.0 拉入 Docker CLI 29 的类
 - manifest、JSON 元数据及选中的 config blob 限制为 16 MiB；config 即使是 octet-stream 或重定向到对象存储也受限，layer 保持流式。重定向复用标准 HTTP client，不维护另一套 HTTP 跳转规则。
 - 按真实 Compose label 名称加进程内项目锁；有歧义返回 409，查询 daemon 失败返回 503，不通过“查不到”推断允许新建。
 - 升级前的网络、导入、平台或停止失败不会继续删旧容器。但保留既有升级方式：删除旧容器后若 Create/Start 失败，没有自动回滚；重要容器应先确认备份与可重建配置。
+- 代理拉取在启动 `ImageLoad` 前比较远端 config digest 与 daemon 当前标签；相同镜像直接返回 up-to-date 流，不重复导入。普通无代理路径仍交给 Docker daemon。
+- 运行中的自动发现 Compose 项目若源文件不在服务容器内，详情接口返回项目元数据和可见性提示，不让页面被详情加载失败阻塞；文件编辑与 Up/Pull 继续要求源目录可访问。
+- 日志、统计和终端 WS 都将连接错误转为节流 Toast；WS 失败只影响实时数据，不阻塞页面其他 API 与 UI 操作。
 
 ## 验证记录
 
@@ -65,7 +69,7 @@ go-containerregistry 采用 v0.20.6，避免 v0.22.0 拉入 Docker CLI 29 的类
 
 | 检查 | 当前结果 |
 | --- | --- |
-| 前端测试 | `npm test -- --run`：14 个文件、41 项通过 |
+| 前端测试 | `npm test -- --run`：14 个文件、44 项通过；含代理地址持久化和 WS 错误回调 |
 | 前端构建 | 通过；保留原有大 chunk 警告 |
 | 公共流消费、升级 | HTTP 200 内错误、取消、短写、超长/坏 JSON、升级前失败门禁与平台保留测试通过 |
 | Compose 依赖接线 | 官方 service.Pull 命中注入的 APIClient，保留 context/platform/auth，错误流向上传播 |

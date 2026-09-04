@@ -281,6 +281,12 @@ export const ComposeDetailPage: Component = () => {
         <Tabs tabs={TABS} active={tab()} onChange={setTab} />
       </div>
 
+      <Show when={detail()?.load_error}>
+        <div class="mb-3 border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+          {detail()!.load_error}
+        </div>
+      </Show>
+
       <Show when={tab() === "info"}>
         <div class="flex flex-col gap-4">
           <div class="max-w-2xl">

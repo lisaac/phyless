@@ -326,6 +326,28 @@ func TestProxyImagePullRejectsDigestReference(t *testing.T) {
 	}
 }
 
+func TestLocalImageMatchesExpectedConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+		err  error
+		want bool
+	}{
+		{name: "same", id: "sha256:abc", want: true},
+		{name: "different", id: "sha256:def", want: false},
+		{name: "inspect error", err: errors.New("not found"), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &pipelineAPIClient{inspect: func(context.Context, string) (image.InspectResponse, error) {
+				return image.InspectResponse{ID: tc.id}, tc.err
+			}}
+			if got := localImageMatches(context.Background(), api, "example.test/repo:tag", "sha256:abc"); got != tc.want {
+				t.Fatalf("localImageMatches = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPullProxyRejectsInvalidPorts(t *testing.T) {
 	for _, raw := range []string{"http://proxy.example:0", "http://proxy.example:65536", "socks5://proxy.example"} {
 		if _, err := WithPullProxy(context.Background(), raw); err == nil {

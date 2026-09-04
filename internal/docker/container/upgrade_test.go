@@ -19,6 +19,7 @@ type upgradeClient struct {
 	client.APIClient
 	alreadyStopped                    bool
 	wrongPlatform                     bool
+	sameImage                         bool
 	pullError, stopError, removeError bool
 	stopped, removed, created         bool
 	platform                          string
@@ -35,7 +36,11 @@ func (c *upgradeClient) ImageInspectWithRaw(context.Context, string) (image.Insp
 	if c.wrongPlatform {
 		arch = "amd64"
 	}
-	return image.InspectResponse{ID: "new", Os: "linux", Architecture: arch}, nil, nil
+	id := "new"
+	if c.sameImage {
+		id = "old"
+	}
+	return image.InspectResponse{ID: id, Os: "linux", Architecture: arch}, nil, nil
 }
 func (c *upgradeClient) ImagePull(_ context.Context, _ string, opts image.PullOptions) (io.ReadCloser, error) {
 	c.platform = opts.Platform
@@ -112,5 +117,19 @@ func TestUpgradeKeepsContainerOnPlatformMismatch(t *testing.T) {
 	}
 	if c.stopped || c.removed || c.created {
 		t.Fatal("platform mismatch changed the original container")
+	}
+}
+
+func TestUpgradeSkipsRecreateWhenImageIsCurrent(t *testing.T) {
+	c := &upgradeClient{sameImage: true}
+	newID, err := Upgrade(context.Background(), c, "old", io.Discard, image.PullOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newID != "" {
+		t.Fatalf("new container ID = %q, want empty for an up-to-date image", newID)
+	}
+	if c.stopped || c.removed || c.created {
+		t.Fatalf("up-to-date image changed container: stop=%v remove=%v create=%v", c.stopped, c.removed, c.created)
 	}
 }

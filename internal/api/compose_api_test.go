@@ -169,6 +169,41 @@ services:
 	}
 }
 
+func TestComposeDetailMissingRunningFileReturnsMetadata(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	dir := t.TempDir()
+	composeFile := filepath.Join(dir, "compose.yaml")
+	p := models.ComposeProject{ID: "1", Name: "display", BaseDir: dir, ComposeFile: composeFile}
+	server := newComposeDiscoveryServer(t, p, []container.Summary{
+		composeSummary("app", "actual-name", composeFile, dir, ""),
+	})
+	runtime, err := dockercompose.NewRuntime(server.docker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.composeRuntime = runtime
+	req := httptest.NewRequest(http.MethodGet, "/api/compose/detail?id=1", nil)
+	res := httptest.NewRecorder()
+	server.handleGetCompose(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	var body struct {
+		ProjectName string                                `json:"project_name"`
+		LoadError   string                                `json:"load_error"`
+		Services    map[string]composetypes.ServiceConfig `json:"services"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ProjectName != "actual-name" || body.LoadError == "" {
+		t.Fatalf("fallback detail = %#v", body)
+	}
+	if len(body.Services) != 0 {
+		t.Fatalf("fallback services = %#v, want empty", body.Services)
+	}
+}
+
 func TestComposeOperationValidationBoundaries(t *testing.T) {
 	project := &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
 		"builder": {Name: "builder", Build: &composetypes.BuildConfig{Context: "."}},

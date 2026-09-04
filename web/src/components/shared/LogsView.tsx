@@ -1,5 +1,5 @@
 import { Component, onMount, onCleanup, createEffect, createSignal } from "solid-js";
-import { connectWS } from "../../api/ws";
+import { connectWS, reportWSError } from "../../api/ws";
 
 // Generic log-stream viewer — pause/resume, auto-scroll, clear, buffered
 // flush (throttled so a fast-scrolling log doesn't thrash layout). Driven
@@ -35,6 +35,7 @@ export const LogsView: Component<{ wsUrl: string; heightClass?: string }> = (pro
         clearTimeout(flushTimer);
         flushTimer = setTimeout(flush, 80); // ponytail: 80ms throttle prevents layout thrash
       },
+      onError: () => reportWSError("日志实时连接"),
     });
   };
 

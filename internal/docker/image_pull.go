@@ -291,9 +291,22 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 		transport.CloseIdleConnections()
 		return nil, safePullError("image validation failed", err)
 	}
+	// The selected config digest is known before any layer is requested. If the
+	// daemon already has this exact tag/config, return a normal progress stream
+	// without starting ImageLoad; this is the proxy equivalent of Docker's
+	// up-to-date check and avoids a needless import.
+	if localImageMatches(pullCtx, c.APIClient, tarTag(tag), expected.config.String()) {
+		transport.CloseIdleConnections()
+		return io.NopCloser(strings.NewReader(`{"status":"Image is up to date"}` + "\n")), nil
+	}
 
 	keepCancel = true
 	return startPullPipeline(ctx, pullCtx, cancel, c.APIClient, tag, img, expected, platform, transport)
+}
+
+func localImageMatches(ctx context.Context, apiClient dockerclient.APIClient, ref, expectedID string) bool {
+	local, err := apiClient.ImageInspect(ctx, ref)
+	return err == nil && strings.EqualFold(local.ID, expectedID)
 }
 
 func (c *Client) pullPlatform(ctx context.Context, raw string) (v1.Platform, error) {

@@ -133,6 +133,21 @@ func TestImagePullProxyAcceptance(t *testing.T) {
 		t.Fatalf("registry streamed %d layer bytes, want at least %d", registryLayerBytes.Load(), layer.compressedSize)
 	}
 	t.Logf("acceptance loaded_id=%s tag=%s registry_layer_bytes=%d", loaded.ID, ref, registryLayerBytes.Load())
+
+	// The registry config digest is available before the proxy starts the
+	// daemon ImageLoad. A second pull of the same tag must therefore finish
+	// without downloading the layer again.
+	before := registryLayerBytes.Load()
+	currentStream, err := (&Client{APIClient: rawClient}).ImagePull(ctx, ref, image.PullOptions{Platform: os.Getenv("PHYLESS_PROXY_TEST_PLATFORM")})
+	if err != nil {
+		t.Fatal("up-to-date proxied ImagePull:", err)
+	}
+	if err := ConsumeProgress(ctx, io.Discard, currentStream); err != nil {
+		t.Fatal("up-to-date proxied ImagePull progress:", err)
+	}
+	if after := registryLayerBytes.Load(); after != before {
+		t.Fatalf("up-to-date pull downloaded %d additional layer bytes", after-before)
+	}
 }
 
 func acceptanceTag(registryURL string) (string, name.Tag, error) {

@@ -1,5 +1,5 @@
 import { Component, onMount, onCleanup, createSignal, createResource, For, Show } from "solid-js";
-import { connectWS } from "../../api/ws";
+import { connectWS, reportWSError } from "../../api/ws";
 import { get } from "../../api/client";
 import { cpuPercent, memUsageMB, memLimitMB } from "../../api/stats";
 import { Sparkline } from "./Sparkline";
@@ -49,6 +49,7 @@ export const ContainerStats: Component<{ id: string }> = (props) => {
           } catch { /* partial frame */ }
         }
       },
+      onError: () => reportWSError("容器状态实时连接"),
     });
   });
   onCleanup(() => ws?.close());

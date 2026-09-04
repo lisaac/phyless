@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { PullStatusWidget } from "./PullStatusWidget";
-import { pullOptionsPayload } from "./PullOptions";
+import { pullOptionsPayload, readPullProxyUrl, rememberPullProxyUrl } from "./PullOptions";
 
 vi.mock("@solidjs/router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn() }));
@@ -68,5 +68,20 @@ describe("pull progress outcome", () => {
     expect(pullOptionsPayload({ proxyUrl: " http://proxy:8080 ", registryIds: ["one"], platform: " linux/arm64 " })).toEqual({
       proxy_url: "http://proxy:8080", registry_ids: ["one"], platform: "linux/arm64",
     });
+  });
+
+  it("remembers a valid proxy endpoint without persisting credentials", () => {
+    rememberPullProxyUrl(" http://proxy.example:8080 ");
+    expect(readPullProxyUrl()).toBe("http://proxy.example:8080");
+
+    rememberPullProxyUrl("http://user:secret@proxy.example:8080");
+    expect(readPullProxyUrl()).toBe("http://proxy.example:8080");
+    expect(localStorage.getItem("phyless_pull_proxy_url")).not.toContain("secret");
+  });
+
+  it("clears the remembered proxy when the field is emptied", () => {
+    rememberPullProxyUrl("http://proxy.example:8080");
+    rememberPullProxyUrl(" ");
+    expect(readPullProxyUrl()).toBe("");
   });
 });

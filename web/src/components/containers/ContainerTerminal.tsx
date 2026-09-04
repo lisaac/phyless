@@ -2,7 +2,7 @@ import { Component, onMount, onCleanup } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { wsURL } from "../../api/ws";
+import { reportWSError, wsURL } from "../../api/ws";
 
 // Renders a live terminal for a fixed cmd/user, connecting immediately on
 // mount. cmd/user are chosen up front (via ConsoleModal) rather than edited
@@ -29,6 +29,7 @@ export const ContainerTerminal: Component<{ id: string; cmd?: string; user?: str
     ws.onopen = () => {
       ws!.send(JSON.stringify({ type: "resize", cols: term!.cols, rows: term!.rows }));
     };
+    ws.onerror = () => reportWSError("终端实时连接");
   };
 
   onMount(() => {

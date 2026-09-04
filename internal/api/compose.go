@@ -429,8 +429,31 @@ func (s *Server) handleGetCompose(w http.ResponseWriter, r *http.Request) {
 		writeComposeLookupError(w, err)
 		return
 	}
+	type composeDetailResponse struct {
+		models.ComposeProject
+		ProjectName string                `json:"project_name,omitempty"`
+		Services    composetypes.Services `json:"services"`
+		LoadError   string                `json:"load_error,omitempty"`
+	}
 	project, err := s.loadResolvedComposeProject(r.Context(), resolved)
 	if err != nil {
+		// A discovered/running project may outlive the host path from which it
+		// was created (or that path may simply not be mounted into this service
+		// container). Keep the detail window usable from trusted Docker labels;
+		// file editing and Up/Pull still report the original missing-file error.
+		if resolved.running && errors.Is(err, os.ErrNotExist) {
+			projectName := resolved.effective.Name
+			if resolved.projectName != "" {
+				projectName = resolved.projectName
+			}
+			writeJSON(w, http.StatusOK, composeDetailResponse{
+				ComposeProject: resolved.display,
+				ProjectName:    projectName,
+				Services:       composetypes.Services{},
+				LoadError:      "Compose 文件当前无法从服务容器访问；文件编辑和 Up/Pull 需要挂载源目录。",
+			})
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -441,11 +464,11 @@ func (s *Server) handleGetCompose(w http.ResponseWriter, r *http.Request) {
 	for name, service := range project.DisabledServices {
 		services[name] = service
 	}
-	writeJSON(w, http.StatusOK, struct {
-		models.ComposeProject
-		ProjectName string                `json:"project_name,omitempty"`
-		Services    composetypes.Services `json:"services"`
-	}{resolved.display, project.Name, services})
+	writeJSON(w, http.StatusOK, composeDetailResponse{
+		ComposeProject: resolved.display,
+		ProjectName:    project.Name,
+		Services:       services,
+	})
 }
 
 func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
