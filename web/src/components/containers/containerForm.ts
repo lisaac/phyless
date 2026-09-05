@@ -1,7 +1,10 @@
+import { shellQuote } from "../../api/shell";
+
 export interface CreateForm {
   name: string;
   image: string;
   cmd: string;
+  entrypoint?: string[];
   env: string;
   restart_policy: string;
   network_mode: string;
@@ -61,6 +64,7 @@ function kvObject(s: string): Record<string, string> {
 export function formToPayload(f: CreateForm): Record<string, unknown> {
   const p: Record<string, unknown> = { name: f.name, image: f.image };
   if (f.cmd.trim()) p.cmd = csv(f.cmd);
+  if (f.entrypoint !== undefined) p.entrypoint = f.entrypoint;
   if (f.env.trim()) p.env = lines(f.env);
   if (f.restart_policy) p.restart_policy = f.restart_policy;
   if (f.network_mode) p.network_mode = f.network_mode;
@@ -103,6 +107,7 @@ export function formToPayload(f: CreateForm): Record<string, unknown> {
 // Generate a docker run command from form fields
 export function formToRunCmd(f: CreateForm): string {
   const parts: string[] = ["docker run -d"];
+  if (f.entrypoint !== undefined) parts.push(`--entrypoint ${shellQuote(f.entrypoint[0] ?? "")}`);
   if (f.pull_policy) parts.push(`--pull ${f.pull_policy}`);
   if (f.name) parts.push(`--name ${f.name}`);
   if (f.hostname) parts.push(`-h ${f.hostname}`);
@@ -119,8 +124,8 @@ export function formToRunCmd(f: CreateForm): string {
   if (f.init) parts.push("--init");
   if (f.no_healthcheck) parts.push("--no-healthcheck");
   for (const p of lines(f.ports)) parts.push(`-p ${p}`);
-  for (const e of lines(f.env)) parts.push(`-e ${/\s/.test(e) ? JSON.stringify(e) : e}`);
-  for (const b of lines(f.binds)) parts.push(`-v ${b}`);
+  for (const e of lines(f.env)) parts.push(`-e ${shellQuote(e)}`);
+  for (const b of lines(f.binds)) parts.push(`-v ${shellQuote(b)}`);
   for (const d of lines(f.dns)) parts.push(`--dns ${d}`);
   for (const d of lines(f.devices)) parts.push(`--device ${d}`);
   for (const t of lines(f.tmpfs)) parts.push(`--tmpfs ${t}`);
@@ -149,7 +154,7 @@ const stripQ = (s: string | undefined): string | undefined =>
 // Shell-aware tokenizer — strips quotes and handles spaces inside them
 function shellTokenize(s: string): string[] {
   const tokens: string[] = [];
-  let tok = "", inDQ = false, inSQ = false;
+  let tok = "", inDQ = false, inSQ = false, started = false;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (inDQ) {
@@ -159,12 +164,12 @@ function shellTokenize(s: string): string[] {
     } else if (inSQ) {
       if (c === "'") inSQ = false;
       else tok += c;
-    } else if (c === '"') { inDQ = true; }
-    else if (c === "'") { inSQ = true; }
-    else if (/\s/.test(c)) { if (tok) { tokens.push(tok); tok = ""; } }
-    else tok += c;
+    } else if (c === '"') { inDQ = true; started = true; }
+    else if (c === "'") { inSQ = true; started = true; }
+    else if (/\s/.test(c)) { if (started) { tokens.push(tok); tok = ""; started = false; } }
+    else { tok += c; started = true; }
   }
-  if (tok) tokens.push(tok);
+  if (started) tokens.push(tok);
   return tokens;
 }
 
@@ -260,19 +265,17 @@ export function parseRunIntoForm(run: string): Partial<CreateForm> {
   while ((m = capDropRe.exec(r)) !== null) capDrops.push(stripQ(m[1])!);
   if (capDrops.length) result.cap_drop = capDrops.join(",");
 
-  const mem = r.match(/-m[=\s]+(\d+)([mMgG]?)|--memory[=\s]+(\d+)([mMgG]?)/);
+  const memoryMB = (value: string, unit: string) => String(Number(value) * 1024 ** (({ "": 0, b: 0, k: 1, m: 2, g: 3, t: 4 } as Record<string, number>)[unit.toLowerCase()] - 2));
+  const mem = r.match(/(?:^|\s)(?:-m|--memory)[=\s]+(\d+)([bBkKmMgGtT]?)(?=\s|$)/);
   if (mem) {
-    const val = Number(mem[1] ?? mem[3]);
-    const unit = (mem[2] ?? mem[4] ?? "m").toLowerCase();
-    result.memory = unit === "g" ? String(val * 1024) : String(val);
+    result.memory = memoryMB(mem[1], mem[2]);
   }
-  const memSwap = r.match(/--memory-swap[=\s]+(-?\d+)([mMgG]?)/);
+  const memSwap = r.match(/(?:^|\s)--memory-swap[=\s]+(-?\d+)([bBkKmMgGtT]?)(?=\s|$)/);
   if (memSwap) {
     const val = Number(memSwap[1]);
     if (val === -1) result.memory_swap = "-1";
     else {
-      const unit = (memSwap[2] ?? "m").toLowerCase();
-      result.memory_swap = unit === "g" ? String(val * 1024) : String(val);
+      result.memory_swap = memoryMB(memSwap[1], memSwap[2]);
     }
   }
   const cpuShares = r.match(/--cpu-shares[=\s]+(\d+)|-c[=\s]+(\d+)/);
@@ -341,6 +344,10 @@ export function parseRunIntoForm(run: string): Partial<CreateForm> {
     const w = tokens[i];
     if (!w) continue;
     if (w.startsWith("-")) {
+      if (w === "--entrypoint" || w.startsWith("--entrypoint=")) {
+        const entrypoint = w === "--entrypoint" ? tokens[i + 1] : w.slice("--entrypoint=".length);
+        if (entrypoint !== undefined) result.entrypoint = entrypoint === "" ? [] : [entrypoint];
+      }
       // flag=value form: no skip needed; bare flag with value: skip next token
       if (!w.includes("=") && flagsWithValue.has(w)) skipNext = true;
       continue;

@@ -43,6 +43,21 @@ describe("request", () => {
     await expect(request("GET", "/api/x")).rejects.toBeInstanceOf(ApiError);
     expect(getToken()).toBeNull();
     expect(handler).toHaveBeenCalled();
+    window.removeEventListener("phyless:unauthorized", handler);
+  });
+
+  it("does not clear a newer token when an older request returns 401", async () => {
+    setToken("old-token");
+    const handler = vi.fn();
+    window.addEventListener("phyless:unauthorized", handler);
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      setToken("new-token");
+      return new Response("", { status: 401 });
+    }));
+    await expect(request("GET", "/api/x")).rejects.toMatchObject({ status: 401 });
+    expect(getToken()).toBe("new-token");
+    expect(handler).not.toHaveBeenCalled();
+    window.removeEventListener("phyless:unauthorized", handler);
   });
 });
 

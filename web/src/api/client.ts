@@ -34,11 +34,12 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     payload = JSON.stringify(body);
   }
   const res = await fetch(path, { method, headers, body: payload });
-  if (res.status === 401) {
+  if (res.status === 401 && token === getToken()) {
     setToken(null);
     window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
     throw new ApiError(401, "unauthorized");
   }
+  if (res.status === 401) throw new ApiError(401, "unauthorized");
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     let msg = text || res.statusText;

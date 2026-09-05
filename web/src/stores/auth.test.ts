@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { currentUser, doLogin, doLogout, hasRole } from "./auth";
+import { currentUser, doLogin, doLogout, hasRole, loadSession } from "./auth";
 import * as client from "../api/client";
 
 beforeEach(() => {
   localStorage.clear();
+  doLogout();
   vi.restoreAllMocks();
 });
 
@@ -31,4 +32,15 @@ describe("auth store", () => {
     doLogout();
     expect(currentUser()).toBeNull();
   });
+
+  it("keeps the token when session loading gets a transient error", async () => {
+    setTokenForTest("session-token");
+    vi.spyOn(client, "get").mockRejectedValue(new client.ApiError(503, "unavailable"));
+    await loadSession();
+    expect(localStorage.getItem("phyless_token")).toBe("session-token");
+  });
 });
+
+function setTokenForTest(token: string): void {
+  localStorage.setItem("phyless_token", token);
+}

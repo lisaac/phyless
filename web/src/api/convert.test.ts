@@ -51,6 +51,18 @@ describe("mergeComposeYamls", () => {
     expect(merged).toContain("nginx");
     expect(merged).toContain("redis");
   });
+
+  it("rejects duplicate service names instead of silently overwriting", () => {
+    expect(() => mergeComposeYamls([
+      "services:\n  app:\n    image: nginx\n",
+      "services:\n  app:\n    image: redis\n",
+    ])).toThrow(/服务重名/);
+  });
+
+  it("rejects invalid compose documents", () => {
+    expect(() => mergeComposeYamls(["services: [broken"])).toThrow(/无效 Compose YAML/);
+    expect(() => mergeComposeYamls(["services: []"])).toThrow(/services/);
+  });
 });
 
 describe("formatRunCmdMultiline", () => {

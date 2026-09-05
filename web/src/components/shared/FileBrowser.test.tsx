@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, waitFor } from "@solidjs/testing-library";
+import { render } from "@solidjs/testing-library";
 import { FileBrowser } from "./FileBrowser";
 
 describe("FileBrowser", () => {

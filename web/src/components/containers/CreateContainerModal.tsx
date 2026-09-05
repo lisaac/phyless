@@ -40,9 +40,6 @@ const CAP_LIST = [
   "KILL", "IPC_LOCK", "MKNOD", "AUDIT_WRITE",
 ];
 
-// Pre-load images immediately (not gated on modal open)
-const [allImages] = createResource(() => get<ImageSummary[]>("/api/images"));
-
 // Auto-resize textarea to fit its content
 function autoH(el: HTMLTextAreaElement) {
   el.style.height = "auto";
@@ -77,6 +74,11 @@ export const CreateContainerModal: Component<{
   const [pullProxyUrl, setPullProxyUrl] = createSignal("");
   const [pullRegistryId, setPullRegistryId] = createSignal("");
   const [pullPlatform, setPullPlatform] = createSignal("");
+
+  const [allImages] = createResource(
+    () => props.open,
+    (open) => open ? get<ImageSummary[]>("/api/images") : Promise.resolve([]),
+  );
 
   // Keep select boxes on the user's choice (not auto-reset)
   const [selectedTplId, setSelectedTplId] = createSignal("");

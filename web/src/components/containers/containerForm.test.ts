@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { emptyForm, formToPayload } from "./containerForm";
+import { emptyForm, formToPayload, parseRunIntoForm } from "./containerForm";
 
 describe("formToPayload", () => {
+  it("interprets Docker memory units as bytes by default", () => {
+    for (const [value, mb] of [["268435456", "256"], ["256m", "256"], ["1g", "1024"], ["1024k", "1"], ["1048576b", "1"]]) {
+      expect(parseRunIntoForm(`docker run --memory ${value} alpine`).memory).toBe(mb);
+    }
+    expect(parseRunIntoForm("docker run --memory-swap -1 alpine").memory_swap).toBe("-1");
+    expect(parseRunIntoForm("docker run --memory-swap 536870912 alpine").memory_swap).toBe("512");
+  });
   it("splits env/labels and converts memory MB to bytes", () => {
     const f = emptyForm();
     f.name = "web";

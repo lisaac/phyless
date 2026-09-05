@@ -1,4 +1,4 @@
-import { Component, createSignal, Show } from "solid-js";
+import { Component, createSignal, Show, onCleanup } from "solid-js";
 import { FileBrowser } from "../shared/FileBrowser";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
@@ -8,6 +8,7 @@ import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
+import { canSaveFile, createLatestFileRequest } from "../../stores/latestFile";
 import type { FileEntry } from "../../types";
 
 // pick CodeMirror language from extension
@@ -25,23 +26,47 @@ export const ConfigFilesPage: Component = () => {
   const [openPath, setOpenPath] = createSignal("");
   const [content, setContent] = createSignal("");
   const [truncated, setTruncated] = createSignal(false);
+  const [loadingFile, setLoadingFile] = createSignal(false);
+  const [loadError, setLoadError] = createSignal("");
+  const [loadedPath, setLoadedPath] = createSignal("");
   const [saving, setSaving] = createSignal(false);
+  const fileRequest = createLatestFileRequest();
 
   const listFiles = (sub: string) =>
     get<FileEntry[]>(`/api/config/files?path=${encodeURIComponent(sub)}`);
 
   const openFile = async (path: string) => {
     if (!looksTextFile(path) && !confirm(`${path.split("/").pop()} 看起来不是文本文件，仍要打开？`)) return;
+    const request = fileRequest.begin({ id: "config", path });
+    setOpenPath(path);
+    setContent("");
+    setTruncated(false);
+    setLoadError("");
+    setLoadedPath("");
+    setLoadingFile(true);
     try {
-      const result = await fetchTextFile(`/api/config/files/content?path=${encodeURIComponent(path)}`);
-      if (!result) return;
-      setOpenPath(path);
+      const result = await fetchTextFile(`/api/config/files/content?path=${encodeURIComponent(path)}`, request.signal);
+      if (!fileRequest.isCurrent(request)) return;
+      if (!result) { setLoadError("未授权"); return; }
       setContent(result.text);
       setTruncated(result.truncated);
-    } catch (e) { toast.error((e as Error).message); }
+      setLoadedPath(path);
+    } catch (e) {
+      if (fileRequest.isCurrent(request)) {
+        setLoadError((e as Error).message);
+        toast.error((e as Error).message);
+      }
+    } finally {
+      if (fileRequest.isCurrent(request)) setLoadingFile(false);
+    }
   };
 
   const save = async () => {
+    const loaded = loadedPath() ? { id: "config", path: loadedPath() } : undefined;
+    if (!canSaveFile(loaded, { id: "config", path: openPath() }, loadingFile(), loadError(), truncated())) {
+      toast.error(loadingFile() ? "文件仍在加载" : truncated() ? "文件过大，无法安全保存" : "文件加载失败，无法保存");
+      return;
+    }
     setSaving(true);
     try {
       await put(`/api/config/files/content?path=${encodeURIComponent(openPath())}`, content());
@@ -72,18 +97,21 @@ export const ConfigFilesPage: Component = () => {
   const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
   let uploadXhr: XMLHttpRequest | undefined;
   const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
+    const uploadToken = getToken();
     setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
     const xhr = new XMLHttpRequest();
     uploadXhr = xhr;
     xhr.open("PUT", `/api/config/files/content?path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${uploadToken ?? ""}`);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
     };
     xhr.onload = () => {
       if (xhr.status === 401) {
-        setToken(null);
-        window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        if (uploadToken === getToken()) {
+          setToken(null);
+          window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        }
         setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
         reject(new Error("unauthorized"));
         return;
@@ -109,18 +137,30 @@ export const ConfigFilesPage: Component = () => {
   });
 
   const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
+  let downloadController: AbortController | undefined;
+  let downloadGeneration = 0;
   const downloadFile = async (sub: string, name: string) => {
+    downloadController?.abort();
+    const generation = ++downloadGeneration;
+    const controller = new AbortController();
     const filename = `${name}.tar`;
+    downloadController = controller;
     setDownloadState({ active: true, filename, bytes: 0, done: false, error: "" });
     try {
       await streamDownload(
         `/api/config/files/download?path=${encodeURIComponent(sub)}`,
         filename,
         (bytes) => setDownloadState((s) => ({ ...s, bytes })),
+        controller.signal,
       );
-      setDownloadState((s) => ({ ...s, done: true }));
-    } catch (e) { setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message })); }
+      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true }));
+    } catch (e) {
+      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message }));
+    } finally {
+      if (downloadController === controller) downloadController = undefined;
+    }
   };
+  onCleanup(() => { fileRequest.cancel(); downloadGeneration++; downloadController?.abort(); });
 
   return (
     <div>
@@ -143,8 +183,8 @@ export const ConfigFilesPage: Component = () => {
             <Show when={hasRole("operator") && openPath()}>
               <Button
                 variant="primary"
-                disabled={saving() || truncated()}
-                title={truncated() ? "文件过大，内容已被截断，无法安全保存" : undefined}
+                disabled={saving() || !canSaveFile(loadedPath() ? { id: "config", path: loadedPath() } : undefined, { id: "config", path: openPath() }, loadingFile(), loadError(), truncated())}
+                title={truncated() ? "文件过大，内容已被截断，无法安全保存" : loadingFile() ? "文件加载中" : loadError() || undefined}
                 onClick={save}
               >保存</Button>
             </Show>
@@ -152,6 +192,8 @@ export const ConfigFilesPage: Component = () => {
           <Show when={truncated()}>
             <p class="mb-1 text-xs text-amber-400">文件过大，仅加载了前 2MB，已禁用保存以免截断覆盖原文件。</p>
           </Show>
+          <Show when={loadingFile()}><p class="mb-1 text-xs text-zinc-500">文件加载中…</p></Show>
+          <Show when={loadError()}><p class="mb-1 text-xs text-red-400">{loadError()}</p></Show>
           <div class="min-h-0 flex-1">
             <Show when={openPath()} fallback={<div class="flex h-full items-center justify-center text-xs text-zinc-500">点击左侧文件开始编辑</div>}>
               <CodeEditor value={content()} onChange={setContent} language={langFor(openPath())} />
@@ -175,7 +217,7 @@ export const ConfigFilesPage: Component = () => {
         bytesLabel={fmtBytes(downloadState().bytes)}
         done={downloadState().done}
         error={downloadState().error}
-        onClose={() => setDownloadState((s) => ({ ...s, active: false }))}
+        onClose={() => { downloadGeneration++; downloadController?.abort(); setDownloadState((s) => ({ ...s, active: false })); }}
       />
     </div>
   );

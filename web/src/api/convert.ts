@@ -100,12 +100,31 @@ export function mergeComposeYamls(yamls: string[]): string {
   const networks: Record<string, unknown> = {};
   const volumes: Record<string, unknown> = {};
   for (const yaml of yamls) {
-    let doc: Record<string, unknown>;
-    try { doc = YAML.parse(yaml) ?? {}; } catch { continue; }
-    Object.assign(services, doc.services as Record<string, unknown> | undefined);
-    Object.assign(networks, doc.networks as Record<string, unknown> | undefined);
-    Object.assign(volumes, doc.volumes as Record<string, unknown> | undefined);
+    let parsed: unknown;
+    try { parsed = YAML.parse(yaml); } catch (e) { throw new Error(`无效 Compose YAML: ${(e as Error).message}`); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("无效 Compose 文档");
+    const doc = parsed as Record<string, unknown>;
+    const docServices = doc.services;
+    if (!docServices || typeof docServices !== "object" || Array.isArray(docServices)) {
+      throw new Error("Compose 文档缺少有效 services");
+    }
+    for (const [name, service] of Object.entries(docServices as Record<string, unknown>)) {
+      if (!service || typeof service !== "object" || Array.isArray(service)) throw new Error(`服务 ${name} 无效`);
+      if (name in services) throw new Error(`服务重名: ${name}`);
+      services[name] = service;
+    }
+    const docNetworks = doc.networks;
+    if (docNetworks !== undefined) {
+      if (!docNetworks || typeof docNetworks !== "object" || Array.isArray(docNetworks)) throw new Error("networks 无效");
+      Object.assign(networks, docNetworks);
+    }
+    const docVolumes = doc.volumes;
+    if (docVolumes !== undefined) {
+      if (!docVolumes || typeof docVolumes !== "object" || Array.isArray(docVolumes)) throw new Error("volumes 无效");
+      Object.assign(volumes, docVolumes);
+    }
   }
+  if (Object.keys(services).length === 0) throw new Error("Compose 文档没有 services");
   const out: Record<string, unknown> = { services };
   if (Object.keys(networks).length > 0) out.networks = networks;
   if (Object.keys(volumes).length > 0) out.volumes = volumes;

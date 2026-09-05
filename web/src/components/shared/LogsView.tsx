@@ -6,6 +6,9 @@ import { connectWS, reportWSError } from "../../api/ws";
 // entirely by a websocket URL so both a single container's logs and a whole
 // compose project's `docker compose logs -f` stream can share it.
 export const LogsView: Component<{ wsUrl: string; heightClass?: string }> = (props) => {
+  const FLUSH_MS = 80;
+  const MAX_BUFFER_CHARS = 64_000;
+  const MAX_DISPLAY_CHARS = 200_000;
   const [text, setText] = createSignal("");
   const [autoScroll, setAutoScroll] = createSignal(true);
   const [paused, setPaused] = createSignal(false);
@@ -13,6 +16,8 @@ export const LogsView: Component<{ wsUrl: string; heightClass?: string }> = (pro
   let ws: WebSocket | undefined;
   let buf = "";
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  let decoder = new TextDecoder();
+  let connection = 0;
 
   const flush = () => {
     if (!buf) return;
@@ -20,22 +25,44 @@ export const LogsView: Component<{ wsUrl: string; heightClass?: string }> = (pro
     // buf outright while paused, which silently ate the entire backlog a
     // stopped container's logs arrive as in one initial burst (the view
     // started paused for stopped containers, so nothing ever showed).
-    setText((t) => (t + buf).slice(-200_000)); // ponytail: cap at 200k chars
-    if (!paused() && autoScroll()) queueMicrotask(() => box?.scrollTo(0, box.scrollHeight));
+    const chunk = buf;
     buf = "";
+    setText((t) => (t + chunk).slice(-MAX_DISPLAY_CHARS)); // ponytail: cap at 200k chars
+    if (!paused() && autoScroll()) queueMicrotask(() => box?.scrollTo(0, box.scrollHeight));
+  };
+
+  const scheduleFlush = () => {
+    if (flushTimer !== undefined) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = undefined;
+      flush();
+      if (buf) scheduleFlush();
+    }, FLUSH_MS);
+  };
+
+  const append = (chunk: string) => {
+    if (!chunk) return;
+    buf = (buf + chunk).slice(-MAX_BUFFER_CHARS); // ponytail: bounded backlog
+    scheduleFlush();
   };
 
   const connect = () => {
+    const current = ++connection;
     ws?.close();
     setText("");
-    const decoder = new TextDecoder();
+    buf = "";
+    if (flushTimer !== undefined) clearTimeout(flushTimer);
+    flushTimer = undefined;
+    decoder = new TextDecoder();
     ws = connectWS(props.wsUrl, {
       onMessage: (ev) => {
-        buf += typeof ev.data === "string" ? ev.data : decoder.decode(ev.data as ArrayBuffer);
-        clearTimeout(flushTimer);
-        flushTimer = setTimeout(flush, 80); // ponytail: 80ms throttle prevents layout thrash
+        if (current !== connection) return;
+        append(typeof ev.data === "string" ? ev.data : decoder.decode(ev.data as ArrayBuffer, { stream: true }));
       },
-      onError: () => reportWSError("日志实时连接"),
+      onClose: () => {
+        if (current === connection) append(decoder.decode());
+      },
+      onError: () => { if (current === connection) reportWSError("日志实时连接"); },
     });
   };
 
@@ -46,7 +73,14 @@ export const LogsView: Component<{ wsUrl: string; heightClass?: string }> = (pro
     if (prev !== undefined && prev !== props.wsUrl) connect();
     return props.wsUrl;
   });
-  onCleanup(() => { ws?.close(); clearTimeout(flushTimer); });
+  onCleanup(() => {
+    connection++;
+    ws?.close();
+    if (flushTimer !== undefined) clearTimeout(flushTimer);
+    flushTimer = undefined;
+    buf = "";
+    decoder = new TextDecoder();
+  });
 
   return (
     <div class="flex flex-col gap-2">
@@ -59,7 +93,7 @@ export const LogsView: Component<{ wsUrl: string; heightClass?: string }> = (pro
           <input type="checkbox" checked={autoScroll()} onChange={(e) => setAutoScroll(e.currentTarget.checked)} />
           自动滚动
         </label>
-        <button class="text-zinc-400 hover:text-zinc-300" onClick={() => setText("")}>清空</button>
+        <button class="text-zinc-400 hover:text-zinc-300" onClick={() => { buf = ""; setText(""); }}>清空</button>
       </div>
       <pre
         ref={box}

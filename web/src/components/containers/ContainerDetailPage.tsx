@@ -255,7 +255,13 @@ export const ContainerDetailPage: Component = () => {
   const listFiles = (sub: string) =>
     get<FileEntry[]>(`/api/containers/${id()}/files?path=${encodeURIComponent(sub)}`);
   const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
+  let downloadController: AbortController | undefined;
+  let downloadGeneration = 0;
   const downloadFile = async (sub: string, name: string) => {
+    downloadController?.abort();
+    const generation = ++downloadGeneration;
+    const controller = new AbortController();
+    downloadController = controller;
     const filename = `${name}.tar`;
     setDownloadState({ active: true, filename, bytes: 0, done: false, error: "" });
     try {
@@ -263,24 +269,33 @@ export const ContainerDetailPage: Component = () => {
         `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
         filename,
         (bytes) => setDownloadState((s) => ({ ...s, bytes })),
+        controller.signal,
       );
-      setDownloadState((s) => ({ ...s, done: true }));
-    } catch (e) { setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message })); }
+      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true }));
+    } catch (e) {
+      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message }));
+    } finally {
+      if (downloadController === controller) downloadController = undefined;
+    }
   };
+  onCleanup(() => { downloadGeneration++; downloadController?.abort(); });
   // fetch() exposes no upload-progress events, so use XHR to drive the widget.
   const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
+    const uploadToken = getToken();
     setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
     const xhr = new XMLHttpRequest();
     uploadXhr = xhr;
     xhr.open("POST", `/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${uploadToken ?? ""}`);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
     };
     xhr.onload = () => {
       if (xhr.status === 401) {
-        setToken(null);
-        window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        if (uploadToken === getToken()) {
+          setToken(null);
+          window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        }
         setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
         reject(new Error("unauthorized"));
         return;
@@ -334,7 +349,7 @@ export const ContainerDetailPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  const fileInitialPath = () => searchParams.path || "/";
+  const fileInitialPath = () => typeof searchParams.path === "string" ? searchParams.path : "/";
   const onFilePathChange = (p: string) => setSearchParams({ tab: "files", path: p }, { replace: true });
 
   return (
@@ -803,7 +818,7 @@ export const ContainerDetailPage: Component = () => {
         bytesLabel={fmtBytes(downloadState().bytes)}
         done={downloadState().done}
         error={downloadState().error}
-        onClose={() => setDownloadState((s) => ({ ...s, active: false }))}
+        onClose={() => { downloadGeneration++; downloadController?.abort(); setDownloadState((s) => ({ ...s, active: false })); }}
       />
     </div>
   );

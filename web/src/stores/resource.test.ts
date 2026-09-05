@@ -19,4 +19,40 @@ describe("createResourceStore", () => {
     await store.refresh();
     expect(store.error()).toContain("boom");
   });
+
+  it("deduplicates an in-flight request and ignores it after stop", async () => {
+    let resolve!: (value: { id: string }[]) => void;
+    const pending = new Promise<{ id: string }[]>((r) => { resolve = r; });
+    vi.spyOn(client, "get").mockImplementation(() => pending as never);
+    const store = createResourceStore<{ id: string }>("/api/things");
+    const first = store.refresh();
+    const second = store.refresh();
+    expect(first).toBe(second);
+    expect(client.get).toHaveBeenCalledTimes(1);
+    store.stopPolling();
+    resolve([{ id: "late" }]);
+    await first;
+    expect(store.items()).toEqual([]);
+  });
+
+  it("pauses polling while hidden and refreshes once when visible", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(client, "get").mockResolvedValue([]);
+    const store = createResourceStore("/api/things");
+    store.startPolling();
+    await Promise.resolve();
+    expect(client.get).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(15_000);
+    expect(client.get).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+    expect(client.get).toHaveBeenCalledTimes(2);
+    store.stopPolling();
+    vi.useRealTimers();
+  });
 });

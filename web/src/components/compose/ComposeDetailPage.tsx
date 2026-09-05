@@ -5,6 +5,7 @@ import { inspectToRunCmd } from "../../api/inspect";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { createResourceStore } from "../../stores/resource";
+import { canSaveFile, createLatestFileRequest } from "../../stores/latestFile";
 import { setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
@@ -129,6 +130,9 @@ export const ComposeDetailPage: Component = () => {
   const [selectedFile, setSelectedFile] = createSignal<string | null>(null);
   const [fileContent, setFileContent] = createSignal("");
   const [fileTruncated, setFileTruncated] = createSignal(false);
+  const [fileLoading, setFileLoading] = createSignal(false);
+  const [fileLoadError, setFileLoadError] = createSignal("");
+  const [loadedFile, setLoadedFile] = createSignal<{ id: string; path: string }>();
   const [savingFile, setSavingFile] = createSignal(false);
 
   // Create/delete/rename operate directly on the project's BaseDir on the
@@ -154,18 +158,21 @@ export const ComposeDetailPage: Component = () => {
   const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
   let uploadXhr: XMLHttpRequest | undefined;
   const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
+    const uploadToken = getToken();
     setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
     const xhr = new XMLHttpRequest();
     uploadXhr = xhr;
     xhr.open("PUT", `/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${getToken() ?? ""}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${uploadToken ?? ""}`);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
     };
     xhr.onload = () => {
       if (xhr.status === 401) {
-        setToken(null);
-        window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        if (uploadToken === getToken()) {
+          setToken(null);
+          window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+        }
         setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
         reject(new Error("unauthorized"));
         return;
@@ -191,18 +198,30 @@ export const ComposeDetailPage: Component = () => {
   });
 
   const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
+  let downloadController: AbortController | undefined;
+  let downloadGeneration = 0;
   const downloadFile = async (sub: string, name: string) => {
+    downloadController?.abort();
+    const generation = ++downloadGeneration;
+    const controller = new AbortController();
     const filename = `${name}.tar`;
+    downloadController = controller;
     setDownloadState({ active: true, filename, bytes: 0, done: false, error: "" });
     try {
       await streamDownload(
         `/api/compose/files/download?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub)}`,
         filename,
         (bytes) => setDownloadState((s) => ({ ...s, bytes })),
+        controller.signal,
       );
-      setDownloadState((s) => ({ ...s, done: true }));
-    } catch (e) { setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message })); }
+      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true }));
+    } catch (e) {
+      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message }));
+    } finally {
+      if (downloadController === controller) downloadController = undefined;
+    }
   };
+  onCleanup(() => { downloadGeneration++; downloadController?.abort(); });
 
   // Auto-select the compose file once per project — guarded by an id marker
   // rather than "selectedFile() === null" so store polling (which changes
@@ -222,16 +241,39 @@ export const ComposeDetailPage: Component = () => {
     setSelectedFile(path);
   };
 
-  createResource(selectedFile, async (p) => {
-    if (!p) { setFileContent(""); setFileTruncated(false); return ""; }
-    try {
-      const result = await fetchTextFile(`/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(p)}`);
-      if (!result) return "";
-      setFileContent(result.text);
-      setFileTruncated(result.truncated);
-      return result.text;
-    } catch (e) { toast.error((e as Error).message); return ""; }
+  const fileRequest = createLatestFileRequest();
+  createEffect(() => {
+    const projectId = id();
+    const path = selectedFile();
+    const request = fileRequest.begin({ id: projectId, path: path ?? "" });
+    setLoadedFile(undefined);
+    setFileContent("");
+    setFileTruncated(false);
+    setFileLoadError("");
+    setFileLoading(Boolean(path));
+    if (!path) return;
+    void (async () => {
+      try {
+        const result = await fetchTextFile(`/api/compose/files/content?id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`, request.signal);
+        if (!fileRequest.isCurrent(request)) return;
+        if (!result) {
+          setFileLoadError("未授权");
+          return;
+        }
+        setFileContent(result.text);
+        setFileTruncated(result.truncated);
+        setLoadedFile(request.target);
+      } catch (e) {
+        if (fileRequest.isCurrent(request)) {
+          setFileLoadError((e as Error).message);
+          toast.error((e as Error).message);
+        }
+      } finally {
+        if (fileRequest.isCurrent(request)) setFileLoading(false);
+      }
+    })();
   });
+  onCleanup(fileRequest.cancel);
 
   const fileLang = () => {
     const p = selectedFile() ?? "";
@@ -241,11 +283,14 @@ export const ComposeDetailPage: Component = () => {
   };
 
   const saveSelectedFile = async () => {
-    const p = selectedFile();
-    if (!p) return;
+    const loaded = loadedFile();
+    if (!loaded || !canSaveFile(loaded, { id: id(), path: selectedFile() ?? "" }, fileLoading(), fileLoadError(), fileTruncated())) {
+      toast.error(fileLoading() ? "文件仍在加载" : fileTruncated() ? "文件过大，无法安全保存" : "文件加载失败，无法保存");
+      return;
+    }
     setSavingFile(true);
     try {
-      await put(`/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(p)}`, fileContent());
+      await put(`/api/compose/files/content?id=${encodeURIComponent(loaded.id)}&path=${encodeURIComponent(loaded.path)}`, fileContent());
       toast.success("已保存");
     } catch (e) { toast.error((e as Error).message); }
     finally { setSavingFile(false); }
@@ -365,8 +410,8 @@ export const ComposeDetailPage: Component = () => {
               <Show when={hasRole("operator") && selectedFile()}>
                 <Button
                   variant="primary"
-                  disabled={savingFile() || fileTruncated()}
-                  title={fileTruncated() ? "文件过大，内容已被截断，无法安全保存" : undefined}
+                  disabled={savingFile() || !canSaveFile(loadedFile(), { id: id(), path: selectedFile() ?? "" }, fileLoading(), fileLoadError(), fileTruncated())}
+                  title={fileTruncated() ? "文件过大，内容已被截断，无法安全保存" : fileLoading() ? "文件加载中" : fileLoadError() || undefined}
                   onClick={saveSelectedFile}
                 >保存</Button>
               </Show>
@@ -374,6 +419,8 @@ export const ComposeDetailPage: Component = () => {
             <Show when={fileTruncated()}>
               <p class="mb-1 text-xs text-amber-400">文件过大，仅加载了前 2MB，已禁用保存以免截断覆盖原文件。</p>
             </Show>
+            <Show when={fileLoading()}><p class="mb-1 text-xs text-zinc-500">文件加载中…</p></Show>
+            <Show when={fileLoadError()}><p class="mb-1 text-xs text-red-400">{fileLoadError()}</p></Show>
             <div class="min-h-0 flex-1">
               <Show when={selectedFile()} fallback={<div class="flex h-full items-center justify-center text-xs text-zinc-500">点击左侧文件开始编辑</div>}>
                 <CodeEditor value={fileContent()} onChange={setFileContent} language={fileLang()} />
@@ -437,7 +484,7 @@ export const ComposeDetailPage: Component = () => {
         bytesLabel={fmtBytes(downloadState().bytes)}
         done={downloadState().done}
         error={downloadState().error}
-        onClose={() => setDownloadState((s) => ({ ...s, active: false }))}
+        onClose={() => { downloadGeneration++; downloadController?.abort(); setDownloadState((s) => ({ ...s, active: false })); }}
       />
     </div>
   );

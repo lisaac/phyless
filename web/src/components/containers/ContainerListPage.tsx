@@ -35,11 +35,11 @@ export const ContainerListPage: Component = () => {
   const toggle = (id: string) =>
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAll = (v: boolean) =>
-    setSelected(v ? new Set(store.items().map((c) => c.Id)) : new Set());
+    setSelected(v ? new Set<string>(store.items().map((c) => c.Id)) : new Set<string>());
 
   const bulk = async (verb: "start" | "stop" | "kill" | "delete") => {
     await Promise.all([...selected()].map((id) => act(id, verb)));
-    setSelected(new Set());
+    setSelected(new Set<string>());
   };
 
   const bulkRun = async () => {

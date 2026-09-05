@@ -1,15 +1,8 @@
-import { Component, onMount, onCleanup, createSignal, createResource, For, Show } from "solid-js";
+import { Component, onCleanup, createSignal, createResource, createEffect, For, Show } from "solid-js";
 import { connectWS, reportWSError } from "../../api/ws";
 import { get } from "../../api/client";
-import { cpuPercent, memUsageMB, memLimitMB } from "../../api/stats";
+import { cpuPercent, memUsageMB, memLimitMB, networkBytes, networkRates, type NetworkSample } from "../../api/stats";
 import { Sparkline } from "./Sparkline";
-
-function netBytes(s: any): { rx: number; tx: number } {
-  const nets = s.networks ?? {};
-  let rx = 0, tx = 0;
-  for (const k in nets) { rx += nets[k].rx_bytes ?? 0; tx += nets[k].tx_bytes ?? 0; }
-  return { rx, tx };
-}
 
 function fmtBytes(b: number): string {
   if (b < 1024) return `${b}B`;
@@ -24,35 +17,39 @@ export const ContainerStats: Component<{ id: string }> = (props) => {
   const [rxArr, setRxArr] = createSignal<number[]>([]);
   const [txArr, setTxArr] = createSignal<number[]>([]);
   const [cur, setCur] = createSignal({ cpu: 0, memMB: 0, memLimit: 0, rx: 0, tx: 0 });
-  let prevNet = { rx: 0, tx: 0 };
-  let ws: WebSocket | undefined;
+  let connection = 0;
 
-  onMount(() => {
-    ws = connectWS(`/ws/containers/${props.id}/stats`, {
+  createEffect(() => {
+    const id = props.id;
+    const current = ++connection;
+    setCpu([]); setMem([]); setRxArr([]); setTxArr([]);
+    setCur({ cpu: 0, memMB: 0, memLimit: 0, rx: 0, tx: 0 });
+    let prevNet: NetworkSample | undefined;
+    const socket = connectWS(`/ws/containers/${id}/stats`, {
       onMessage: (ev) => {
+        if (current !== connection) return;
         const text = typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer);
-        for (const line of text.split("\n").filter(Boolean)) {
-          try {
-            const s = JSON.parse(line);
-            const c = cpuPercent(s);
-            const m = memUsageMB(s);
-            const limit = memLimitMB(s);
-            const net = netBytes(s);
-            const rxDelta = Math.max(0, net.rx - prevNet.rx);
-            const txDelta = Math.max(0, net.tx - prevNet.tx);
-            prevNet = net;
-            setCpu((a) => [...a, c].slice(-60));
-            setMem((a) => [...a, m].slice(-60));
-            setRxArr((a) => [...a, rxDelta].slice(-60));
-            setTxArr((a) => [...a, txDelta].slice(-60));
-            setCur({ cpu: c, memMB: m, memLimit: limit, rx: rxDelta, tx: txDelta });
-          } catch { /* partial frame */ }
-        }
+        try {
+          const s = JSON.parse(text.trim());
+          const c = cpuPercent(s);
+          const m = memUsageMB(s);
+          const limit = memLimitMB(s);
+          const dockerTime = typeof s.read === "string" ? Date.parse(s.read) : NaN;
+          const rates = networkRates(networkBytes(s), prevNet, Number.isFinite(dockerTime) ? dockerTime : Date.now());
+          prevNet = rates.sample;
+          setCpu((a) => [...a, c].slice(-60));
+          setMem((a) => [...a, m].slice(-60));
+          setRxArr((a) => [...a, rates.rx].slice(-60));
+          setTxArr((a) => [...a, rates.tx].slice(-60));
+          setCur({ cpu: c, memMB: m, memLimit: limit, rx: rates.rx, tx: rates.tx });
+        } catch { /* malformed frame */ }
       },
-      onError: () => reportWSError("容器状态实时连接"),
+      onError: () => { if (current === connection) reportWSError("容器状态实时连接"); },
+    });
+    onCleanup(() => {
+      socket.close();
     });
   });
-  onCleanup(() => ws?.close());
 
   const [procs, { refetch: refetchProcs }] = createResource(
     () => props.id,

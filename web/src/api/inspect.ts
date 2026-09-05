@@ -1,3 +1,5 @@
+import { shellQuote as q } from "./shell";
+
 /**
  * Convert docker container inspect + image inspect JSON into a docker run command.
  * Logic adapted from docs/docker.html — filters out values already present in the
@@ -23,10 +25,6 @@ function parseEnvArr(arr?: unknown): Record<string, string> {
   return m;
 }
 
-function q(s: string): string {
-  return s.includes(" ") || s.includes('"') ? JSON.stringify(s) : s;
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function inspectToRunCmd(container: any, image: any): string {
   const cfg = container?.Config ?? {};
@@ -35,7 +33,7 @@ export function inspectToRunCmd(container: any, image: any): string {
   const run: string[] = ["docker run -d"];
 
   // Name
-  if (container?.Name) run.push(`--name ${container.Name.replace(/^\//, "")}`);
+  if (container?.Name) run.push(`--name ${q(container.Name.replace(/^\//, ""))}`);
 
   // Env: only values that differ from image defaults
   const envMap = parseEnvArr(cfg.Env);
@@ -47,7 +45,7 @@ export function inspectToRunCmd(container: any, image: any): string {
 
   // Hostname: Docker sets it to the container ID prefix by default — skip that
   if (cfg.Hostname && !container?.Id?.startsWith(cfg.Hostname))
-    run.push(`--hostname ${cfg.Hostname}`);
+    run.push(`--hostname ${q(cfg.Hostname)}`);
 
   // DNS
   toArr<string>(host.Dns).forEach((d) => run.push(`--dns ${d}`));
@@ -58,34 +56,36 @@ export function inspectToRunCmd(container: any, image: any): string {
   toArr<any>(container?.Mounts).forEach((m: any) => {
     if (m.Type === "tmpfs") return; // handled by host.Tmpfs below
     const mode = m.Mode || (m.RW === false ? "ro" : "");
-    run.push(`-v ${m.Source}:${m.Destination}${mode ? ":" + mode : ""}`);
+    const source = m.Type === "volume" ? (m.Name || m.Source) : m.Source;
+    run.push(`-v ${q(`${source}:${m.Destination}${mode ? ":" + mode : ""}`)}`);
   });
 
   // Tmpfs
   if (host.Tmpfs) {
-    for (const path in host.Tmpfs) run.push(`--tmpfs ${path}:${host.Tmpfs[path]}`);
+    for (const path in host.Tmpfs) run.push(`--tmpfs ${q(`${path}:${host.Tmpfs[path]}`)}`);
   }
 
   // Port bindings
   const ports = host.PortBindings ?? {};
   for (const k in ports) {
     (ports[k] ?? []).forEach((p: any) => {
-      const hostPart = p.HostIp && p.HostIp !== "0.0.0.0" ? `${p.HostIp}:${p.HostPort}` : p.HostPort;
-      run.push(`-p ${hostPart}:${k.split("/")[0]}`);
+      const ip = p.HostIp?.includes(":") ? `[${p.HostIp}]` : p.HostIp;
+      const hostPart = ip && ip !== "0.0.0.0" ? `${ip}:${p.HostPort}` : p.HostPort;
+      run.push(`-p ${q(`${hostPart}:${k}`)}`);
     });
   }
 
   // Restart policy
   if (host.RestartPolicy?.Name && host.RestartPolicy.Name !== "no")
-    run.push(`--restart ${host.RestartPolicy.Name}`);
+    run.push(`--restart ${host.RestartPolicy.Name}${host.RestartPolicy.Name === "on-failure" && host.RestartPolicy.MaximumRetryCount > 0 ? `:${host.RestartPolicy.MaximumRetryCount}` : ""}`);
 
   // Working directory (skip if matches image default)
   if (cfg.WorkingDir && cfg.WorkingDir !== (img.WorkingDir || "/"))
-    run.push(`-w ${cfg.WorkingDir}`);
+    run.push(`-w ${q(cfg.WorkingDir)}`);
 
   // User (docker default is root)
   if (cfg.User && cfg.User !== (img.User || "root"))
-    run.push(`-u ${cfg.User}`);
+    run.push(`-u ${q(cfg.User)}`);
 
   // Privileged / readonly
   if (host.Privileged === true) run.push("--privileged");
@@ -96,7 +96,7 @@ export function inspectToRunCmd(container: any, image: any): string {
   toArr<string>(host.CapDrop).forEach((c) => run.push(`--cap-drop ${c}`));
 
   // Security options
-  toArr<string>(host.SecurityOpt).forEach((s) => run.push(`--security-opt ${s}`));
+  toArr<string>(host.SecurityOpt).forEach((s) => run.push(`--security-opt ${q(s)}`));
 
   // Devices
   toArr<any>(host.Devices).forEach((d: any) => {
@@ -118,7 +118,7 @@ export function inspectToRunCmd(container: any, image: any): string {
   if (cfg.OpenStdin === true) run.push("--interactive");
 
   // Stop options
-  if (host.StopTimeout && host.StopTimeout !== 10) run.push(`--stop-timeout ${host.StopTimeout}`);
+  if (cfg.StopTimeout != null && cfg.StopTimeout !== 10) run.push(`--stop-timeout ${cfg.StopTimeout}`);
   if (cfg.StopSignal && cfg.StopSignal !== (img.StopSignal || "SIGTERM"))
     run.push(`--stop-signal ${cfg.StopSignal}`);
 
@@ -195,14 +195,13 @@ export function inspectToRunCmd(container: any, image: any): string {
     run.push(`--ulimit ${u.Name}=${u.Soft}:${u.Hard}`)
   );
 
-  // Image
-  run.push(cfg.Image);
-
-  // Entrypoint / Cmd overrides
+  // --entrypoint resets the image CMD, so retain the effective command too.
   const entryDiff = !arrEq(cfg.Entrypoint ?? [], img.Entrypoint ?? []);
   const cmdDiff = !arrEq(cfg.Cmd ?? [], img.Cmd ?? []);
-  if (entryDiff) (cfg.Entrypoint ?? []).forEach((p: string) => run.push(q(p)));
-  if (cmdDiff) (cfg.Cmd ?? []).forEach((p: string) => run.push(q(p)));
+  if (entryDiff) run.push(`--entrypoint ${q(cfg.Entrypoint?.[0] ?? "")}`);
+  run.push(q(cfg.Image ?? ""));
+  if (entryDiff) (cfg.Entrypoint ?? []).slice(1).forEach((p: string) => run.push(q(p)));
+  if (entryDiff || cmdDiff) (cfg.Cmd ?? []).forEach((p: string) => run.push(q(p)));
 
   return run.join(" \\\n  ");
 }

@@ -5,6 +5,12 @@ import { useFloatingSlot } from "../../stores/floatingStack";
 
 interface LayerProgress { id: string; status: string; current?: number; total?: number; }
 
+const MAX_PROGRESS_RESPONSE = 2 * 1024 * 1024;
+const MAX_PROGRESS_LINE = 256 * 1024;
+const MAX_LAYERS = 256;
+const MAX_NOTES = 500;
+const MAX_ERROR = 4096;
+
 const STATUS_STYLE: Record<string, string> = {
   "Pull complete": "text-emerald-400",
   "Already exists": "text-zinc-500",
@@ -54,10 +60,10 @@ export const PullStatusWidget: Component<{
   const layerMap = new Map<string, LayerProgress>();
 
   const eventError = (evt: any): string => {
-    if (typeof evt.error === "string" && evt.error.trim()) return evt.error;
-    if (typeof evt.errorDetail === "string" && evt.errorDetail.trim()) return evt.errorDetail;
+    if (typeof evt.error === "string" && evt.error.trim()) return evt.error.slice(0, MAX_ERROR);
+    if (typeof evt.errorDetail === "string" && evt.errorDetail.trim()) return evt.errorDetail.slice(0, MAX_ERROR);
     if (evt.errorDetail && typeof evt.errorDetail.message === "string" && evt.errorDetail.message.trim()) {
-      return evt.errorDetail.message;
+      return evt.errorDetail.message.slice(0, MAX_ERROR);
     }
     if (evt.errorDetail != null || (evt.error != null && evt.error !== "")) return "镜像操作失败";
     return "";
@@ -80,23 +86,33 @@ export const PullStatusWidget: Component<{
       return;
     }
     if (evt.id) {
-      layerMap.set(evt.id, {
-        id: evt.id,
-        status: evt.status ?? layerMap.get(evt.id)?.status ?? "",
+      const id = String(evt.id);
+      if (!layerMap.has(id) && layerMap.size >= MAX_LAYERS) {
+        const oldest = layerMap.keys().next().value;
+        if (oldest !== undefined) layerMap.delete(oldest);
+      }
+      layerMap.set(id, {
+        id,
+        status: evt.status ?? layerMap.get(id)?.status ?? "",
         current: evt.progressDetail?.current,
         total: evt.progressDetail?.total,
       });
       setLayers([...layerMap.values()]);
     } else if (evt.status) {
-      setNotes((n) => [...n, evt.status]);
+      setNotes((n) => [...n, String(evt.status).slice(0, MAX_ERROR)].slice(-MAX_NOTES));
     } else if (evt.stream) {
-      setNotes((n) => [...n, String(evt.stream).trim()]);
+      setNotes((n) => [...n, String(evt.stream).trim().slice(0, MAX_ERROR)].slice(-MAX_NOTES));
       if (evt.container_id) setContainerId(evt.container_id);
     }
   };
 
   const consumeChunk = (chunk: string) => {
     buf += chunk;
+    if (buf.length > MAX_PROGRESS_LINE) {
+      buf = buf.slice(-MAX_PROGRESS_LINE);
+      setErr("进度行过大");
+      return;
+    }
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     lines.forEach(applyLine);
@@ -130,7 +146,7 @@ export const PullStatusWidget: Component<{
     };
     const finishError = (message: string) => {
       failed = true;
-      setErr(message);
+      setErr(message.slice(0, MAX_ERROR));
       setDone(true);
       // Mark the request settled before the callback can close the card and
       // trigger XHR.abort().
@@ -139,6 +155,19 @@ export const PullStatusWidget: Component<{
         errorReported = true;
         props.onError?.(message);
       }
+    };
+    const consumeResponse = () => {
+      if (req.responseText.length > MAX_PROGRESS_RESPONSE) {
+        finishError("进度响应过大");
+        req.abort();
+        return false;
+      }
+      const text = req.responseText;
+      if (text.length > readLen) {
+        consumeChunk(text.slice(readLen));
+        readLen = text.length;
+      }
+      return true;
     };
     req.open("POST", url);
     req.setRequestHeader("Authorization", `Bearer ${getToken()}`);
@@ -152,18 +181,14 @@ export const PullStatusWidget: Component<{
     }
     req.onprogress = () => {
       setUploadPct(null); // response bytes are arriving — upload phase is over
-      const text = req.responseText;
-      if (text.length > readLen) {
-        consumeChunk(text.slice(readLen));
-        readLen = text.length;
-      }
+      consumeResponse();
     };
     req.onload = () => {
       if (req.status < 200 || req.status >= 300) {
-        finishError(req.responseText || `请求失败 (${req.status})`);
+        finishError((req.responseText || `请求失败 (${req.status})`).slice(0, MAX_ERROR));
         return;
       }
-      if (req.responseText.length > readLen) consumeChunk(req.responseText.slice(readLen));
+      if (!consumeResponse()) return;
       if (buf) applyLine(buf);
       if (err()) {
         finishError(err());

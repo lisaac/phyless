@@ -63,6 +63,14 @@ describe("pull progress outcome", () => {
     expect(view.getByText("已取消")).toBeTruthy();
   });
 
+  it("fails before retaining an unbounded progress response", () => {
+    const settled = vi.fn();
+    const view = render(() => <PullStatusWidget active title="Pull" url="/pull" onClose={() => {}} onSettled={settled} />);
+    FakeXHR.requests[0].finish("x".repeat(2 * 1024 * 1024 + 1));
+    expect(view.getByText("进度响应过大")).toBeTruthy();
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
   it("builds only explicit request fields", () => {
     expect(pullOptionsPayload({ proxyUrl: " ", registryIds: [], platform: "" })).toEqual({});
     expect(pullOptionsPayload({ proxyUrl: " http://proxy:8080 ", registryIds: ["one"], platform: " linux/arm64 " })).toEqual({

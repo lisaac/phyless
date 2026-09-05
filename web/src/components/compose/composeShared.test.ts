@@ -12,7 +12,7 @@ describe("Compose container matching", () => {
       [LABEL_PROJECT]: name,
       [LABEL_CONFIG_FILES]: "/stack/compose.yaml,/stack/override.yaml",
     },
-  } as ContainerSummary));
+  } as unknown as ContainerSummary));
 
   it("uses the resolved project name instead of the display name or shared files", () => {
     expect(containersOf({ ...project, project_name: "deployed" }, containers)).toEqual([containers[0]]);

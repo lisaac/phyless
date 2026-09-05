@@ -21,11 +21,14 @@ export function looksTextFile(path: string): boolean {
 // destroy the rest of a file that got capped server-side (see
 // internal/api/filecontent.go's maxFileContent). Returns null on 401 (after
 // dispatching the same global unauthorized event the rest of the app uses).
-export async function fetchTextFile(url: string): Promise<{ text: string; truncated: boolean } | null> {
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
+export async function fetchTextFile(url: string, signal?: AbortSignal): Promise<{ text: string; truncated: boolean } | null> {
+  const token = getToken();
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token ?? ""}` }, signal });
   if (res.status === 401) {
-    setToken(null);
-    window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+    if (token === getToken()) {
+      setToken(null);
+      window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+    }
     return null;
   }
   if (!res.ok) throw new Error(await res.text());

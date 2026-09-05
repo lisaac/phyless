@@ -15,28 +15,67 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   let timer: ReturnType<typeof setInterval> | undefined;
-
-  const refresh = async () => {
-    setLoading(true);
-    try {
-      const data = await get<T[]>(path);
-      setItems(data ?? []);
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
+  let inFlight: Promise<void> | undefined;
+  let generation = 0;
+  let polling = false;
+  const onVisibilityChange = () => {
+    if (document.hidden) {
+      if (timer) clearInterval(timer);
+      timer = undefined;
+      generation++;
       setLoading(false);
+    } else if (polling) {
+      void refresh();
+      schedule();
     }
+  };
+  const schedule = () => {
+    if (!polling || document.hidden || timer) return;
+    timer = setInterval(() => { if (!document.hidden) void refresh(); }, 5000); // ponytail: one fallback poll per store
+  };
+
+  const refresh = () => {
+    if (inFlight) return inFlight;
+    const requestGeneration = generation;
+    setLoading(true);
+    let request!: Promise<void>;
+    request = (async () => {
+      try {
+        const data = await get<T[]>(path);
+        if (requestGeneration === generation) {
+          setItems(data ?? []);
+          setError("");
+        }
+      } catch (e) {
+        if (requestGeneration === generation) setError((e as Error).message);
+      } finally {
+        if (inFlight === request) {
+          inFlight = undefined;
+          if (requestGeneration === generation) setLoading(false);
+          if (requestGeneration !== generation && polling && !document.hidden) void refresh();
+        }
+      }
+    })();
+    inFlight = request;
+    return request;
   };
 
   const startPolling = () => {
-    if (timer) return;
-    void refresh();
-    timer = setInterval(() => void refresh(), 5000); // ponytail: 5s fallback poll per spec
+    if (polling) return;
+    polling = true;
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    if (!document.hidden) {
+      void refresh();
+      schedule();
+    }
   };
   const stopPolling = () => {
     if (timer) clearInterval(timer);
     timer = undefined;
+    polling = false;
+    generation++;
+    setLoading(false);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
   };
 
   return { items, loading, error, refresh, startPolling, stopPolling };

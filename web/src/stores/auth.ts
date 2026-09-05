@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { login, get, setToken, getToken } from "../api/client";
+import { login, get, setToken, getToken, ApiError } from "../api/client";
 import { ROLE_LEVEL, type Role, type User } from "../types";
 
 const [currentUser, setCurrentUser] = createSignal<User | null>(null);
@@ -17,13 +17,19 @@ export function doLogout(): void {
 }
 
 export async function loadSession(): Promise<void> {
-  if (!getToken()) return;
+  const token = getToken();
+  if (!token) return;
   try {
     const me = await get<User>("/api/auth/me");
     setCurrentUser(me);
-  } catch {
-    setToken(null);
-    setCurrentUser(null);
+  } catch (e) {
+    // A transient 5xx/network error must leave the token available for a
+    // later retry. The request helper already handles a current-token 401;
+    // this guard also clears stale user state when called without App.
+    if (e instanceof ApiError && e.status === 401 && (getToken() === token || getToken() === null)) {
+      if (getToken() === token) setToken(null);
+      setCurrentUser(null);
+    }
   }
 }
 

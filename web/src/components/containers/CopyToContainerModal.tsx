@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, createResource, For, Show } from "solid-js";
+import { Component, createSignal, createEffect, createResource, For } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullStatusWidget } from "../shared/PullStatusWidget";

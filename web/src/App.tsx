@@ -1,30 +1,29 @@
-import { Component, createSignal, onMount, Show } from "solid-js";
-import { Router, Route, Navigate, useNavigate } from "@solidjs/router";
-import { currentUser, loadSession } from "./stores/auth";
+import { Component, createSignal, onMount, onCleanup, Show, Suspense, lazy } from "solid-js";
+import { Router, Route, Navigate } from "@solidjs/router";
+import { currentUser, doLogout, loadSession } from "./stores/auth";
 import { Layout } from "./components/shared/Layout";
 import { ToastHost } from "./components/shared/Toast";
-import { LoginPage } from "./components/auth/LoginPage";
-import { OverviewPage } from "./components/overview/OverviewPage";
-import { ContainerListPage } from "./components/containers/ContainerListPage";
-import { ContainerDetailPage } from "./components/containers/ContainerDetailPage";
-import { TerminalWindowPage } from "./components/containers/TerminalWindowPage";
-import { ImageListPage } from "./components/images/ImageListPage";
-import { ComposeListPage } from "./components/compose/ComposeListPage";
-import { ComposeDetailPage } from "./components/compose/ComposeDetailPage";
-import { NetworkListPage } from "./components/networks/NetworkListPage";
-import { VolumeListPage } from "./components/volumes/VolumeListPage";
-import { EventsPage } from "./components/events/EventsPage";
-import { ConfigFilesPage } from "./components/config/ConfigFilesPage";
-import { UsersPage } from "./components/settings/UsersPage";
-import { RegistriesPage } from "./components/settings/RegistriesPage";
-import { AuditPage } from "./components/settings/AuditPage";
+
+// Keep the login shell small; page-only dependencies (xterm, CodeMirror,
+// compose converters) load with the route that needs them.
+const LoginPage = lazy(() => import("./components/auth/LoginPage").then((m) => ({ default: m.LoginPage })));
+const OverviewPage = lazy(() => import("./components/overview/OverviewPage").then((m) => ({ default: m.OverviewPage })));
+const ContainerListPage = lazy(() => import("./components/containers/ContainerListPage").then((m) => ({ default: m.ContainerListPage })));
+const ContainerDetailPage = lazy(() => import("./components/containers/ContainerDetailPage").then((m) => ({ default: m.ContainerDetailPage })));
+const TerminalWindowPage = lazy(() => import("./components/containers/TerminalWindowPage").then((m) => ({ default: m.TerminalWindowPage })));
+const ImageListPage = lazy(() => import("./components/images/ImageListPage").then((m) => ({ default: m.ImageListPage })));
+const ComposeListPage = lazy(() => import("./components/compose/ComposeListPage").then((m) => ({ default: m.ComposeListPage })));
+const ComposeDetailPage = lazy(() => import("./components/compose/ComposeDetailPage").then((m) => ({ default: m.ComposeDetailPage })));
+const NetworkListPage = lazy(() => import("./components/networks/NetworkListPage").then((m) => ({ default: m.NetworkListPage })));
+const VolumeListPage = lazy(() => import("./components/volumes/VolumeListPage").then((m) => ({ default: m.VolumeListPage })));
+const EventsPage = lazy(() => import("./components/events/EventsPage").then((m) => ({ default: m.EventsPage })));
+const ConfigFilesPage = lazy(() => import("./components/config/ConfigFilesPage").then((m) => ({ default: m.ConfigFilesPage })));
+const UsersPage = lazy(() => import("./components/settings/UsersPage").then((m) => ({ default: m.UsersPage })));
+const RegistriesPage = lazy(() => import("./components/settings/RegistriesPage").then((m) => ({ default: m.RegistriesPage })));
+const AuditPage = lazy(() => import("./components/settings/AuditPage").then((m) => ({ default: m.AuditPage })));
 
 // Guard wraps the authenticated layout; redirects to /login when no user.
 const Guard: Component<{ children?: any }> = (props) => {
-  const navigate = useNavigate();
-  onMount(() => {
-    window.addEventListener("phyless:unauthorized", () => navigate("/login", { replace: true }));
-  });
   return (
     <Show when={currentUser()} fallback={<Navigate href="/login" />}>
       <Layout>{props.children}</Layout>
@@ -34,14 +33,17 @@ const Guard: Component<{ children?: any }> = (props) => {
 
 export const App: Component = () => {
   const [ready, setReady] = createSignal(false);
-  onMount(async () => {
-    await loadSession();
-    setReady(true);
+  onMount(() => {
+    const onUnauthorized = () => doLogout();
+    window.addEventListener("phyless:unauthorized", onUnauthorized);
+    onCleanup(() => window.removeEventListener("phyless:unauthorized", onUnauthorized));
+    void loadSession().finally(() => setReady(true));
   });
 
   return (
     <Show when={ready()} fallback={<div class="p-8">…</div>}>
       <ToastHost />
+      <Suspense fallback={<div class="p-8">加载中…</div>}>
       <Router>
         <Route path="/login" component={LoginPage} />
         {/* Outside Guard/Layout on purpose — opened as a chrome-less popup
@@ -64,6 +66,7 @@ export const App: Component = () => {
           <Route path="/settings/audit" component={AuditPage} />
         </Route>
       </Router>
+      </Suspense>
     </Show>
   );
 };
