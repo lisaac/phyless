@@ -3,22 +3,43 @@ package api
 import (
 	"context"
 	"io"
+	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"phyless/internal/audit"
 )
 
 type imageActionClient struct {
 	client.APIClient
-	source       image.ImportSource
-	ref          string
-	pruneFilters filters.Args
-	deleted      []string
-	deleteForce  bool
+	source        image.ImportSource
+	ref           string
+	pruneFilters  filters.Args
+	deleted       []string
+	deleteForce   bool
+	tag           string
+	imageListErr  error
+	containerErr  error
+	volumeListErr error
+}
+
+func (c *imageActionClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
+	return []image.Summary{{ID: "sha256:image"}}, c.imageListErr
+}
+
+func (c *imageActionClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
+	return nil, c.containerErr
+}
+
+func (c *imageActionClient) VolumeList(context.Context, volumetypes.ListOptions) (volumetypes.ListResponse, error) {
+	return volumetypes.ListResponse{}, c.volumeListErr
 }
 
 func (c *imageActionClient) ImageImport(_ context.Context, source image.ImportSource, ref string, _ image.ImportOptions) (io.ReadCloser, error) {
@@ -42,7 +63,7 @@ func (c *imageActionClient) ImageRemove(_ context.Context, id string, options im
 
 func TestImageImportAndPruneUseRemoteSourceAndUnusedFilter(t *testing.T) {
 	client := &imageActionClient{}
-	s := &Server{docker: client}
+	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log"))}
 
 	importResponse := httptest.NewRecorder()
 	s.handleImageImport(importResponse, httptest.NewRequest(
@@ -73,5 +94,43 @@ func TestImageImportAndPruneUseRemoteSourceAndUnusedFilter(t *testing.T) {
 	))
 	if deleteResponse.Code != 200 || len(client.deleted) != 2 || client.deleted[0] != "sha256:a" || client.deleted[1] != "sha256:b" || !client.deleteForce || !strings.Contains(deleteResponse.Body.String(), "已删除镜像") {
 		t.Fatalf("delete response=%d ids=%v force=%v body=%q", deleteResponse.Code, client.deleted, client.deleteForce, deleteResponse.Body.String())
+	}
+}
+
+func (c *imageActionClient) ImageTag(_ context.Context, _ string, tag string) error {
+	c.tag = tag
+	return nil
+}
+
+func TestImageTagRequiresValidJSONAndTag(t *testing.T) {
+	client := &imageActionClient{}
+	server := &Server{docker: client}
+	for _, body := range []string{"", "{}", `{"tag":"   "}`, "not-json"} {
+		response := httptest.NewRecorder()
+		server.handleImageTag(response, httptest.NewRequest(http.MethodPost, "/api/images/tag?id=image", strings.NewReader(body)))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("body %q status = %d, want 400", body, response.Code)
+		}
+	}
+	response := httptest.NewRecorder()
+	server.handleImageTag(response, httptest.NewRequest(http.MethodPost, "/api/images/tag?id=image", strings.NewReader(`{"tag":"  latest  "}`)))
+	if response.Code != http.StatusNoContent || client.tag != "latest" {
+		t.Fatalf("valid tag status = %d, tag = %q", response.Code, client.tag)
+	}
+}
+
+func TestResourceUsageDiscoveryErrorsAreReported(t *testing.T) {
+	client := &imageActionClient{containerErr: context.Canceled}
+	response := httptest.NewRecorder()
+	(&Server{docker: client}).handleListImages(response, httptest.NewRequest("GET", "/api/images", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("image discovery status = %d", response.Code)
+	}
+
+	client = &imageActionClient{containerErr: context.Canceled}
+	response = httptest.NewRecorder()
+	(&Server{docker: client}).handleListVolumes(response, httptest.NewRequest("GET", "/api/volumes", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("volume discovery status = %d", response.Code)
 	}
 }

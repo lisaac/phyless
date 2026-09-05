@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"phyless/internal/auth"
@@ -23,5 +24,7 @@ func (s *Server) auditFromCtx(r *http.Request, action, target, result string) {
 	if claims != nil {
 		user = claims.Username
 	}
-	s.audit.Log(user, action, target, result)
+	if err := s.audit.Log(user, action, target, result); err != nil {
+		log.Printf("audit: write failed: %v", err)
+	}
 }

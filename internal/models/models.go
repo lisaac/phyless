@@ -20,11 +20,14 @@ func (r Role) Level() int {
 	return 0
 }
 
+func (r Role) Valid() bool { return r.Level() > 0 }
+
 type User struct {
 	ID           string `json:"id"`
 	Username     string `json:"username"`
 	PasswordHash string `json:"password_hash"`
 	Role         Role   `json:"role"`
+	TokenVersion uint64 `json:"token_version,omitempty"`
 }
 
 type ComposeProject struct {

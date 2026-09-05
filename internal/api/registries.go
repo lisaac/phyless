@@ -2,22 +2,29 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"phyless/internal/models"
+	"phyless/internal/store"
 )
 
+var errRegistryNotFound = errors.New("registry not found")
+
 func (s *Server) mountRegistryRoutes(r chi.Router) {
-	r.Get("/api/registries", s.handleListRegistries)
 	r.Post("/api/registries", s.handleCreateRegistry)
 	r.Delete("/api/registries/{id}", s.handleDeleteRegistry)
 	r.Post("/api/registries/{id}/test", s.handleTestRegistry)
 }
 
 func (s *Server) handleListRegistries(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := s.store.Read()
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read registries")
+		return
+	}
 	type safeReg struct {
 		ID       string `json:"id"`
 		URL      string `json:"url"`
@@ -40,16 +47,24 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	cfg, _ := s.store.Read()
-	reg := models.Registry{
-		ID:          fmt.Sprintf("%d", len(cfg.Registries)+1),
-		URL:         body.URL,
-		Username:    body.Username,
-		PasswordEnc: encrypt(body.Password),
+	body.URL = strings.TrimSpace(body.URL)
+	body.Username = strings.TrimSpace(body.Username)
+	if body.URL == "" {
+		writeError(w, http.StatusBadRequest, "url required")
+		return
 	}
-	cfg.Registries = append(cfg.Registries, reg)
-	if err := s.store.Write(cfg); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save")
+	var reg models.Registry
+	err := s.store.Update(func(cfg *store.Config) error {
+		id, err := store.NewID("r")
+		if err != nil {
+			return err
+		}
+		reg = models.Registry{ID: id, URL: body.URL, Username: body.Username, PasswordEnc: encrypt(body.Password)}
+		cfg.Registries = append(cfg.Registries, reg)
+		return nil
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save registry")
 		return
 	}
 	s.auditFromCtx(r, "registry.create", reg.URL, "ok")
@@ -58,23 +73,28 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteRegistry(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	cfg, _ := s.store.Read()
-	for i, reg := range cfg.Registries {
-		if reg.ID == id {
-			cfg.Registries = append(cfg.Registries[:i], cfg.Registries[i+1:]...)
-			if err := s.store.Write(cfg); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to save")
-				return
+	err := s.store.Update(func(cfg *store.Config) error {
+		for i, reg := range cfg.Registries {
+			if reg.ID == id {
+				cfg.Registries = append(cfg.Registries[:i], cfg.Registries[i+1:]...)
+				return nil
 			}
-			s.auditFromCtx(r, "registry.delete", id, "ok")
-			w.WriteHeader(http.StatusNoContent)
-			return
 		}
+		return errRegistryNotFound
+	})
+	if err != nil {
+		if errors.Is(err, errRegistryNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to save registry")
+		}
+		return
 	}
-	writeError(w, http.StatusNotFound, "not found")
+	s.auditFromCtx(r, "registry.delete", id, "ok")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleTestRegistry(w http.ResponseWriter, r *http.Request) {
 	// ponytail: stub; full impl would ping registry /v2/ endpoint with stored credentials
-	writeJSON(w, http.StatusOK, map[string]string{"status": "not implemented yet"})
+	writeError(w, http.StatusNotImplemented, "registry test is not implemented")
 }

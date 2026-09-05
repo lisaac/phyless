@@ -23,11 +23,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, u := range cfg.Users {
-		if u.Username == body.Username {
+		if u.Username == body.Username && u.Role.Valid() {
 			if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(body.Password)); err != nil {
 				break
 			}
-			token, err := auth.GenerateToken(u.ID, u.Username, u.Role, s.jwtSecret)
+			token, err := auth.GenerateTokenWithVersion(u.ID, u.Username, u.Role, u.TokenVersion, s.jwtSecret)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "token error")
 				return

@@ -39,7 +39,11 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 		return ti.Before(tj)
 	})
 
-	containers, _ := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	usedBy := make(map[string][]containerRef)
 	for _, c := range containers {
 		name := ""

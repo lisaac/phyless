@@ -32,7 +32,11 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	containers, _ := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	usedBy := make(map[string][]containerRef)
 	for _, c := range containers {
 		name := ""
@@ -175,7 +179,11 @@ func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Tag string `json:"tag"`
 	}
-	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Tag) == "" {
+		writeError(w, http.StatusBadRequest, "tag required")
+		return
+	}
+	body.Tag = strings.TrimSpace(body.Tag)
 	if err := s.docker.ImageTag(r.Context(), id, body.Tag); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
