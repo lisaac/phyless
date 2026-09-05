@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -74,6 +75,44 @@ func (s *Server) handleDeleteImage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditFromCtx(r, "image.delete", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func flushImageProgress(w http.ResponseWriter) {
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (s *Server) handleImageDeleteProgress(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs   []string `json:"ids"`
+		Force bool     `json:"force"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids must not be empty")
+		return
+	}
+	for i, id := range body.IDs {
+		body.IDs[i] = strings.TrimSpace(id)
+		if body.IDs[i] == "" {
+			writeError(w, http.StatusBadRequest, "ids must not contain empty values")
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-Accel-Buffering", "no")
+	dockercontainer.EmitStream(w, "开始删除 %d 个镜像", len(body.IDs))
+	flushImageProgress(w)
+	for _, id := range body.IDs {
+		if _, err := s.docker.ImageRemove(r.Context(), id, image.RemoveOptions{Force: body.Force}); err != nil {
+			s.auditFromCtx(r, "image.delete", id, "failed")
+			dockercontainer.EmitError(w, fmt.Errorf("镜像 %s：%w", id, err))
+		} else {
+			s.auditFromCtx(r, "image.delete", id, "ok")
+			dockercontainer.EmitStream(w, "已删除镜像 %s", id)
+		}
+		flushImageProgress(w)
+	}
 }
 
 func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
@@ -183,21 +222,31 @@ func (s *Server) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageImport(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Source string `json:"source"`
-		Ref    string `json:"ref,omitempty"`
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	source := image.ImportSource{}
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if !strings.HasPrefix(contentType, "application/x-tar") && !strings.HasPrefix(contentType, "application/octet-stream") {
+		var body struct {
+			Source string `json:"source"`
+			Ref    string `json:"ref,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		remote := strings.TrimSpace(body.Source)
+		u, err := url.ParseRequestURI(remote)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			writeError(w, http.StatusBadRequest, "source must be an http(s) URL")
+			return
+		}
+		ref = strings.TrimSpace(body.Ref)
+		source = image.ImportSource{SourceName: remote}
+	} else {
+		// A raw tar body is a container-exported rootfs, not an image archive.
+		source = image.ImportSource{Source: r.Body, SourceName: "-"}
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	source := strings.TrimSpace(body.Source)
-	u, err := url.ParseRequestURI(source)
-	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		writeError(w, http.StatusBadRequest, "source must be an http(s) URL")
-		return
-	}
-	resp, err := s.docker.ImageImport(r.Context(), image.ImportSource{SourceName: source}, strings.TrimSpace(body.Ref), image.ImportOptions{})
+	resp, err := s.docker.ImageImport(r.Context(), source, ref, image.ImportOptions{})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -211,10 +260,16 @@ func (s *Server) handleImageImport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) {
 	// dangling=false matches `docker image prune -a`: remove every image that
 	// is not referenced by a container, including tagged images.
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-Accel-Buffering", "no")
+	dockercontainer.EmitStream(w, "开始清理未使用镜像")
+	flushImageProgress(w)
 	report, err := s.docker.ImagesPrune(r.Context(), filters.NewArgs(filters.Arg("dangling", "false")))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		dockercontainer.EmitError(w, err)
+		flushImageProgress(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	dockercontainer.EmitStream(w, "已清理 %d 个未使用镜像", len(report.ImagesDeleted))
+	flushImageProgress(w)
 }

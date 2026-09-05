@@ -5,13 +5,6 @@ import { useFloatingSlot } from "../../stores/floatingStack";
 
 interface LayerProgress { id: string; status: string; current?: number; total?: number; }
 
-function fmtBytes(n: number): string {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}GB`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}MB`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}KB`;
-  return `${n}B`;
-}
-
 const STATUS_STYLE: Record<string, string> = {
   "Pull complete": "text-emerald-400",
   "Already exists": "text-zinc-500",
@@ -34,6 +27,7 @@ export const PullStatusWidget: Component<{
   body?: unknown;
   file?: File;
   onDone?: () => void;
+  onError?: (message: string) => void;
   onSettled?: () => void;
   onClose: () => void;
   // Overrides the auto-detected "查看容器详情" link (from a {container_id}
@@ -124,6 +118,7 @@ export const PullStatusWidget: Component<{
     layerMap.clear();
     buf = ""; readLen = 0;
     let failed = false;
+    let errorReported = false;
 
     const req = new XMLHttpRequest();
     xhr = req;
@@ -132,6 +127,18 @@ export const PullStatusWidget: Component<{
       if (settled) return;
       settled = true;
       props.onSettled?.();
+    };
+    const finishError = (message: string) => {
+      failed = true;
+      setErr(message);
+      setDone(true);
+      // Mark the request settled before the callback can close the card and
+      // trigger XHR.abort().
+      settle();
+      if (!errorReported) {
+        errorReported = true;
+        props.onError?.(message);
+      }
     };
     req.open("POST", url);
     req.setRequestHeader("Authorization", `Bearer ${getToken()}`);
@@ -153,21 +160,24 @@ export const PullStatusWidget: Component<{
     };
     req.onload = () => {
       if (req.status < 200 || req.status >= 300) {
-        failed = true;
-        setErr(req.responseText || `请求失败 (${req.status})`);
-        setDone(true);
-        settle();
+        finishError(req.responseText || `请求失败 (${req.status})`);
         return;
       }
       if (req.responseText.length > readLen) consumeChunk(req.responseText.slice(readLen));
       if (buf) applyLine(buf);
+      if (err()) {
+        finishError(err());
+        return;
+      }
       setDone(true);
-      if (err()) failed = true;
       if (!failed && !cancelled()) props.onDone?.();
       settle();
     };
-    req.onerror = () => { failed = true; setErr("网络错误"); setDone(true); settle(); };
-    req.onabort = () => { failed = true; setCancelled(true); setErr("已取消"); setDone(true); settle(); };
+    req.onerror = () => finishError("网络错误");
+    req.onabort = () => {
+      if (settled) return;
+      failed = true; setCancelled(true); setErr("已取消"); setDone(true); settle();
+    };
     req.send(file ?? (body ? JSON.stringify(body) : undefined));
   });
 
