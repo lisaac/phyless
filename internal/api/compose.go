@@ -23,28 +23,24 @@ import (
 	dockercompose "phyless/internal/docker/compose"
 	dockercontainer "phyless/internal/docker/container"
 	"phyless/internal/models"
+	"phyless/internal/store"
+	phyWS "phyless/internal/ws"
 )
 
 // id is passed as ?id= (query string), not a path segment: discovered project
 // ids look like "auto:myproject" — a colon in a path segment hits the same
 // chi RawPath decoding bug that once broke image ids (see images.go).
 func (s *Server) mountComposeRoutes(r chi.Router) {
-	r.Get("/api/compose", s.handleListCompose)
 	r.Post("/api/compose", s.handleCreateCompose)
-	r.Get("/api/compose/detail", s.handleGetCompose)
 	r.Delete("/api/compose", s.handleDeleteCompose)
 	r.Post("/api/compose/up", s.handleComposeUp)
 	r.Post("/api/compose/stop", s.handleComposeStop)
 	r.Post("/api/compose/down", s.handleComposeDown)
 	r.Post("/api/compose/pull", s.handleComposePull)
 	r.Post("/api/compose/restart", s.handleComposeRestart)
-	r.Get("/api/compose/config", s.handleComposeResolvedConfig)
-	r.Get("/api/compose/files", s.handleComposeListFiles)
-	r.Get("/api/compose/files/content", s.handleComposeGetFileContent)
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
 	r.Delete("/api/compose/files", s.handleComposeDeleteFile)
 	r.Post("/api/compose/files/rename", s.handleComposeRenameFile)
-	r.Get("/api/compose/files/download", s.handleComposeDownloadFile)
 }
 
 const (
@@ -58,6 +54,8 @@ type composeLookupError struct {
 	status  int
 	message string
 }
+
+var errComposeNotFound = errors.New("compose project not found")
 
 func (e *composeLookupError) Error() string { return e.message }
 
@@ -111,7 +109,7 @@ type ComposeInfo struct {
 // discoverProjects groups all containers by their compose project label.
 func (s *Server) discoverProjectsWithError(ctx context.Context) (map[string][]container.Summary, error) {
 	if s.docker == nil {
-		return nil, nil
+		return nil, errors.New("docker client is not initialized")
 	}
 	containers, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
@@ -124,11 +122,6 @@ func (s *Server) discoverProjectsWithError(ctx context.Context) (map[string][]co
 		}
 	}
 	return groups, nil
-}
-
-func (s *Server) discoverProjects(ctx context.Context) map[string][]container.Summary {
-	groups, _ := s.discoverProjectsWithError(ctx)
-	return groups
 }
 
 func composeContainerLabel(cs []container.Summary, key string) string {
@@ -166,7 +159,11 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to read compose projects")
 		return
 	}
-	groups := s.discoverProjects(r.Context())
+	groups, err := s.discoverProjectsWithError(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "cannot inspect Docker Compose labels")
+		return
+	}
 
 	var out []ComposeInfo
 	for _, p := range cfg.ComposeProjects {
@@ -223,15 +220,17 @@ func (s *Server) handleCreateCompose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	cfg, err := s.store.Read()
+	err := s.store.Update(func(cfg *store.Config) error {
+		id, err := store.NewID("c")
+		if err != nil {
+			return err
+		}
+		p.ID = id
+		cfg.ComposeProjects = append(cfg.ComposeProjects, p)
+		return nil
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read compose projects")
-		return
-	}
-	p.ID = fmt.Sprintf("%d", len(cfg.ComposeProjects)+1)
-	cfg.ComposeProjects = append(cfg.ComposeProjects, p)
-	if err := s.store.Write(cfg); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save")
+		writeError(w, http.StatusInternalServerError, "failed to save compose project")
 		return
 	}
 	s.auditFromCtx(r, "compose.register", p.Name, "ok")
@@ -477,24 +476,25 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "自动发现的项目无法删除，使用「停止」将其下线")
 		return
 	}
-	cfg, err := s.store.Read()
+	err := s.store.Update(func(cfg *store.Config) error {
+		for i, p := range cfg.ComposeProjects {
+			if p.ID == id {
+				cfg.ComposeProjects = append(cfg.ComposeProjects[:i], cfg.ComposeProjects[i+1:]...)
+				return nil
+			}
+		}
+		return errComposeNotFound
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read compose projects")
+		if errors.Is(err, errComposeNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to save compose project")
+		}
 		return
 	}
-	for i, p := range cfg.ComposeProjects {
-		if p.ID == id {
-			cfg.ComposeProjects = append(cfg.ComposeProjects[:i], cfg.ComposeProjects[i+1:]...)
-			if err := s.store.Write(cfg); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to save")
-				return
-			}
-			s.auditFromCtx(r, "compose.delete", id, "ok")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-	}
-	writeError(w, http.StatusNotFound, "not found")
+	s.auditFromCtx(r, "compose.delete", id, "ok")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleComposeUp(w http.ResponseWriter, r *http.Request) {
@@ -764,9 +764,9 @@ func (s *Server) handleComposeResolvedConfig(w http.ResponseWriter, r *http.Requ
 // main compose file) — same root+subPath+isSubPath pattern as the /etc config
 // file browser (config.go), just rooted at the project's directory instead.
 func (s *Server) handleComposeListFiles(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	p, err := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
 	}
 	subPath := r.URL.Query().Get("path")
@@ -783,9 +783,9 @@ func (s *Server) handleComposeListFiles(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleComposeGetFileContent(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	p, err := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
 	}
 	fullPath := filepath.Join(p.BaseDir, r.URL.Query().Get("path"))
@@ -797,9 +797,9 @@ func (s *Server) handleComposeGetFileContent(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleComposePutFileContent(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	p, err := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
 	}
 	subPath := r.URL.Query().Get("path")
@@ -808,12 +808,16 @@ func (s *Server) handleComposePutFileContent(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10MB limit
+	data, err := readBounded(r.Body, 10<<20)
 	if err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+	if err := atomicWriteFile(fullPath, data, 0644); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -827,14 +831,14 @@ func (s *Server) handleComposePutFileContent(w http.ResponseWriter, r *http.Requ
 // — a compose project's BaseDir already lives on the same filesystem the
 // phyless process itself sees.
 func (s *Server) handleComposeDeleteFile(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	p, err := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
 	}
 	subPath := r.URL.Query().Get("path")
 	fullPath := filepath.Join(p.BaseDir, subPath)
-	if !isSubPath(p.BaseDir, fullPath) || fullPath == p.BaseDir {
+	if !isSubPath(p.BaseDir, fullPath) || filepath.Clean(fullPath) == filepath.Clean(p.BaseDir) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
@@ -847,9 +851,9 @@ func (s *Server) handleComposeDeleteFile(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleComposeDownloadFile(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	p, err := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
 	}
 	fullPath := filepath.Join(p.BaseDir, r.URL.Query().Get("path"))
@@ -857,13 +861,13 @@ func (s *Server) handleComposeDownloadFile(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	streamTar(w, fullPath)
+	serveTar(w, fullPath)
 }
 
 func (s *Server) handleComposeRenameFile(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.findCompose(r.Context(), r.URL.Query().Get("id"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "not found")
+	p, err := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
 		return
 	}
 	var body struct {
@@ -876,7 +880,8 @@ func (s *Server) handleComposeRenameFile(w http.ResponseWriter, r *http.Request)
 	}
 	oldFull := filepath.Join(p.BaseDir, body.OldPath)
 	newFull := filepath.Join(p.BaseDir, body.NewPath)
-	if !isSubPath(p.BaseDir, oldFull) || !isSubPath(p.BaseDir, newFull) {
+	if !isSubPath(p.BaseDir, oldFull) || !isSubPath(p.BaseDir, newFull) ||
+		filepath.Clean(oldFull) == filepath.Clean(p.BaseDir) || filepath.Clean(newFull) == filepath.Clean(p.BaseDir) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
@@ -907,13 +912,12 @@ func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := phyWS.MonitorConnection(r.Context(), conn)
 	defer cancel()
 
 	service, err := s.composeRuntime.NewService(ctx, dockercompose.ServiceOptions{})
 	if err != nil {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
+		_ = phyWS.WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 		return
 	}
 	project, err := s.loadResolvedComposeProject(ctx, resolved)
@@ -922,7 +926,7 @@ func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 		err = nil
 	}
 	if err != nil {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
+		_ = phyWS.WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 		return
 	}
 	projectName := resolved.effective.Name
@@ -934,18 +938,6 @@ func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	consumer := &composeLogConsumer{conn: conn, cancel: cancel}
-	// A websocket close is not guaranteed to interrupt an HTTP request while
-	// no log bytes are in flight. Read control frames in the background so the
-	// Compose monitor always receives cancellation promptly.
-	go func() {
-		for {
-			if _, _, err := conn.NextReader(); err != nil {
-				cancel()
-				return
-			}
-		}
-	}()
-
 	err = service.Compose().Logs(ctx, projectName, consumer, composeapi.LogOptions{
 		Project:    project,
 		Follow:     true,
@@ -983,7 +975,7 @@ func (c *composeLogConsumer) send(message string) {
 	if c.err != nil {
 		return
 	}
-	if err := c.conn.WriteMessage(websocket.BinaryMessage, []byte(message)); err != nil {
+	if err := phyWS.WriteMessage(c.conn, websocket.BinaryMessage, []byte(message)); err != nil {
 		c.err = err
 		c.cancel()
 	}
@@ -995,28 +987,30 @@ func (c *composeLogConsumer) WriteErr() error {
 	return c.err
 }
 
-// findCompose keeps the simple lookup contract used by file-management
-// handlers. Registered projects are local configuration records and can still
-// be browsed or edited while the daemon is offline; only auto-discovered IDs
-// need a live label lookup. Lifecycle/detail handlers call resolveCompose
-// directly so they can return a useful 409 when labels identify more than one
-// real project and a daemon discovery error when mutation would be unsafe.
-func (s *Server) findCompose(ctx context.Context, id string) (models.ComposeProject, bool) {
+// findCompose resolves the local project record used by file-management
+// handlers. Store failures are returned separately from a missing project so
+// callers do not turn unavailable state into a misleading 404. Registered
+// projects can still be browsed or edited while the daemon is offline; only
+// auto-discovered IDs need a live label lookup. Lifecycle/detail handlers call
+// resolveCompose directly so they can return a useful 409 when labels identify
+// more than one real project and a daemon discovery error when mutation would
+// be unsafe.
+func (s *Server) findCompose(ctx context.Context, id string) (models.ComposeProject, error) {
 	if strings.HasPrefix(id, "auto:") {
 		resolved, err := s.resolveCompose(ctx, id)
 		if err != nil {
-			return models.ComposeProject{}, false
+			return models.ComposeProject{}, err
 		}
-		return resolved.effective, true
+		return resolved.effective, nil
 	}
 	cfg, err := s.store.Read()
 	if err != nil {
-		return models.ComposeProject{}, false
+		return models.ComposeProject{}, &composeLookupError{status: http.StatusInternalServerError, message: "failed to read compose projects"}
 	}
 	for _, project := range cfg.ComposeProjects {
 		if project.ID == id {
-			return project, true
+			return project, nil
 		}
 	}
-	return models.ComposeProject{}, false
+	return models.ComposeProject{}, &composeLookupError{status: http.StatusNotFound, message: "not found"}
 }

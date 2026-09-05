@@ -27,6 +27,7 @@ func ListDir(root, subPath string) ([]FileEntry, error) {
 		return nil, err
 	}
 	out := make([]FileEntry, 0, len(entries))
+	usernames := make(map[int]string)
 	for _, e := range entries {
 		fe := FileEntry{
 			Name:  e.Name(),
@@ -42,12 +43,23 @@ func ListDir(root, subPath string) ([]FileEntry, error) {
 			if st, ok := info.Sys().(*syscall.Stat_t); ok {
 				fe.Uid = int(st.Uid)
 				fe.Gid = int(st.Gid)
-				if u, err := user.LookupId(strconv.Itoa(fe.Uid)); err == nil {
-					fe.Uname = u.Username
-				}
+				fe.Uname = cachedUsername(usernames, fe.Uid, user.LookupId)
 			}
 		}
 		out = append(out, fe)
 	}
 	return out, nil
+}
+
+func cachedUsername(cache map[int]string, uid int, lookup func(string) (*user.User, error)) string {
+	if username, ok := cache[uid]; ok {
+		return username
+	}
+	u, err := lookup(strconv.Itoa(uid))
+	if err == nil {
+		cache[uid] = u.Username
+	} else {
+		cache[uid] = ""
+	}
+	return cache[uid]
 }

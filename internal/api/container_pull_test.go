@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -22,14 +23,22 @@ import (
 type createPullClient struct {
 	client.APIClient
 	inspectErr      error
+	templateErr     error
 	pullFailure     bool
 	pulled, created bool
+	createdConfig   *container.Config
 	proxied         bool
 	options         image.PullOptions
 }
 
 func (c *createPullClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
 	return image.InspectResponse{Os: "linux", Architecture: "amd64"}, c.inspectErr
+}
+func (c *createPullClient) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
+	if c.templateErr != nil {
+		return container.InspectResponse{}, c.templateErr
+	}
+	return container.InspectResponse{Config: &container.Config{Image: "template"}}, nil
 }
 func (c *createPullClient) ImagePull(ctx context.Context, _ string, options image.PullOptions) (io.ReadCloser, error) {
 	c.pulled = true
@@ -40,8 +49,9 @@ func (c *createPullClient) ImagePull(ctx context.Context, _ string, options imag
 	}
 	return io.NopCloser(strings.NewReader(`{"status":"done"}`)), nil
 }
-func (c *createPullClient) ContainerCreate(context.Context, *container.Config, *container.HostConfig, *network.NetworkingConfig, *ocispec.Platform, string) (container.CreateResponse, error) {
+func (c *createPullClient) ContainerCreate(_ context.Context, cfg *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, _ string) (container.CreateResponse, error) {
 	c.created = true
+	c.createdConfig = cfg
 	return container.CreateResponse{ID: "new-container"}, nil
 }
 
@@ -70,5 +80,38 @@ func TestCreatePullPoliciesAndErrors(t *testing.T) {
 				t.Fatalf("pull=%v create=%v response=%s", c.pulled, c.created, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestCreateRejectsTemplateInspectError(t *testing.T) {
+	c := &createPullClient{templateErr: errors.New("template unavailable")}
+	s := &Server{docker: c, audit: audit.New(filepath.Join(t.TempDir(), "audit.log"))}
+	r := httptest.NewRequest("POST", "/api/containers", strings.NewReader(`{"image":"alpine","template_id":"missing"}`))
+	w := httptest.NewRecorder()
+	s.handleCreateContainer(w, r)
+	if w.Code != 400 || c.created {
+		t.Fatalf("status=%d created=%v body=%s", w.Code, c.created, w.Body.String())
+	}
+}
+
+func TestCreateRejectsMissingImage(t *testing.T) {
+	c := &createPullClient{}
+	s := &Server{docker: c, audit: audit.New(filepath.Join(t.TempDir(), "audit.log"))}
+	r := httptest.NewRequest("POST", "/api/containers", strings.NewReader(`{"name":"app"}`))
+	w := httptest.NewRecorder()
+	s.handleCreateContainer(w, r)
+	if w.Code != 400 || c.created || c.pulled {
+		t.Fatalf("status=%d created=%v pulled=%v body=%s", w.Code, c.created, c.pulled, w.Body.String())
+	}
+}
+
+func TestCreatePreservesExplicitEmptyEntrypoint(t *testing.T) {
+	c := &createPullClient{}
+	s := &Server{docker: c, audit: audit.New(filepath.Join(t.TempDir(), "audit.log"))}
+	r := httptest.NewRequest("POST", "/api/containers", strings.NewReader(`{"image":"alpine","entrypoint":[]}`))
+	w := httptest.NewRecorder()
+	s.handleCreateContainer(w, r)
+	if w.Code != http.StatusOK || c.createdConfig == nil || c.createdConfig.Entrypoint == nil || len(c.createdConfig.Entrypoint) != 0 {
+		t.Fatalf("status=%d config=%#v body=%s", w.Code, c.createdConfig, w.Body.String())
 	}
 }

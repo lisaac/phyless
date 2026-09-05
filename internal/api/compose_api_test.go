@@ -123,6 +123,18 @@ func TestResolveComposePropagatesDiscoveryFailure(t *testing.T) {
 	}
 }
 
+func TestListComposePropagatesDiscoveryFailure(t *testing.T) {
+	dir := t.TempDir()
+	p := models.ComposeProject{ID: "1", Name: "display", BaseDir: dir, ComposeFile: filepath.Join(dir, "compose.yaml")}
+	server := newComposeDiscoveryServer(t, p, nil)
+	server.docker = &composeDiscoveryClient{err: errors.New("daemon unavailable")}
+	res := httptest.NewRecorder()
+	server.handleListCompose(res, httptest.NewRequest(http.MethodGet, "/api/compose", nil))
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
 func TestComposeDetailIncludesDisabledServicesAndProjectName(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	dir := t.TempDir()
@@ -273,11 +285,25 @@ func TestFindRegisteredComposeWorksWithoutDaemon(t *testing.T) {
 	server := newComposeDiscoveryServer(t, project, nil)
 	server.docker = &composeDiscoveryClient{err: errors.New("daemon unavailable")}
 
-	got, ok := server.findCompose(context.Background(), project.ID)
-	if !ok {
-		t.Fatal("registered project was not found while daemon was offline")
+	got, err := server.findCompose(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("registered project lookup failed while daemon was offline: %v", err)
 	}
 	if got.ID != project.ID || got.ComposeFile != project.ComposeFile {
 		t.Fatalf("project = %#v, want %#v", got, project)
+	}
+}
+
+func TestComposeFileLookupStoreFailureIsInternalServerError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{store: store.New(path)}
+	req := httptest.NewRequest(http.MethodGet, "/api/compose/files?id=registered", nil)
+	res := httptest.NewRecorder()
+	server.handleComposeListFiles(res, req)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s; want 500 for store failure", res.Code, res.Body.String())
 	}
 }

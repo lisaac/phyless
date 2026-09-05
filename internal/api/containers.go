@@ -1,11 +1,12 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	pathpkg "path"
 	"sort"
 	"strings"
 
@@ -58,6 +59,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		requestPullOptions
 		Name           string            `json:"name"`
 		Image          string            `json:"image"`
+		Entrypoint     []string          `json:"entrypoint,omitempty"`
 		Cmd            []string          `json:"cmd,omitempty"`
 		Env            []string          `json:"env,omitempty"`
 		TemplateID     string            `json:"template_id,omitempty"`
@@ -106,6 +108,11 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auditFromCtx(r, "container.create", body.Name, result)
 	}()
+	body.Image = strings.TrimSpace(body.Image)
+	if strings.TrimSpace(body.Image) == "" {
+		writeError(w, http.StatusBadRequest, "image required")
+		return
+	}
 	var baseCfg *container.Config
 	ctx, err := s.pullContext(r.Context(), body.ProxyURL)
 	if err != nil {
@@ -139,10 +146,16 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	var baseHostCfg *container.HostConfig
 	if body.TemplateID != "" {
 		info, err := s.docker.ContainerInspect(r.Context(), body.TemplateID)
-		if err == nil {
-			baseCfg = info.Config
-			baseHostCfg = info.HostConfig
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "template inspect failed: "+err.Error())
+			return
 		}
+		if info.Config == nil {
+			writeError(w, http.StatusBadRequest, "template has no config")
+			return
+		}
+		baseCfg = info.Config
+		baseHostCfg = info.HostConfig
 	}
 
 	cfg := &container.Config{Image: body.Image}
@@ -152,6 +165,9 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.Cmd) > 0 {
 		cfg.Cmd = strslice.StrSlice(body.Cmd)
+	}
+	if body.Entrypoint != nil {
+		cfg.Entrypoint = strslice.StrSlice(body.Entrypoint)
 	}
 	if len(body.Env) > 0 {
 		cfg.Env = body.Env
@@ -317,6 +333,10 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		dockercontainer.EmitError(w, err)
 		return
 	}
+	if strings.TrimSpace(resp.ID) == "" {
+		dockercontainer.EmitError(w, fmt.Errorf("Docker returned an empty container ID"))
+		return
+	}
 	result = "ok"
 	dockercontainer.EmitDone(w, resp.ID, "✓ 创建完成，容器 ID: %s", resp.ID)
 }
@@ -407,8 +427,15 @@ func (s *Server) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)                //nolint:errcheck
-	s.docker.ContainerRename(r.Context(), id, body.Name) //nolint:errcheck
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+	if err := s.docker.ContainerRename(r.Context(), id, body.Name); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "container.rename", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -421,7 +448,10 @@ func (s *Server) handleContainerDuplicate(w http.ResponseWriter, r *http.Request
 	var body struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
 	newID, err := dockercontainer.Duplicate(r.Context(), s.docker, id, body.Name)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -455,7 +485,12 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	encoded, err := s.registryAuthForImage(info.Config.Image, body.RegistryID)
+	imageRef := dockercontainer.UpgradeImageRef(info)
+	if imageRef == "" {
+		writeError(w, http.StatusBadRequest, "container has no image reference")
+		return
+	}
+	encoded, err := s.registryAuthForImage(imageRef, body.RegistryID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -480,92 +515,15 @@ func (s *Server) handleContainerUpdateResources(w http.ResponseWriter, r *http.R
 	}
 	clearMemory := body.Resources.Memory == -1
 	clearSwap := body.Resources.MemorySwap == -1
-	if clearMemory {
-		// Docker 26.1.5 ContainerUpdate rejects Memory=-1 and treats Memory=0 as no-op.
-		// Use a privileged helper to write "max" to the container's cgroup and patch
-		// hostconfig.json so the change survives restart.
-		body.Resources.Memory = 0
-		body.Resources.MemorySwap = 0
+	if clearMemory || clearSwap {
+		writeError(w, http.StatusBadRequest, "online memory limit clearing is unsupported; recreate the container")
+		return
 	}
 	if _, err := s.docker.ContainerUpdate(r.Context(), id, body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if clearMemory {
-		if err := s.clearContainerMemoryLimit(r.Context(), id, clearSwap); err != nil {
-			writeError(w, http.StatusBadRequest, "内存限制清除失败: "+err.Error())
-			return
-		}
-	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
-}
-
-// clearContainerMemoryLimit uses a privileged busybox container to directly write
-// "max" to the target container's cgroup v2 memory.max (and optionally memory.swap.max),
-// then patches hostconfig.json so the unlimited state persists across restarts.
-//
-// ponytail: Docker 26.1.5 ContainerUpdate cannot clear memory limits (Memory=0 is
-// a no-op, Memory=-1 is rejected). This is the only reliable workaround that works
-// without stopping the container.
-func (s *Server) clearContainerMemoryLimit(ctx context.Context, id string, clearSwap bool) error {
-	info, err := s.docker.ContainerInspect(ctx, id)
-	if err != nil {
-		return err
-	}
-	fullID := info.ID
-
-	cgroupScope := fmt.Sprintf("docker-%s.scope", fullID)
-	cgroupBase := "/host-cgroup/system.slice/" + cgroupScope
-
-	// cgroup writes are best-effort: the path may not exist if the container is stopped
-	// or uses a non-standard cgroup layout. Use || true so the overall script continues.
-	script := fmt.Sprintf("echo max > %s/memory.max 2>/dev/null || true", cgroupBase)
-	if clearSwap {
-		script += fmt.Sprintf(" ; echo max > %s/memory.swap.max 2>/dev/null || true", cgroupBase)
-	}
-	// Patch hostconfig.json AFTER ContainerUpdate has already written its snapshot,
-	// so our 0-value lands as the final disk state (read on next container start).
-	script += fmt.Sprintf(
-		` ; sed -i 's/"Memory":[0-9][0-9]*/"Memory":0/g' /host-docker/containers/%s/hostconfig.json`,
-		fullID,
-	)
-	if clearSwap {
-		script += fmt.Sprintf(
-			` ; sed -i 's/"MemorySwap":-*[0-9][0-9]*/"MemorySwap":0/g' /host-docker/containers/%s/hostconfig.json`,
-			fullID,
-		)
-	}
-
-	resp, err := s.docker.ContainerCreate(ctx,
-		&container.Config{Image: "alpine", Cmd: []string{"sh", "-c", script}},
-		&container.HostConfig{
-			AutoRemove: true,
-			Privileged: true,
-			Binds: []string{
-				"/sys/fs/cgroup:/host-cgroup",
-				"/var/lib/docker:/host-docker",
-			},
-		},
-		&network.NetworkingConfig{}, nil, "",
-	)
-	if err != nil {
-		return err
-	}
-	if err := s.docker.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return err
-	}
-	waitC, errC := s.docker.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case res := <-waitC:
-		if res.StatusCode != 0 {
-			return fmt.Errorf("helper exited %d", res.StatusCode)
-		}
-		return nil
-	case err := <-errC:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
@@ -581,18 +539,11 @@ func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleContainerDeleteFile(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	path := r.URL.Query().Get("path")
-	if path == "" || path == "/" {
+	if !validContainerMutationPath(path) {
 		writeError(w, http.StatusBadRequest, "path required")
 		return
 	}
-	execResp, err := s.docker.ContainerExecCreate(r.Context(), id, container.ExecOptions{
-		Cmd: []string{"rm", "-rf", path},
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.docker.ContainerExecStart(r.Context(), execResp.ID, container.ExecStartOptions{}); err != nil {
+	if err := dockercontainer.ExecChecked(r.Context(), s.docker, id, []string{"rm", "-rf", "--", path}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -609,18 +560,23 @@ func (s *Server) handleContainerRenameFile(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "old_path and new_path required")
 		return
 	}
-	execResp, err := s.docker.ContainerExecCreate(r.Context(), id, container.ExecOptions{
-		Cmd: []string{"mv", body.OldPath, body.NewPath},
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if !validContainerMutationPath(body.OldPath) || !validContainerMutationPath(body.NewPath) {
+		writeError(w, http.StatusBadRequest, "invalid file path")
 		return
 	}
-	if err := s.docker.ContainerExecStart(r.Context(), execResp.ID, container.ExecStartOptions{}); err != nil {
+	if err := dockercontainer.ExecChecked(r.Context(), s.docker, id, []string{"mv", "--", body.OldPath, body.NewPath}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func validContainerMutationPath(raw string) bool {
+	if raw == "" || strings.ContainsRune(raw, 0) || !pathpkg.IsAbs(raw) {
+		return false
+	}
+	clean := pathpkg.Clean(raw)
+	return clean != "/" && clean != "." && clean != ".."
 }
 
 func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
@@ -696,14 +652,15 @@ func (s *Server) handleContainerUploadFile(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "missing name")
 		return
 	}
-	// Docker's CopyToContainer expects the body to be a tar archive (it's the
-	// same wire format `docker cp` uses), not the raw file bytes — wrap it.
-	content, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if r.ContentLength > maxUploadSize {
+		writeError(w, http.StatusRequestEntityTooLarge, "upload exceeds size limit")
 		return
 	}
-	if err := dockercontainer.UploadFile(r.Context(), s.docker, id, path, dockercontainer.CreateTar(name, content)); err != nil {
+	if err := dockercontainer.UploadTarFile(r.Context(), s.docker, id, path, name, r.Body, maxUploadSize); err != nil {
+		if errors.Is(err, dockercontainer.ErrUploadTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

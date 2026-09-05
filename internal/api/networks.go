@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-chi/chi/v5"
@@ -80,7 +81,11 @@ func (s *Server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ContainerID string `json:"container"`
 	}
-	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ContainerID) == "" {
+		writeError(w, http.StatusBadRequest, "container required")
+		return
+	}
+	body.ContainerID = strings.TrimSpace(body.ContainerID)
 	if err := s.docker.NetworkConnect(r.Context(), id, body.ContainerID, nil); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -94,11 +99,14 @@ func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request)
 		ContainerID string `json:"container"`
 		Force       bool   `json:"force"`
 	}
-	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ContainerID) == "" {
+		writeError(w, http.StatusBadRequest, "container required")
+		return
+	}
+	body.ContainerID = strings.TrimSpace(body.ContainerID)
 	if err := s.docker.NetworkDisconnect(r.Context(), id, body.ContainerID, body.Force); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-

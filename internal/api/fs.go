@@ -1,7 +1,7 @@
 package api
 
 import (
-	"io"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,17 +10,12 @@ import (
 	"phyless/internal/config"
 )
 
-// mountFsRoutes exposes browse/read/write access to the whole filesystem the
-// phyless process itself sees (unlike /api/config/* which is rooted at
-// /etc) — used by the compose-project registration form's path picker,
-// which needs to suggest directories and auto-detect an existing
-// compose.yaml/docker-compose.yaml/.env anywhere a project might live, and
-// to write a fresh compose.yaml when registering a project that doesn't
-// have one on disk yet. Already gated to Operator+ via the route group in
-// server.go, same trust level as /etc file editing and container exec.
+// mountFsRoutes exposes the write portion of filesystem access. The matching
+// read routes are mounted in the Viewer group; this group only handles writes
+// used by the compose-project registration form to create a fresh compose
+// file. The filesystem boundary is the process's root (unlike /api/config/*,
+// which is rooted at /etc).
 func (s *Server) mountFsRoutes(r chi.Router) {
-	r.Get("/api/fs/list", s.handleFsList)
-	r.Get("/api/fs/file", s.handleFsGetFile)
 	r.Put("/api/fs/file", s.handleFsPutFile)
 }
 
@@ -28,6 +23,11 @@ func (s *Server) handleFsList(w http.ResponseWriter, r *http.Request) {
 	dir := r.URL.Query().Get("path")
 	if dir == "" {
 		dir = "/"
+	}
+	dir = filepath.Clean(dir)
+	if !filepath.IsAbs(dir) || !isSubPath("/", dir) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
 	}
 	entries, err := config.ListDir("/", dir)
 	if err != nil {
@@ -43,6 +43,10 @@ func (s *Server) handleFsGetFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "path required")
 		return
 	}
+	if !filepath.IsAbs(fullPath) || !isSubPath("/", fullPath) || fullPath == "/" {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
 	serveFileContent(w, fullPath)
 }
 
@@ -52,8 +56,16 @@ func (s *Server) handleFsPutFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "path required")
 		return
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, 50<<20)) // 50MB limit
+	if !filepath.IsAbs(fullPath) || !isSubPath("/", fullPath) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	data, err := readBounded(r.Body, maxUploadSize)
 	if err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -61,7 +73,7 @@ func (s *Server) handleFsPutFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+	if err := atomicWriteFile(fullPath, data, 0644); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

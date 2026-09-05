@@ -6,22 +6,62 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/containerd/platforms"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/internal/docker"
 )
+
+// ErrUploadTooLarge is returned before any Docker API call when an upload
+// exceeds its caller-provided limit.
+var ErrUploadTooLarge = errors.New("upload exceeds size limit")
+
+const upgradeImageRefLabel = "io.phyless.upgrade-image-ref"
+const maxInt64 = int64(^uint64(0) >> 1)
+
+var upgradeOperationState = struct {
+	sync.Mutex
+	active map[string]struct{}
+}{active: make(map[string]struct{})}
+
+// ponytail: process-local reject-only locking; use distributed locking if
+// multiple server instances share one Docker daemon.
+
+func tryUpgradeOperation(containerID string) (func(), bool) {
+	containerID = strings.TrimSpace(containerID)
+	if containerID == "" {
+		return nil, false
+	}
+	upgradeOperationState.Lock()
+	defer upgradeOperationState.Unlock()
+	if _, ok := upgradeOperationState.active[containerID]; ok {
+		return nil, false
+	}
+	upgradeOperationState.active[containerID] = struct{}{}
+	return func() {
+		upgradeOperationState.Lock()
+		delete(upgradeOperationState.active, containerID)
+		upgradeOperationState.Unlock()
+	}, true
+}
 
 // streamEvent is one line of a newline-delimited JSON progress stream — the
 // same {stream}/{error} shape docker load already uses, so a single frontend
@@ -68,7 +108,7 @@ func ExecListDir(ctx context.Context, cli client.APIClient, containerID, path st
 
 func execLs(ctx context.Context, cli client.APIClient, containerID, path string) ([]FileEntry, error) {
 	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-		Cmd:          []string{"ls", "-la", path},
+		Cmd:          []string{"ls", "-la", "--", path},
 		AttachStdout: true,
 		AttachStderr: true,
 		Env:          []string{"LANG=C", "LC_ALL=C"},
@@ -76,14 +116,27 @@ func execLs(ctx context.Context, cli client.APIClient, containerID, path string)
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(exec.ID) == "" {
+		return nil, fmt.Errorf("Docker returned an empty exec ID")
+	}
 	resp, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Close()
+	stopClose := context.AfterFunc(ctx, resp.Close)
+	defer stopClose()
 
 	var stdout, stderr bytes.Buffer
-	stdcopy.StdCopy(&stdout, &stderr, resp.Reader) //nolint:errcheck
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("读取 ls 输出失败: %w", err)
+	}
+	if err := waitExec(ctx, cli, exec.ID); err != nil {
+		return nil, err
+	}
 
 	if stdout.Len() == 0 {
 		msg := strings.TrimSpace(stderr.String())
@@ -99,6 +152,9 @@ func execLs(ctx context.Context, cli client.APIClient, containerID, path string)
 		if e, ok := parseLsLine(scanner.Text()); ok {
 			out = append(out, e)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("解析 ls 输出失败: %w", err)
 	}
 	return out, nil
 }
@@ -189,28 +245,6 @@ func filenameAfterFields(line string, n int) string {
 	return strings.TrimRight(line[i:], "\r\n")
 }
 
-// ListFiles lists files in a container at path by parsing a tar stream from docker cp.
-func ListFiles(ctx context.Context, cli client.APIClient, containerID, path string) ([]tar.Header, error) {
-	rc, _, err := cli.CopyFromContainer(ctx, containerID, path)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	var headers []tar.Header
-	tr := tar.NewReader(rc)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		headers = append(headers, *hdr)
-	}
-	return headers, nil
-}
-
 // DownloadFile streams a single file from a container. Caller must close the returned ReadCloser.
 func DownloadFile(ctx context.Context, cli client.APIClient, containerID, path string) (io.ReadCloser, error) {
 	rc, _, err := cli.CopyFromContainer(ctx, containerID, path)
@@ -220,6 +254,143 @@ func DownloadFile(ctx context.Context, cli client.APIClient, containerID, path s
 // UploadFile uploads content (as a tar stream) to destPath in the container.
 func UploadFile(ctx context.Context, cli client.APIClient, containerID, destPath string, content io.Reader) error {
 	return cli.CopyToContainer(ctx, containerID, destPath, content, container.CopyToContainerOptions{})
+}
+
+// UploadTarFile bounds the raw upload before making a Docker API call, then
+// streams a single-file tar from disk. The temporary file keeps request and
+// tar data from becoming two in-memory copies of the same upload.
+func UploadTarFile(ctx context.Context, cli client.APIClient, containerID, destPath, filename string, src io.Reader, maxBytes int64) error {
+	if err := validateTarFilename(filename); err != nil {
+		return err
+	}
+	if maxBytes < 0 {
+		return fmt.Errorf("invalid upload limit")
+	}
+	tmp, err := os.CreateTemp("", "phyless-upload-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) //nolint:errcheck // best-effort cleanup after the request
+	defer tmp.Close()        //nolint:errcheck
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	readLimit := maxBytes
+	if maxBytes < maxInt64 {
+		readLimit++
+	}
+	n, err := io.Copy(tmp, io.LimitReader(contextReader{ctx: ctx, reader: src}, readLimit))
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if n > maxBytes {
+		return ErrUploadTooLarge
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		tw := tar.NewWriter(pw)
+		streamErr := tw.WriteHeader(&tar.Header{Name: filename, Size: n, Mode: 0644})
+		if streamErr == nil {
+			_, streamErr = io.Copy(tw, tmp)
+		}
+		if closeErr := tw.Close(); streamErr == nil {
+			streamErr = closeErr
+		}
+		_ = pw.CloseWithError(streamErr)
+		done <- streamErr
+	}()
+
+	uploadErr := UploadFile(ctx, cli, containerID, destPath, pr)
+	if uploadErr != nil {
+		_ = pr.CloseWithError(uploadErr)
+	} else {
+		_ = pr.Close()
+	}
+	streamErr := <-done
+	if uploadErr != nil {
+		return uploadErr
+	}
+	return streamErr
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func validateTarFilename(filename string) error {
+	if filename == "" || filename == "." || filename == ".." ||
+		filepath.Base(filename) != filename || strings.ContainsAny(filename, `/\\`) || strings.ContainsRune(filename, 0) {
+		return fmt.Errorf("invalid file name")
+	}
+	return nil
+}
+
+// ExecChecked runs an argv-only command and waits for Docker's exec process
+// to exit. Callers still validate their own arguments; argv avoids shell
+// injection and the command itself uses -- where supported.
+func ExecChecked(ctx context.Context, cli client.APIClient, containerID string, cmd []string) error {
+	if len(cmd) == 0 || strings.TrimSpace(cmd[0]) == "" {
+		return fmt.Errorf("empty exec command")
+	}
+	execResp, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{Cmd: cmd})
+	if err != nil {
+		return err
+	}
+	if execResp.ID == "" {
+		return fmt.Errorf("Docker returned an empty exec ID")
+	}
+	if err := cli.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{}); err != nil {
+		return err
+	}
+	return waitExec(ctx, cli, execResp.ID)
+}
+
+func waitExec(ctx context.Context, cli client.APIClient, execID string) error {
+	if strings.TrimSpace(execID) == "" {
+		return fmt.Errorf("Docker returned an empty exec ID")
+	}
+	for {
+		inspect, err := cli.ContainerExecInspect(ctx, execID)
+		if err != nil {
+			return err
+		}
+		if !inspect.Running {
+			if inspect.ExitCode != 0 {
+				return fmt.Errorf("exec exited with status %d", inspect.ExitCode)
+			}
+			return nil
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // CopyBetweenContainers streams srcPath from one container straight into
@@ -236,27 +407,41 @@ func CopyBetweenContainers(ctx context.Context, cli client.APIClient, srcContain
 	return UploadFile(ctx, cli, dstContainer, dstPath, rc)
 }
 
-// CreateTar wraps a single file into a tar stream for UploadFile.
-func CreateTar(filename string, content []byte) io.Reader {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	tw.WriteHeader(&tar.Header{Name: filename, Size: int64(len(content)), Mode: 0644}) //nolint:errcheck
-	tw.Write(content)                                                                  //nolint:errcheck
-	tw.Close()
-	return &buf
-}
-
 // Duplicate creates a new container using another as a config template.
 func Duplicate(ctx context.Context, cli client.APIClient, sourceID, newName string) (string, error) {
 	info, err := cli.ContainerInspect(ctx, sourceID)
 	if err != nil {
 		return "", err
 	}
-	resp, err := cli.ContainerCreate(ctx, info.Config, info.HostConfig, nil, nil, newName)
+	if info.Config == nil {
+		return "", fmt.Errorf("container has no config")
+	}
+	if hasStaticNetworkAddress(info) {
+		return "", fmt.Errorf("cannot safely duplicate a container with a static network address")
+	}
+	cfg := *info.Config
+	hostCfg := cloneHostConfig(info)
+	resp, err := cli.ContainerCreate(ctx, &cfg, hostCfg, networkingConfig(info), nil, newName)
 	if err != nil {
 		return "", err
 	}
+	if resp.ID == "" {
+		return "", fmt.Errorf("Docker returned an empty container ID")
+	}
 	return resp.ID, nil
+}
+
+// UpgradeImageRef returns the stable registry reference for a container. An
+// upgraded container stores its pinned ID in Config.Image and this label keeps
+// later upgrades pulling the original tag.
+func UpgradeImageRef(info container.InspectResponse) string {
+	if info.Config == nil {
+		return ""
+	}
+	if ref := info.Config.Labels[upgradeImageRefLabel]; ref != "" {
+		return ref
+	}
+	return info.Config.Image
 }
 
 func shortID(s string) string {
@@ -274,6 +459,36 @@ func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 	if err != nil {
 		return "", err
 	}
+	actualID := info.ID
+	if actualID == "" {
+		actualID = containerID
+	}
+	release, ok := tryUpgradeOperation(actualID)
+	if !ok {
+		return "", fmt.Errorf("container upgrade already in progress")
+	}
+	defer release()
+
+	if info.Config == nil {
+		return "", fmt.Errorf("container has no config")
+	}
+	if info.HostConfig != nil && info.HostConfig.AutoRemove {
+		return "", fmt.Errorf("cannot safely upgrade an AutoRemove container")
+	}
+	if err := validateUpgradeState(info); err != nil {
+		return "", err
+	}
+	if hasStaticNetworkAddress(info) {
+		return "", fmt.Errorf("cannot safely upgrade a container with a static network address")
+	}
+	originalName := strings.TrimPrefix(info.Name, "/")
+	if originalName == "" {
+		return "", fmt.Errorf("container has no name")
+	}
+	imageRef := UpgradeImageRef(info)
+	if imageRef == "" {
+		return "", fmt.Errorf("container has no image reference")
+	}
 
 	oldImage, err := cli.ImageInspect(ctx, info.Image)
 	if err != nil {
@@ -287,17 +502,20 @@ func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 	if oldImage.Variant != "" {
 		opts.Platform += "/" + oldImage.Variant
 	}
-	EmitStream(w, "正在拉取镜像 %s …", info.Config.Image)
+	EmitStream(w, "正在拉取镜像 %s …", imageRef)
 
-	rc, err := cli.ImagePull(ctx, info.Config.Image, opts)
+	rc, err := cli.ImagePull(ctx, imageRef, opts)
 	if err != nil {
 		return "", fmt.Errorf("pull 失败: %w", err)
+	}
+	if rc == nil {
+		return "", fmt.Errorf("pull 失败: Docker returned an empty progress stream")
 	}
 	if err := docker.ConsumeProgress(ctx, w, rc); err != nil {
 		return "", fmt.Errorf("pull 失败: %w", err)
 	}
 
-	newImg, _, err := cli.ImageInspectWithRaw(ctx, info.Config.Image)
+	newImg, _, err := cli.ImageInspectWithRaw(ctx, imageRef)
 	if err != nil {
 		return "", fmt.Errorf("无法检查新镜像: %w", err)
 	}
@@ -317,23 +535,247 @@ func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := cli.ContainerStop(ctx, containerID, container.StopOptions{}); err != nil && !errdefs.IsNotModified(err) {
-		return "", fmt.Errorf("停止容器失败: %w", err)
+	newCfg := *info.Config
+	newCfg.Image = newImg.ID // pin this replacement to the image pulled above
+	newCfg.Labels = maps.Clone(info.Config.Labels)
+	if newCfg.Labels == nil {
+		newCfg.Labels = make(map[string]string)
 	}
-	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
-		return "", fmt.Errorf("删除容器失败: %w", err)
+	if _, exists := newCfg.Labels[upgradeImageRefLabel]; !exists {
+		newCfg.Labels[upgradeImageRefLabel] = imageRef
 	}
-
-	resp, err := cli.ContainerCreate(ctx, info.Config, info.HostConfig, nil, &platform, info.Name)
+	hostCfg := cloneHostConfig(info)
+	newName := "phyless-upgrade-" + shortID(actualID)
+	oldRunning := info.State != nil && info.State.Running
+	resp, err := cli.ContainerCreate(ctx, &newCfg, hostCfg, networkingConfig(info), &platform, newName)
 	if err != nil {
+		if resp.ID != "" {
+			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, fmt.Errorf("创建容器失败: %w", err))
+		}
 		return "", fmt.Errorf("创建容器失败: %w", err)
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("启动容器失败: %w", err)
+	if resp.ID == "" {
+		return "", fmt.Errorf("创建容器失败: Docker returned an empty container ID")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, err)
+	}
+	if oldRunning {
+		if err := cli.ContainerStop(ctx, actualID, container.StopOptions{}); err != nil && !errdefs.IsNotModified(err) {
+			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, fmt.Errorf("停止容器失败: %w", err))
+		}
+		if err := ctx.Err(); err != nil {
+			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, err)
+		}
+	}
+	if oldRunning {
+		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, fmt.Errorf("启动容器失败: %w", err))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, err)
+	}
+	backupName := newName + "-old"
+	if err := cli.ContainerRename(ctx, actualID, backupName); err != nil {
+		return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, fmt.Errorf("暂存原容器名称失败: %w", err))
+	}
+	if err := ctx.Err(); err != nil {
+		nameErr := restoreUpgradeName(ctx, cli, actualID, originalName)
+		cleanupErr := rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, err)
+		return "", errors.Join(cleanupErr, nameErr)
+	}
+	if err := cli.ContainerRename(ctx, resp.ID, originalName); err != nil {
+		rollbackErr := restoreUpgradeName(ctx, cli, actualID, originalName)
+		cleanupErr := rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, fmt.Errorf("切换新容器名称失败: %w", err))
+		return "", errors.Join(cleanupErr, rollbackErr)
+	}
+	cleanupCtx, cancel := upgradeCleanupContext(ctx)
+	removeErr := cli.ContainerRemove(cleanupCtx, actualID, container.RemoveOptions{Force: true})
+	cancel()
+	if removeErr != nil && !errdefs.IsNotFound(removeErr) {
+		return "", rollbackSwitchedUpgrade(ctx, cli, actualID, resp.ID, originalName, newName, oldRunning, fmt.Errorf("删除旧容器失败: %w", removeErr))
 	}
 
 	EmitDone(w, resp.ID, "✓ 升级完成，新容器 ID: %s", shortID(resp.ID))
 	return resp.ID, nil
+}
+
+func cloneHostConfig(info container.InspectResponse) *container.HostConfig {
+	var hostCfg container.HostConfig
+	if info.HostConfig != nil {
+		hostCfg = *info.HostConfig
+		hostCfg.Mounts = append([]mount.Mount(nil), info.HostConfig.Mounts...)
+	} else {
+		hasVolume := false
+		for _, point := range info.Mounts {
+			if point.Type == mount.TypeVolume && point.Name != "" {
+				hasVolume = true
+				break
+			}
+		}
+		if !hasVolume {
+			return nil
+		}
+	}
+	knownTargets := make(map[string]struct{}, len(hostCfg.Mounts)+len(hostCfg.Binds))
+	for i := range hostCfg.Mounts {
+		knownTargets[hostCfg.Mounts[i].Target] = struct{}{}
+		if hostCfg.Mounts[i].Type == mount.TypeVolume && hostCfg.Mounts[i].Source == "" {
+			if point := mountPointAt(info.Mounts, hostCfg.Mounts[i].Target); point != nil {
+				hostCfg.Mounts[i].Source = point.Name
+			}
+		}
+	}
+	for _, bind := range hostCfg.Binds {
+		if target := bindTarget(bind); target != "" {
+			knownTargets[target] = struct{}{}
+		}
+	}
+	for _, point := range info.Mounts {
+		if point.Type != mount.TypeVolume || point.Name == "" {
+			continue
+		}
+		if _, exists := knownTargets[point.Destination]; exists {
+			continue
+		}
+		hostCfg.Mounts = append(hostCfg.Mounts, mount.Mount{
+			Type:     mount.TypeVolume,
+			Source:   point.Name,
+			Target:   point.Destination,
+			ReadOnly: !point.RW,
+		})
+		knownTargets[point.Destination] = struct{}{}
+	}
+	if info.HostConfig == nil && len(hostCfg.Mounts) == 0 {
+		return nil
+	}
+	return &hostCfg
+}
+
+func mountPointAt(points []container.MountPoint, target string) *container.MountPoint {
+	for i := range points {
+		if points[i].Destination == target {
+			return &points[i]
+		}
+	}
+	return nil
+}
+
+func bindTarget(bind string) string {
+	parts := strings.Split(bind, ":")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+func networkingConfig(info container.InspectResponse) *network.NetworkingConfig {
+	if info.NetworkSettings == nil || len(info.NetworkSettings.Networks) == 0 {
+		return nil
+	}
+	endpoints := make(map[string]*network.EndpointSettings, len(info.NetworkSettings.Networks))
+	for name, endpoint := range info.NetworkSettings.Networks {
+		if endpoint == nil {
+			endpoints[name] = &network.EndpointSettings{}
+			continue
+		}
+		ep := endpoint.Copy()
+		ep.NetworkID = ""
+		ep.EndpointID = ""
+		ep.Gateway = ""
+		ep.IPAddress = ""
+		ep.IPPrefixLen = 0
+		ep.IPv6Gateway = ""
+		ep.GlobalIPv6Address = ""
+		ep.GlobalIPv6PrefixLen = 0
+		ep.MacAddress = ""
+		ep.DNSNames = nil
+		if !container.NetworkMode(name).IsUserDefined() {
+			ep.Aliases = nil
+		}
+		endpoints[name] = ep
+	}
+	return &network.NetworkingConfig{EndpointsConfig: endpoints}
+}
+
+func hasStaticNetworkAddress(info container.InspectResponse) bool {
+	if info.NetworkSettings == nil {
+		return false
+	}
+	for _, endpoint := range info.NetworkSettings.Networks {
+		if endpoint == nil || endpoint.IPAMConfig == nil {
+			continue
+		}
+		if endpoint.IPAMConfig.IPv4Address != "" || endpoint.IPAMConfig.IPv6Address != "" || len(endpoint.IPAMConfig.LinkLocalIPs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func validateUpgradeState(info container.InspectResponse) error {
+	if info.State == nil {
+		return fmt.Errorf("cannot safely upgrade a container with unknown state")
+	}
+	if info.State.Paused {
+		return fmt.Errorf("cannot safely upgrade a paused container")
+	}
+	if info.State.Restarting {
+		return fmt.Errorf("cannot safely upgrade a restarting container")
+	}
+	if info.State.Dead {
+		return fmt.Errorf("cannot safely upgrade a dead container")
+	}
+	return nil
+}
+
+func upgradeCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+}
+
+func rollbackUpgrade(ctx context.Context, cli client.APIClient, oldID, replacementID string, restoreRunning bool, cause error) error {
+	cleanupCtx, cancel := upgradeCleanupContext(ctx)
+	defer cancel()
+	var rollbackErrs []error
+	if replacementID != "" {
+		if err := cli.ContainerRemove(cleanupCtx, replacementID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("清理替代容器失败: %w", err))
+		}
+	}
+	if restoreRunning {
+		if err := cli.ContainerStart(cleanupCtx, oldID, container.StartOptions{}); err != nil && !errdefs.IsNotModified(err) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("恢复原容器运行状态失败: %w", err))
+		}
+	}
+	return errors.Join(append([]error{cause}, rollbackErrs...)...)
+}
+
+func rollbackSwitchedUpgrade(ctx context.Context, cli client.APIClient, oldID, replacementID, originalName, replacementName string, restoreRunning bool, cause error) error {
+	cleanupCtx, cancel := upgradeCleanupContext(ctx)
+	defer cancel()
+	var rollbackErrs []error
+	if err := cli.ContainerRename(cleanupCtx, replacementID, replacementName); err != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("暂存失败的新容器名称失败: %w", err))
+	} else {
+		if err := cli.ContainerRename(cleanupCtx, oldID, originalName); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("恢复原容器名称失败: %w", err))
+		} else if restoreRunning {
+			if err := cli.ContainerStart(cleanupCtx, oldID, container.StartOptions{}); err != nil && !errdefs.IsNotModified(err) {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("恢复原容器运行状态失败: %w", err))
+			}
+		}
+		if err := cli.ContainerRemove(cleanupCtx, replacementID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("清理替代容器失败: %w", err))
+		}
+	}
+	return errors.Join(append([]error{cause}, rollbackErrs...)...)
+}
+
+func restoreUpgradeName(ctx context.Context, cli client.APIClient, oldID, originalName string) error {
+	cleanupCtx, cancel := upgradeCleanupContext(ctx)
+	defer cancel()
+	return cli.ContainerRename(cleanupCtx, oldID, originalName)
 }
 
 // GetByFilters returns containers matching given label/name filters.

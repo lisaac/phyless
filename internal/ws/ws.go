@@ -1,23 +1,79 @@
 package ws
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true }, // ponytail: lock down with allowed origins in prod
+const (
+	// MaxMessageSize limits client-to-server control/input frames. Docker output
+	// is streamed in bounded writes and is not subject to this client limit.
+	MaxMessageSize    = 64 << 10
+	MaxStatsFrameSize = 1 << 20
+	writeWait         = 10 * time.Second
+)
+
+var upgrader = websocket.Upgrader{}
+
+// ConfigureConnection applies the shared client-frame limit. Callers that
+// own another WebSocket endpoint (for example Compose logs) can reuse it.
+func ConfigureConnection(conn *websocket.Conn) {
+	conn.SetReadLimit(MaxMessageSize)
+}
+
+// WriteMessage sets a bounded write deadline before sending one complete
+// WebSocket frame. A slow client must not hold a Docker stream forever.
+func WriteMessage(conn *websocket.Conn, messageType int, data []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		return err
+	}
+	return conn.WriteMessage(messageType, data)
+}
+
+// MonitorConnection consumes control frames so close/ping handling keeps
+// working while the handler is blocked in an upstream Docker read. The
+// returned stop function cancels the context and closes the socket.
+func MonitorConnection(parent context.Context, conn *websocket.Conn) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			_ = conn.Close()
+		})
+	}
+	ConfigureConnection(conn)
+	go func() {
+		defer stop()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+	go func() {
+		select {
+		case <-parent.Done():
+			stop()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, stop
 }
 
 // Logs streams container logs over WebSocket.
@@ -28,29 +84,40 @@ func Logs(cli client.APIClient) http.HandlerFunc {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		ctx, stop := MonitorConnection(r.Context(), conn)
+		defer stop()
 
-		rc, err := cli.ContainerLogs(r.Context(), id, container.LogsOptions{
+		info, err := cli.ContainerInspect(ctx, id)
+		if err != nil {
+			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
+			return
+		}
+		rc, err := cli.ContainerLogs(ctx, id, container.LogsOptions{
 			ShowStdout: true, ShowStderr: true, Follow: true, Timestamps: true,
 			Since: r.URL.Query().Get("since"), Until: r.URL.Query().Get("until"),
 		})
 		if err != nil {
-			conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
+			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 			return
 		}
 		defer rc.Close()
+		go func() {
+			<-ctx.Done()
+			_ = rc.Close()
+		}()
 
-		buf := make([]byte, 4096)
-		for {
-			n, err := rc.Read(buf)
-			if n > 0 {
-				conn.WriteMessage(websocket.BinaryMessage, buf[:n])
-			}
-			if err != nil {
-				return
-			}
-		}
+		out := wsWriter{conn: conn}
+		_, _ = copyContainerLogs(out, rc, info.Config != nil && info.Config.Tty)
 	}
+}
+
+func copyContainerLogs(dst io.Writer, src io.Reader, tty bool) (int64, error) {
+	if tty {
+		return io.Copy(dst, src)
+	}
+	// Docker multiplexes stdout/stderr for non-TTY containers. Decode the
+	// 8-byte stream headers before forwarding payload bytes to the browser.
+	return stdcopy.StdCopy(dst, dst, src)
 }
 
 // Terminal runs an exec session and pipes stdin/stdout over WebSocket.
@@ -63,10 +130,10 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 			return
 		}
 		defer conn.Close()
+		ConfigureConnection(conn)
 
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
-
 		cmdStr := r.URL.Query().Get("cmd")
 		cmd := []string{"/bin/sh"}
 		if cmdStr != "" {
@@ -77,59 +144,87 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 			Tty: true, Cmd: cmd, User: r.URL.Query().Get("user"),
 		})
 		if err != nil {
-			conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
+			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 			return
 		}
 
 		resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{Tty: true})
 		if err != nil {
-			conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
+			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 			return
 		}
-		// Close the full underlying conn (not just write side) so Docker detects
-		// the disconnect and sends SIGHUP to the exec process, killing it.
-		defer resp.Conn.Close()
+		defer resp.Close()
 
-		// docker → websocket
+		// Either side ending must close both blocking reads. In particular,
+		// Docker EOF must wake conn.ReadMessage instead of leaving the handler
+		// and exec process behind indefinitely.
+		var closeOnce sync.Once
+		closeSession := func() {
+			closeOnce.Do(func() {
+				cancel()
+				_ = resp.Conn.Close()
+				_ = conn.Close()
+			})
+		}
 		go func() {
-			defer cancel() // unblock ReadMessage if docker side dies first
+			select {
+			case <-r.Context().Done():
+				closeSession()
+			case <-ctx.Done():
+			}
+		}()
+
+		// docker -> websocket: this is the only goroutine that writes data
+		// frames to the WebSocket.
+		go func() {
 			buf := make([]byte, 4096)
 			for {
-				n, err := resp.Reader.Read(buf)
+				n, readErr := resp.Reader.Read(buf)
 				if n > 0 {
-					conn.WriteMessage(websocket.BinaryMessage, buf[:n])
+					if writeErr := WriteMessage(conn, websocket.BinaryMessage, buf[:n]); writeErr != nil {
+						closeSession()
+						return
+					}
 				}
-				if err != nil {
+				if readErr != nil {
+					closeSession()
 					return
 				}
 			}
 		}()
 
-		// websocket → docker (handle resize messages too)
+		// websocket -> docker (handle resize messages too)
 		for {
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				// WebSocket closed — send Ctrl-C + exit to terminate the shell process.
-				resp.Conn.Write([]byte{3})
-				resp.Conn.Write([]byte("exit\n"))
+			_, msg, readErr := conn.ReadMessage()
+			if readErr != nil {
+				closeSession()
 				return
 			}
-			// Check if it's a resize control message: {"type":"resize","cols":80,"rows":24}
 			var ctrl struct {
 				Type string `json:"type"`
 				Cols uint   `json:"cols"`
 				Rows uint   `json:"rows"`
 			}
 			if json.Unmarshal(msg, &ctrl) == nil && ctrl.Type == "resize" {
-				cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{Height: ctrl.Rows, Width: ctrl.Cols})
+				if err := cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{Height: ctrl.Rows, Width: ctrl.Cols}); err != nil {
+					closeSession()
+					return
+				}
 				continue
 			}
-			resp.Conn.Write(msg)
+			if err := resp.Conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				closeSession()
+				return
+			}
+			if err := writeAll(resp.Conn, msg); err != nil {
+				closeSession()
+				return
+			}
 		}
 	}
 }
 
-// Stats streams container resource stats over WebSocket.
+// Stats streams one complete JSON object per WebSocket message.
 func Stats(cli client.APIClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -137,16 +232,43 @@ func Stats(cli client.APIClient) http.HandlerFunc {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		ctx, stop := MonitorConnection(r.Context(), conn)
+		defer stop()
 
-		rc, err := cli.ContainerStats(r.Context(), id, true)
+		rc, err := cli.ContainerStats(ctx, id, true)
 		if err != nil {
 			return
 		}
 		defer rc.Body.Close()
-
-		io.Copy(wsWriter{conn}, rc.Body) // ponytail: stream JSON stats lines directly
+		go func() {
+			<-ctx.Done()
+			_ = rc.Body.Close()
+		}()
+		_, _ = streamJSONFrames(conn, rc.Body)
 	}
+}
+
+// streamJSONFrames decodes line-delimited JSON values and emits each value as
+// exactly one WebSocket frame. Scanner carries partial network reads while its
+// maximum token size prevents a malformed stats line from growing memory.
+func streamJSONFrames(conn *websocket.Conn, src io.Reader) (int, error) {
+	scanner := bufio.NewScanner(src)
+	scanner.Buffer(make([]byte, 32<<10), MaxStatsFrameSize)
+	count := 0
+	for scanner.Scan() {
+		raw := bytes.TrimSpace(scanner.Bytes())
+		if len(raw) == 0 {
+			continue
+		}
+		if !json.Valid(raw) {
+			return count, fmt.Errorf("invalid stats JSON")
+		}
+		if err := WriteMessage(conn, websocket.BinaryMessage, raw); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, scanner.Err()
 }
 
 // formatEvent renders one docker event as a single readable log line instead
@@ -173,28 +295,42 @@ func formatEvent(e events.Message) string {
 
 // Events streams Docker daemon events over WebSocket. since/until (unix
 // seconds, query params) let the events page show a past time range instead
-// of only live-tailing — Docker replays history up to `until` (or now, if
-// omitted) and then keeps streaming live only when `until` is unset/future.
+// of only live-tailing — Docker replays history up to until (or now, if
+// omitted) and then keeps streaming live only when until is unset/future.
 func Events(cli client.APIClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		ctx, stop := MonitorConnection(r.Context(), conn)
+		defer stop()
 
 		opts := events.ListOptions{
 			Since: r.URL.Query().Get("since"),
 			Until: r.URL.Query().Get("until"),
 		}
-		eventCh, errCh := cli.Events(r.Context(), opts)
-		for {
+		eventCh, errCh := cli.Events(ctx, opts)
+		for eventCh != nil || errCh != nil {
 			select {
-			case e := <-eventCh:
-				line := formatEvent(e) + "\n"
-				conn.WriteMessage(websocket.TextMessage, []byte(line))
-			case <-errCh:
+			case <-ctx.Done():
 				return
+			case e, ok := <-eventCh:
+				if !ok {
+					eventCh = nil
+					continue
+				}
+				if err := WriteMessage(conn, websocket.TextMessage, []byte(formatEvent(e)+"\n")); err != nil {
+					return
+				}
+			case streamErr, ok := <-errCh:
+				if !ok {
+					errCh = nil
+					continue
+				}
+				if streamErr != nil {
+					return
+				}
 			}
 		}
 	}
@@ -204,6 +340,27 @@ func Events(cli client.APIClient) http.HandlerFunc {
 type wsWriter struct{ conn *websocket.Conn }
 
 func (w wsWriter) Write(p []byte) (int, error) {
-	err := w.conn.WriteMessage(websocket.BinaryMessage, p)
-	return len(p), err
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if err := WriteMessage(w.conn, websocket.BinaryMessage, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func writeAll(w io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, err := w.Write(p)
+		if n > 0 {
+			p = p[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }

@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,12 +17,9 @@ import (
 const configRoot = "/etc"
 
 func (s *Server) mountConfigRoutes(r chi.Router) {
-	r.Get("/api/config/files", s.handleConfigListFiles)
-	r.Get("/api/config/files/content", s.handleConfigGetFile)
 	r.Put("/api/config/files/content", s.handleConfigPutFile)
 	r.Delete("/api/config/files", s.handleConfigDeleteFile)
 	r.Post("/api/config/files/rename", s.handleConfigRenameFile)
-	r.Get("/api/config/files/download", s.handleConfigDownloadFile)
 }
 
 func (s *Server) handleConfigListFiles(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +39,7 @@ func (s *Server) handleConfigListFiles(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfigGetFile(w http.ResponseWriter, r *http.Request) {
 	subPath := r.URL.Query().Get("path")
 	fullPath := filepath.Join(configRoot, subPath)
-	if !isSubPath(configRoot, fullPath) {
+	if !isSubPath(configRoot, fullPath) || filepath.Clean(fullPath) == filepath.Clean(configRoot) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
@@ -52,16 +49,20 @@ func (s *Server) handleConfigGetFile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfigPutFile(w http.ResponseWriter, r *http.Request) {
 	subPath := r.URL.Query().Get("path")
 	fullPath := filepath.Join(configRoot, subPath)
-	if !isSubPath(configRoot, fullPath) {
+	if !isSubPath(configRoot, fullPath) || filepath.Clean(fullPath) == filepath.Clean(configRoot) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, 50<<20)) // 50MB limit
+	data, err := readBounded(r.Body, maxUploadSize)
 	if err != nil {
+		if errors.Is(err, errRequestBodyTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+	if err := atomicWriteFile(fullPath, data, 0644); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -91,7 +92,7 @@ func (s *Server) handleConfigDownloadFile(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	streamTar(w, fullPath)
+	serveTar(w, fullPath)
 }
 
 func (s *Server) handleConfigRenameFile(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +106,8 @@ func (s *Server) handleConfigRenameFile(w http.ResponseWriter, r *http.Request) 
 	}
 	oldFull := filepath.Join(configRoot, body.OldPath)
 	newFull := filepath.Join(configRoot, body.NewPath)
-	if !isSubPath(configRoot, oldFull) || !isSubPath(configRoot, newFull) {
+	if !isSubPath(configRoot, oldFull) || !isSubPath(configRoot, newFull) ||
+		filepath.Clean(oldFull) == filepath.Clean(configRoot) || filepath.Clean(newFull) == filepath.Clean(configRoot) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
@@ -119,9 +121,64 @@ func (s *Server) handleConfigRenameFile(w http.ResponseWriter, r *http.Request) 
 
 // isSubPath returns true if target is at or below root (no path traversal).
 func isSubPath(root, target string) bool {
+	root, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return false
+	}
+	target, err = filepath.Abs(filepath.Clean(target))
+	if err != nil {
+		return false
+	}
 	rel, err := filepath.Rel(root, target)
 	if err != nil {
 		return false
 	}
-	return rel != ".." && !strings.HasPrefix(rel, "..")
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	// /api/fs deliberately exposes the whole filesystem root for the read-only
+	// Viewer routes and the write routes; a symlink cannot leave that boundary,
+	// so allow normal system links at the declared root.
+	if root == string(filepath.Separator) {
+		return true
+	}
+	return !containsSymlink(root, rel)
+}
+
+// containsSymlink deliberately rejects symlink components in rooted file
+// operations. Directory tar entries may still be symlinks; they are archived
+// as links and never followed. This is a static check for the trusted
+// Operator file boundary; it is not a defense against a concurrent rename.
+// ponytail: use os.Root if this endpoint ever accepts concurrent untrusted
+// filesystem mutations.
+func containsSymlink(root, rel string) bool {
+	current := root
+	if info, err := os.Lstat(current); err == nil {
+		// macOS exposes /etc as a fixed OS symlink to /private/etc. It is the
+		// configured boundary itself, so keep that endpoint usable while still
+		// rejecting symlink roots supplied by compose projects.
+		if info.Mode()&os.ModeSymlink != 0 && filepath.Clean(root) != filepath.Clean(configRoot) {
+			return true
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if rel == "." {
+		info, err := os.Lstat(current)
+		return err != nil || (info.Mode()&os.ModeSymlink != 0 && filepath.Clean(root) != filepath.Clean(configRoot))
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+	}
+	return false
 }
