@@ -193,6 +193,8 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Post("/api/images/tag", s.handleImageTag)
 	r.Delete("/api/images/untag", s.handleImageDeleteTag)
 	r.Post("/api/images/load", s.handleImageLoad)
+	r.Post("/api/images/import", s.handleImageImport)
+	r.Post("/api/images/prune", s.handleImagePrune)
 
 	// Networks
 	r.Get("/api/networks", s.handleListNetworks)

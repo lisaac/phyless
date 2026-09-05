@@ -6,6 +6,7 @@ import { Button } from "../shared/Button";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
+import { Btn } from "../shared/ActionButton";
 import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -118,8 +119,9 @@ export const ImageListPage: Component = () => {
   const store = createResourceStore<ImageSummary>("/api/images");
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
-  // Shared streaming-task state — drives PullStatusWidget for both pull (JSON
-  // body) and import (raw tar file body).
+  const [showRemoteImport, setShowRemoteImport] = createSignal(false);
+  // Shared streaming-task state — drives PullStatusWidget for pull, Load, and
+  // remote Import without duplicating progress handling.
   const [taskActive, setTaskActive] = createSignal(false);
   const [taskTitle, setTaskTitle] = createSignal("");
   const [taskUrl, setTaskUrl] = createSignal("");
@@ -128,6 +130,8 @@ export const ImageListPage: Component = () => {
   const [pullProxyUrl, setPullProxyUrl] = createSignal("");
   const [pullRegistryId, setPullRegistryId] = createSignal("");
   const [pullPlatform, setPullPlatform] = createSignal("");
+  const [remoteImportURL, setRemoteImportURL] = createSignal("");
+  const [remoteImportRef, setRemoteImportRef] = createSignal("");
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
   const [deletingId, setDeletingId] = createSignal("");
@@ -135,6 +139,8 @@ export const ImageListPage: Component = () => {
   const [forceDelete, setForceDelete] = createSignal<ImageSummary | null>(null);
   const [inspectFor, setInspectFor] = createSignal<ImageSummary | null>(null);
   const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
+  const [selected, setSelected] = createSignal<Set<string>>(new Set());
+  const [pruning, setPruning] = createSignal(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [inspectData] = createResource(inspectFor, (img) => get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`));
 
@@ -145,6 +151,9 @@ export const ImageListPage: Component = () => {
     setPullProxyUrl(""); setPullRegistryId(""); setPullPlatform("");
   };
   const closePullInput = () => { setShowPullInput(false); clearPullOptions(); };
+  const closeRemoteImport = () => {
+    setShowRemoteImport(false); setRemoteImportURL(""); setRemoteImportRef("");
+  };
 
   const startPull = () => {
     // ponytail: one progress card per page; close it before starting another task.
@@ -163,11 +172,64 @@ export const ImageListPage: Component = () => {
 
   const startImport = (file: File) => {
     if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
-    setTaskTitle(`导入 ${file.name}`);
+    setTaskTitle(`Load ${file.name}`);
     setTaskUrl("/api/images/load");
     setTaskBody(undefined);
     setTaskFile(file);
     setTaskActive(true);
+  };
+
+  const startRemoteImport = () => {
+    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
+    const source = remoteImportURL().trim();
+    try {
+      const u = new URL(source);
+      if (!u.hostname || (u.protocol !== "http:" && u.protocol !== "https:")) throw new Error();
+    } catch {
+      toast.error("请输入有效的 http(s) 远程 tar URL");
+      return;
+    }
+    setTaskTitle(`Import ${source}`);
+    setTaskUrl("/api/images/import");
+    setTaskBody({ source, ref: remoteImportRef().trim() });
+    setTaskFile(undefined);
+    setShowRemoteImport(false);
+    setTaskActive(true);
+  };
+
+  const toggle = (id: string) =>
+    setSelected((s) => { const next = new Set(s); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleAll = (checked: boolean) =>
+    setSelected(checked ? new Set(store.items().map((img) => img.Id)) : new Set());
+  const selectedCount = () => selected().size;
+  const allSelected = () => store.items().length > 0 && store.items().every((img) => selected().has(img.Id));
+
+  const bulkRemove = async () => {
+    const ids = [...selected()];
+    setSelected(new Set());
+    const errors = await Promise.all(ids.map(async (id) => {
+      try {
+        await del(`/api/images?id=${encodeURIComponent(id)}`);
+        return "";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    }));
+    await store.refresh();
+    const failed = errors.filter(Boolean).length;
+    if (failed) toast.error(`${failed} 个镜像删除失败`);
+    else toast.success(`已删除 ${ids.length} 个镜像`);
+  };
+
+  const prune = async () => {
+    setPruning(true);
+    try {
+      const report = await post<{ ImagesDeleted?: unknown[] }>("/api/images/prune");
+      setSelected(new Set());
+      await store.refresh();
+      toast.success(`已清理 ${report?.ImagesDeleted?.length ?? 0} 个未使用镜像`);
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setPruning(false); }
   };
 
   const remove = async (id: string, force = false) => {
@@ -211,6 +273,16 @@ export const ImageListPage: Component = () => {
         <Show when={hasRole("operator")}>
           <div class="flex items-center gap-2">
             <button
+              class="rounded-md border border-red-500/30 px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+              disabled={taskActive() || pruning()}
+              title={pruning() ? "清理中" : "清理所有未被容器使用的镜像"}
+              onClick={() => {
+                if (confirm("清理所有未被容器使用的镜像？此操作不可撤销。")) void prune();
+              }}
+            >
+              {pruning() ? "清理中…" : "清理镜像"}
+            </button>
+            <button
               class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
               disabled={taskActive()}
               title={taskActive() ? "已有任务进行中" : undefined}
@@ -218,13 +290,21 @@ export const ImageListPage: Component = () => {
             >
               + 拉取镜像
             </button>
+            <button
+              class="rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 disabled:opacity-50"
+              disabled={taskActive()}
+              title={taskActive() ? "已有任务进行中" : "从远程 tar URL 导入镜像"}
+              onClick={() => setShowRemoteImport(true)}
+            >
+              + Import 镜像
+            </button>
             <label
               class={`rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 ${
                 taskActive() ? "cursor-not-allowed opacity-50" : "cursor-pointer"
               }`}
-              title={taskActive() ? "已有任务进行中" : "导入 .tar 镜像文件"}
+              title={taskActive() ? "已有任务进行中" : "Load 本地 .tar 镜像文件"}
             >
-              + 导入镜像
+              + Load 镜像
               <input
                 type="file"
                 accept=".tar,.tar.gz,.tgz"
@@ -241,10 +321,34 @@ export const ImageListPage: Component = () => {
         </Show>
       </div>
 
+      <div class="mb-3 flex flex-wrap items-center gap-1.5 border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs">
+        <input type="checkbox" aria-label="全选镜像" checked={allSelected()} onChange={(e) => toggleAll(e.currentTarget.checked)} />
+        <span class="min-w-[4rem] text-zinc-500">{selectedCount() > 0 ? `${selectedCount()} 已选` : "全选"}</span>
+        <Show when={hasRole("operator")}>
+          <span class="text-zinc-400">│</span>
+          <Btn
+            title="删除选中镜像"
+            danger
+            disabled={selectedCount() === 0}
+            onClick={() => {
+              if (confirm(`删除选中的 ${selectedCount()} 个镜像？`)) void bulkRemove();
+            }}
+          >
+            ⊖ 删除
+          </Btn>
+        </Show>
+        <Show when={selectedCount() > 0}>
+          <button class="ml-auto text-zinc-400 hover:text-zinc-100" onClick={() => setSelected(new Set())}>
+            清除
+          </button>
+        </Show>
+      </div>
+
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
 
       <div class="overflow-x-auto border border-zinc-800">
         <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
+          <div class="w-8 shrink-0 px-2 py-2" />
           <div class="min-w-0 flex-1 px-3 py-2">标签</div>
           <div class="w-24 shrink-0 px-3 py-2 text-center">大小</div>
           <div class="w-48 shrink-0 px-3 py-2 text-center">使用容器</div>
@@ -253,60 +357,70 @@ export const ImageListPage: Component = () => {
         <div class="divide-y divide-zinc-800">
           <For each={store.items()}>
             {(img) => (
-              <div class="flex flex-col text-sm transition-colors sm:flex-row sm:items-start hover:bg-white/[0.03]">
-                <div class="min-w-0 w-full px-3 py-2 sm:flex-1">
-                  {/* Tags — editable + deletable chips */}
-                  <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;</div>}>
-                    <For each={img.RepoTags}>
-                      {(tag) => (
-                        <div>
-                          <TagChip
-                            tag={tag}
-                            img={img}
-                            onChanged={() => void store.refresh()}
-                            onConfirmLastTagDelete={setConfirmDelete}
-                          />
-                        </div>
-                      )}
-                    </For>
-                  </Show>
-                  {/* ID — click to inspect */}
-                  <button
-                    class="mt-0.5 block font-mono text-[11px] text-zinc-400 transition-colors hover:text-indigo-400"
-                    title="查看 inspect"
-                    onClick={() => setInspectFor(img)}
-                  >
-                    {img.Id.replace("sha256:", "").slice(0, 12)}
-                  </button>
-                  {/* Inline actions */}
-                  <div class="mt-1 flex items-center gap-0.5">
-                    <Show when={hasRole("operator")}>
-                      <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
-                        <Ico path="M12 5v14M5 12h14" />
-                      </IBtn>
+              <div class={`flex flex-col text-sm transition-colors sm:flex-row sm:items-start hover:bg-white/[0.03] ${selected().has(img.Id) ? "ring-1 ring-inset ring-indigo-500/60" : ""}`}>
+                <div class="flex min-w-0 w-full px-3 py-2 sm:flex-1">
+                  <input
+                    type="checkbox"
+                    class="mt-1 mr-2 shrink-0"
+                    checked={selected().has(img.Id)}
+                    aria-label={`选择镜像 ${imgLabel(img)}`}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggle(img.Id)}
+                  />
+                  <div class="min-w-0 flex-1">
+                    {/* Tags — editable + deletable chips */}
+                    <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;</div>}>
+                      <For each={img.RepoTags}>
+                        {(tag) => (
+                          <div>
+                            <TagChip
+                              tag={tag}
+                              img={img}
+                              onChanged={() => void store.refresh()}
+                              onConfirmLastTagDelete={setConfirmDelete}
+                            />
+                          </div>
+                        )}
+                      </For>
                     </Show>
-                    <a
-                      title="导出 tar"
-                      target="_blank"
-                      rel="noopener"
-                      href={`/api/images/save?id=${encodeURIComponent(img.Id)}&token=${encodeURIComponent(getToken() ?? "")}`}
-                      class="inline-flex h-6 w-6 items-center justify-center text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                    {/* ID — click to inspect */}
+                    <button
+                      class="mt-0.5 block font-mono text-[11px] text-zinc-400 transition-colors hover:text-indigo-400"
+                      title="查看 inspect"
+                      onClick={() => setInspectFor(img)}
                     >
-                      <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
-                    </a>
-                    <Show when={hasRole("operator")}>
-                      <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
-                        <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
-                      </IBtn>
-                      <IBtn
-                        title="删除"
-                        danger
-                        loading={deletingId() === img.Id}
-                        onClick={() => setConfirmDelete(img)}
+                      {img.Id.replace("sha256:", "").slice(0, 12)}
+                    </button>
+                    {/* Inline actions */}
+                    <div class="mt-1 flex items-center gap-0.5">
+                      <Show when={hasRole("operator")}>
+                        <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
+                          <Ico path="M12 5v14M5 12h14" />
+                        </IBtn>
+                      </Show>
+                      <a
+                        title="导出 tar"
+                        target="_blank"
+                        rel="noopener"
+                        href={`/api/images/save?id=${encodeURIComponent(img.Id)}&token=${encodeURIComponent(getToken() ?? "")}`}
+                        class="inline-flex h-6 w-6 items-center justify-center text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
                       >
-                        <Ico path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-                      </IBtn>
-                    </Show>
+                        <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                      </a>
+                      <Show when={hasRole("operator")}>
+                        <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
+                          <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
+                        </IBtn>
+                        <IBtn
+                          title="删除"
+                          danger
+                          loading={deletingId() === img.Id}
+                          onClick={() => setConfirmDelete(img)}
+                        >
+                          <Ico path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                        </IBtn>
+                      </Show>
+                    </div>
                   </div>
                 </div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-24 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtSize(img.Size)}</div>
@@ -333,6 +447,39 @@ export const ImageListPage: Component = () => {
           <div class="py-16 text-center text-zinc-400">暂无镜像</div>
         </Show>
       </div>
+
+      {/* Remote import modal — Docker import accepts a remote tar URL, unlike
+          load which reads a local Docker image archive. */}
+      <Modal open={showRemoteImport()} onClose={closeRemoteImport} title="Import 远程镜像">
+        <div class="flex flex-col gap-3">
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-zinc-400">远程 tar URL</span>
+            <input
+              type="url"
+              class="w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition-colors focus:border-zinc-600"
+              placeholder="https://example.com/rootfs.tar"
+              value={remoteImportURL()}
+              onInput={(e) => setRemoteImportURL(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && startRemoteImport()}
+              ref={(el: HTMLInputElement) => setTimeout(() => el?.focus(), 50)}
+            />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-zinc-400">镜像名称:标签（可选）</span>
+            <input
+              class="w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition-colors focus:border-zinc-600"
+              placeholder="imported/myapp:latest"
+              value={remoteImportRef()}
+              onInput={(e) => setRemoteImportRef(e.currentTarget.value)}
+            />
+          </label>
+          <p class="text-xs text-zinc-500">Import 会让 Docker 从远程 URL 读取 tar 并创建镜像；本地文件请使用 Load。</p>
+        </div>
+        <div class="mt-4 flex justify-end gap-2">
+          <Button onClick={closeRemoteImport}>取消</Button>
+          <Button variant="primary" disabled={!remoteImportURL().trim()} onClick={startRemoteImport}>Import</Button>
+        </div>
+      </Modal>
 
       {/* Pull input modal */}
       <Modal open={showPullInput()} onClose={closePullInput} title="拉取镜像">
@@ -363,7 +510,7 @@ export const ImageListPage: Component = () => {
       {/* Pull/import progress — non-blocking floating card, rest of the page stays usable */}
       <PullStatusWidget
         active={taskActive()}
-        onClose={() => { setTaskActive(false); setPullRef(""); clearPullOptions(); }}
+        onClose={() => { setTaskActive(false); setPullRef(""); clearPullOptions(); closeRemoteImport(); }}
         title={taskTitle()}
         url={taskUrl()}
         body={taskBody()}

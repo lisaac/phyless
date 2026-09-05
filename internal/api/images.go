@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"phyless/internal/docker"
 	dockercontainer "phyless/internal/docker/container"
@@ -178,4 +180,41 @@ func (s *Server) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", "text/plain")
 	io.Copy(w, resp.Body) //nolint:errcheck
+}
+
+func (s *Server) handleImageImport(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Source string `json:"source"`
+		Ref    string `json:"ref,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	source := strings.TrimSpace(body.Source)
+	u, err := url.ParseRequestURI(source)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		writeError(w, http.StatusBadRequest, "source must be an http(s) URL")
+		return
+	}
+	resp, err := s.docker.ImageImport(r.Context(), image.ImportSource{SourceName: source}, strings.TrimSpace(body.Ref), image.ImportOptions{})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer resp.Close()
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-Accel-Buffering", "no")
+	io.Copy(w, resp) //nolint:errcheck
+}
+
+func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) {
+	// dangling=false matches `docker image prune -a`: remove every image that
+	// is not referenced by a container, including tagged images.
+	report, err := s.docker.ImagesPrune(r.Context(), filters.NewArgs(filters.Arg("dangling", "false")))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
