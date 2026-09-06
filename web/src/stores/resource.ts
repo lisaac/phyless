@@ -18,6 +18,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
   let inFlight: Promise<void> | undefined;
   let generation = 0;
   let polling = false;
+  let lastSerialized = "[]";
   const onVisibilityChange = () => {
     if (document.hidden) {
       if (timer) clearInterval(timer);
@@ -43,7 +44,14 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
       try {
         const data = await get<T[]>(path);
         if (requestGeneration === generation) {
-          setItems(data ?? []);
+          // ponytail: JSON compare of the fetched payload — O(payload) per poll, but it
+          // saves <For> re-creating every row when nothing changed. Switch to a per-item
+          // keyed reconcile if the payload ever gets big enough for the compare to hurt.
+          const serialized = JSON.stringify(data ?? []);
+          if (serialized !== lastSerialized) {
+            lastSerialized = serialized;
+            setItems(data ?? []);
+          }
           setError("");
         }
       } catch (e) {

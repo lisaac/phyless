@@ -15,6 +15,7 @@ import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
+import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb, VERB_LABEL } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
@@ -25,6 +26,9 @@ export const ComposeListPage: Component = () => {
   const store = createResourceStore<ComposeProject>("/api/compose");
   const containers = createResourceStore<ContainerSummary>("/api/containers");
   const { isP, act } = createContainerActions(containers.refresh);
+  const view = createListView(store.items, (p) =>
+    `${p.name} ${p.id} ${p.base_dir} ${p.compose_file} ${containersOf(p, containers.items())
+      .map((c) => `${c.Names.join(" ")} ${c.Image}`).join(" ")}`, { rowHeight: 72 });
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
@@ -99,10 +103,13 @@ export const ComposeListPage: Component = () => {
           <Button variant="primary" onClick={() => setShow(true)}>注册项目</Button>
         </Show>
       </div>
+      <div class="mb-3">
+        <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索 Compose…" />
+      </div>
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
 
       <div class="flex flex-col gap-2">
-        <For each={store.items()}>
+        <For each={view.visible()}>
           {(p) => {
             const isOpen = () => expanded().has(p.id);
             const cs = () => containersOf(p, containers.items());
@@ -212,8 +219,11 @@ export const ComposeListPage: Component = () => {
             );
           }}
         </For>
-        <Show when={store.items().length === 0 && !store.error()}>
-          <div class="border border-zinc-800 py-16 text-center text-zinc-400">暂无 Compose 项目</div>
+        <LoadMore when={view.hasMore()} onMore={view.loadMore} />
+        <Show when={view.filtered().length === 0 && !store.error()}>
+          <div class="border border-zinc-800 py-16 text-center text-zinc-400">
+            {store.items().length === 0 ? "暂无 Compose 项目" : "无匹配结果"}
+          </div>
         </Show>
       </div>
 

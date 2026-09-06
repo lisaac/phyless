@@ -10,6 +10,7 @@ import { ViewCmdModal } from "./ViewCmdModal";
 import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
 import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
+import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import type { ContainerSummary } from "../../types";
 
 const DEFAULT_BULK_RUN = "docker run -d --name my-container nginx:latest";
@@ -18,6 +19,8 @@ const DEFAULT_BULK_RUN = "docker run -d --name my-container nginx:latest";
 export const ContainerListPage: Component = () => {
   const store = createResourceStore<ContainerSummary>("/api/containers");
   const { isP, act } = createContainerActions(store.refresh);
+  const view = createListView(store.items, (c) =>
+    `${c.Names.join(" ")} ${c.Image} ${c.Id} ${c.Status}`);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [showCreate, setShowCreate] = createSignal(false);
   const [showImport, setShowImport] = createSignal(false);
@@ -35,7 +38,7 @@ export const ContainerListPage: Component = () => {
   const toggle = (id: string) =>
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAll = (v: boolean) =>
-    setSelected(v ? new Set<string>(store.items().map((c) => c.Id)) : new Set<string>());
+    setSelected(v ? new Set<string>(view.filtered().map((c) => c.Id)) : new Set<string>());
 
   const bulk = async (verb: "start" | "stop" | "kill" | "delete") => {
     await Promise.all([...selected()].map((id) => act(id, verb)));
@@ -55,7 +58,7 @@ export const ContainerListPage: Component = () => {
   };
 
   const n = () => selected().size;
-  const allSel = () => store.items().length > 0 && n() === store.items().length;
+  const allSel = () => view.filtered().length > 0 && n() === view.filtered().length;
 
   return (
     <div class="flex flex-col gap-3">
@@ -79,6 +82,8 @@ export const ContainerListPage: Component = () => {
           </div>
         </Show>
       </div>
+
+      <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索容器…" />
 
       {/* ── Bulk bar ────────────────────────────────────────────────────────── */}
       <div class="flex flex-wrap items-center gap-1.5 border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs">
@@ -112,7 +117,7 @@ export const ContainerListPage: Component = () => {
       <div class="overflow-x-auto border border-zinc-800">
         <ContainerRowHeader />
         <div class="divide-y divide-zinc-800">
-          <For each={store.items()}>
+          <For each={view.visible()}>
             {(c) => (
               <ContainerRow
                 c={c}
@@ -125,10 +130,13 @@ export const ContainerListPage: Component = () => {
               />
             )}
           </For>
+          <LoadMore when={view.hasMore()} onMore={view.loadMore} />
         </div>
 
-        <Show when={store.items().length === 0 && !store.error()}>
-          <div class="py-16 text-center text-zinc-400">暂无容器</div>
+        <Show when={view.filtered().length === 0 && !store.error()}>
+          <div class="py-16 text-center text-zinc-400">
+            {store.items().length === 0 ? "暂无容器" : "无匹配结果"}
+          </div>
         </Show>
       </div>
 

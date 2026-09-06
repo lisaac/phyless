@@ -8,11 +8,14 @@ import { get, post, del } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { midPath } from "../containers/containerActions";
+import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import type { VolumeSummary, FileEntry } from "../../types";
 
 export const VolumeListPage: Component = () => {
   const navigate = useNavigate();
   const store = createResourceStore<VolumeSummary>("/api/volumes");
+  const view = createListView(store.items, (v) =>
+    `${v.Name} ${v.Driver} ${v.Mountpoint} ${v.UsedBy?.map((c) => c.Name).join(" ") ?? ""}`);
   const [show, setShow] = createSignal(false);
   const [name, setName] = createSignal("");
   const [browse, setBrowse] = createSignal<VolumeSummary | null>(null);
@@ -39,6 +42,10 @@ export const VolumeListPage: Component = () => {
           <Button variant="primary" onClick={() => setShow(true)}>创建卷</Button>
         </Show>
       </div>
+      <div class="mb-3">
+        <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索存储卷…" />
+      </div>
+
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
 
       {/* div-simulated table (same approach as ContainerRow) — a fixed-width
@@ -53,7 +60,7 @@ export const VolumeListPage: Component = () => {
           <div class="w-36 shrink-0 px-3 py-2">操作</div>
         </div>
         <div class="divide-y divide-zinc-800">
-          <For each={store.items()}>
+          <For each={view.visible()}>
             {(v) => (
               <div class="flex flex-col text-sm transition-colors sm:flex-row hover:bg-white/[0.03]">
                 <div class="w-full px-3 py-2 sm:w-48 sm:shrink-0">
@@ -89,9 +96,12 @@ export const VolumeListPage: Component = () => {
               </div>
             )}
           </For>
+          <LoadMore when={view.hasMore()} onMore={view.loadMore} />
         </div>
-        <Show when={store.items().length === 0 && !store.error()}>
-          <div class="py-16 text-center text-zinc-400">暂无存储卷</div>
+        <Show when={view.filtered().length === 0 && !store.error()}>
+          <div class="py-16 text-center text-zinc-400">
+            {store.items().length === 0 ? "暂无存储卷" : "无匹配结果"}
+          </div>
         </Show>
       </div>
 

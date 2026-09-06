@@ -7,6 +7,7 @@ import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { Btn } from "../shared/ActionButton";
+import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -120,6 +121,7 @@ type ImageTask = "pull" | "load" | "import" | "delete" | "prune";
 
 export const ImageListPage: Component = () => {
   const store = createResourceStore<ImageSummary>("/api/images");
+  const view = createListView(store.items, (img) => `${(img.RepoTags ?? []).join(" ")} ${img.Id}`);
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
   const [showRemoteImport, setShowRemoteImport] = createSignal(false);
@@ -221,9 +223,9 @@ export const ImageListPage: Component = () => {
   const toggle = (id: string) =>
     setSelected((s) => { const next = new Set(s); next.has(id) ? next.delete(id) : next.add(id); return next; });
   const toggleAll = (checked: boolean) =>
-    setSelected(checked ? new Set(store.items().map((img) => img.Id)) : new Set<string>());
+    setSelected(checked ? new Set(view.filtered().map((img) => img.Id)) : new Set<string>());
   const selectedCount = () => selected().size;
-  const allSelected = () => store.items().length > 0 && store.items().every((img) => selected().has(img.Id));
+  const allSelected = () => view.filtered().length > 0 && view.filtered().every((img) => selected().has(img.Id));
 
   const startImageDelete = (ids: string[], force = false) => {
     if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
@@ -350,6 +352,10 @@ export const ImageListPage: Component = () => {
         </Show>
       </div>
 
+      <div class="mb-3">
+        <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索镜像…" />
+      </div>
+
       <div class="mb-3 flex flex-wrap items-center gap-1.5 border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs">
         <input type="checkbox" aria-label="全选镜像" checked={allSelected()} onChange={(e) => toggleAll(e.currentTarget.checked)} />
         <span class="min-w-[4rem] text-zinc-500">{selectedCount() > 0 ? `${selectedCount()} 已选` : "全选"}</span>
@@ -383,7 +389,7 @@ export const ImageListPage: Component = () => {
           <div class="w-40 shrink-0 px-3 py-2 text-center">创建时间</div>
         </div>
         <div class="divide-y divide-zinc-800">
-          <For each={store.items()}>
+          <For each={view.visible()}>
             {(img) => (
               <div
                 class={`flex flex-col text-sm transition-colors sm:flex-row sm:items-start hover:bg-white/[0.03] ${selected().has(img.Id) ? "ring-1 ring-inset ring-indigo-500/60" : ""}`}
@@ -465,10 +471,13 @@ export const ImageListPage: Component = () => {
               </div>
             )}
           </For>
+          <LoadMore when={view.hasMore()} onMore={view.loadMore} />
         </div>
 
-        <Show when={store.items().length === 0 && !store.error()}>
-          <div class="py-16 text-center text-zinc-400">暂无镜像</div>
+        <Show when={view.filtered().length === 0 && !store.error()}>
+          <div class="py-16 text-center text-zinc-400">
+            {store.items().length === 0 ? "暂无镜像" : "无匹配结果"}
+          </div>
         </Show>
       </div>
 
