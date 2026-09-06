@@ -10,7 +10,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o infra-manager ./cmd/server/
+COPY --from=frontend /web/dist ./web/dist
+RUN ./scripts/go-build.sh -o infra-manager ./cmd/server/
 
 FROM alpine:latest
 # Compose is embedded through the Go API; the runtime image intentionally has
@@ -19,7 +20,6 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/infra-manager .
-COPY --from=frontend /web/dist ./web/dist
 VOLUME /data
 EXPOSE 8080
 ENV COMPOSE_BAKE=false

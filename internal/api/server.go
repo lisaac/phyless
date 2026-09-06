@@ -3,9 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	dockerclient "github.com/docker/docker/client"
@@ -18,6 +18,7 @@ import (
 	"phyless/internal/models"
 	"phyless/internal/store"
 	"phyless/internal/ws"
+	"phyless/web"
 )
 
 type Server struct {
@@ -137,15 +138,17 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/containers/{id}/files/download", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleContainerDownloadFile))
 	r.Get("/api/images/save", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleImageSave))
 
-	distDir := "./web/dist"
-	if _, err := os.Stat(distDir); err == nil {
-		fs := http.FileServer(http.Dir(distDir))
+	dist, _ := fs.Sub(web.Dist, "dist") // "dist" is a valid path, Sub cannot fail
+	// A fresh clone without `npm run build` embeds only dist/.gitkeep; serve the
+	// SPA only when there is actually an index.html to serve.
+	if _, err := fs.Stat(dist, "index.html"); err == nil {
+		fileServer := http.FileServer(http.FS(dist))
 		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
-			if _, err := os.Stat(distDir + path); os.IsNotExist(err) {
+			if _, err := fs.Stat(dist, strings.TrimPrefix(path, "/")); err != nil {
 				// SPA fallback — index.html must never be stale
 				w.Header().Set("Cache-Control", "no-store")
-				http.ServeFile(w, r, distDir+"/index.html")
+				http.ServeFileFS(w, r, dist, "index.html")
 				return
 			}
 			// Hashed assets (e.g. /assets/index-abc123.js) can be cached forever.
@@ -155,7 +158,7 @@ func (s *Server) routes() http.Handler {
 			} else {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
-			fs.ServeHTTP(w, r)
+			fileServer.ServeHTTP(w, r)
 		})
 	}
 
