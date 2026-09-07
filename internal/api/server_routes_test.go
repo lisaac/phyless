@@ -17,8 +17,10 @@ import (
 	"github.com/docker/docker/api/types/network"
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/internal/audit"
 	"phyless/internal/auth"
+	"phyless/internal/docker/imagefs"
 	"phyless/internal/models"
 	"phyless/internal/store"
 )
@@ -58,6 +60,14 @@ func (c *routeClient) ImageList(context.Context, image.ListOptions) ([]image.Sum
 
 func (c *routeClient) ImageInspectWithRaw(context.Context, string) (image.InspectResponse, []byte, error) {
 	return image.InspectResponse{}, nil, nil
+}
+
+func (c *routeClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+	return image.InspectResponse{ID: id}, nil
+}
+
+func (c *routeClient) ContainerCreate(context.Context, *container.Config, *container.HostConfig, *network.NetworkingConfig, *ocispec.Platform, string) (container.CreateResponse, error) {
+	return container.CreateResponse{ID: "helper"}, nil
 }
 
 func (c *routeClient) ImageHistory(context.Context, string, ...client.ImageHistoryOption) ([]image.HistoryResponseItem, error) {
@@ -101,6 +111,7 @@ func routeTestServer(t *testing.T) (*Server, http.Handler, string, map[models.Ro
 		store:     s,
 		jwtSecret: []byte(secret),
 		docker:    dockerClient,
+		imagefs:   imagefs.New(dockerClient),
 		audit:     audit.New(filepath.Join(t.TempDir(), "audit.log")),
 	}
 	tokens := make(map[models.Role]string, len(users))
@@ -196,6 +207,37 @@ func TestViewerCanUseReadOnlyQueryRoutesThroughCompleteRouter(t *testing.T) {
 				t.Fatalf("GET %s status = %d, want 200; body=%s", path, response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestImageFilesRoutesRequireViewerAuth(t *testing.T) {
+	_, handler, _, tokens := routeTestServer(t)
+	viewerToken := url.QueryEscape(tokens[models.RoleViewer])
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/images/files?id=image", nil)
+	listReq.Header.Set("Authorization", "Bearer "+tokens[models.RoleViewer])
+	listResp := httptest.NewRecorder()
+	handler.ServeHTTP(listResp, listReq)
+	if listResp.Code == http.StatusUnauthorized || listResp.Code == http.StatusForbidden {
+		t.Fatalf("viewer GET /api/images/files status = %d, want authorized", listResp.Code)
+	}
+
+	downloadResp := httptest.NewRecorder()
+	handler.ServeHTTP(downloadResp, httptest.NewRequest(http.MethodGet, "/api/images/files/download?id=image&token="+viewerToken, nil))
+	if downloadResp.Code == http.StatusUnauthorized || downloadResp.Code == http.StatusForbidden {
+		t.Fatalf("viewer GET /api/images/files/download status = %d, want authorized", downloadResp.Code)
+	}
+
+	anonListResp := httptest.NewRecorder()
+	handler.ServeHTTP(anonListResp, httptest.NewRequest(http.MethodGet, "/api/images/files?id=image", nil))
+	if anonListResp.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous GET /api/images/files status = %d, want 401", anonListResp.Code)
+	}
+
+	anonDownloadResp := httptest.NewRecorder()
+	handler.ServeHTTP(anonDownloadResp, httptest.NewRequest(http.MethodGet, "/api/images/files/download?id=image", nil))
+	if anonDownloadResp.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous GET /api/images/files/download status = %d, want 401", anonDownloadResp.Code)
 	}
 }
 

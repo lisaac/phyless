@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { getToken, setToken } from "./client";
 
 export const DOWNLOAD_FALLBACK_LIMIT = 64 * 1024 * 1024;
@@ -130,4 +131,41 @@ export async function streamDownload(
   } finally {
     reader?.releaseLock();
   }
+}
+
+export interface DownloadState {
+  active: boolean;
+  filename: string;
+  bytes: number;
+  done: boolean;
+  error: string;
+}
+
+// Shared download state machine — used by any page that offers a "download
+// this file/dir as a tar" action via FileBrowser's onDownload. Tracks one
+// in-flight download at a time; starting a new one aborts the previous.
+export function createDownloadTask() {
+  const [state, setState] = createSignal<DownloadState>({ active: false, filename: "", bytes: 0, done: false, error: "" });
+  let controller: AbortController | undefined;
+  let generation = 0;
+
+  const start = async (url: string, filename: string) => {
+    controller?.abort();
+    const gen = ++generation;
+    const c = new AbortController();
+    controller = c;
+    setState({ active: true, filename, bytes: 0, done: false, error: "" });
+    try {
+      await streamDownload(url, filename, (bytes) => setState((s) => ({ ...s, bytes })), c.signal);
+      if (gen === generation) setState((s) => ({ ...s, done: true }));
+    } catch (e) {
+      if (gen === generation) setState((s) => ({ ...s, done: true, error: (e as Error).message }));
+    } finally {
+      if (controller === c) controller = undefined;
+    }
+  };
+
+  const cancel = () => { generation++; controller?.abort(); setState((s) => ({ ...s, active: false })); };
+
+  return { state, start, cancel };
 }

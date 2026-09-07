@@ -8,10 +8,13 @@ import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { Btn } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
+import { FileBrowser } from "../shared/FileBrowser";
+import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
+import { createDownloadTask } from "../../api/download";
 import { get, del, getToken, post } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
-import type { ImageSummary } from "../../types";
+import type { ImageSummary, FileEntry } from "../../types";
 
 // Tiny icon SVG
 const Ico = (p: { path: string }) => (
@@ -146,6 +149,8 @@ export const ImageListPage: Component = () => {
   const [confirmDelete, setConfirmDelete] = createSignal<ImageSummary | null>(null);
   const [forceDelete, setForceDelete] = createSignal<ImageSummary | null>(null);
   const [inspectFor, setInspectFor] = createSignal<ImageSummary | null>(null);
+  const [filesFor, setFilesFor] = createSignal<ImageSummary | null>(null);
+  const download = createDownloadTask();
   const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [pruning, setPruning] = createSignal(false);
@@ -154,6 +159,7 @@ export const ImageListPage: Component = () => {
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
+  onCleanup(() => download.cancel());
 
   const clearPullOptions = () => {
     setPullProxyUrl(""); setPullRegistryId(""); setPullPlatform("");
@@ -437,6 +443,9 @@ export const ImageListPage: Component = () => {
                       >
                         <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
                       </a>
+                      <IBtn title="文件" onClick={() => setFilesFor(img)}>
+                        <Ico path="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z" />
+                      </IBtn>
                       <Show when={hasRole("operator")}>
                         <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
                           <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
@@ -615,6 +624,23 @@ export const ImageListPage: Component = () => {
           </pre>
         </Show>
       </Modal>
+
+      {/* File browser — inspect the image's rootfs, download files as a tar */}
+      <Modal open={!!filesFor()} onClose={() => setFilesFor(null)} title={`文件 · ${filesFor() ? imgLabel(filesFor()!) : ""}`} wide>
+        <Show when={filesFor()}>
+          {(img) => (
+            <FileBrowser
+              instanceKey={img().Id}
+              listPath={(sub) => get<FileEntry[]>(`/api/images/files?id=${encodeURIComponent(img().Id)}&path=${encodeURIComponent(sub)}`)}
+              onDownload={(sub, name) => download.start(
+                `/api/images/files/download?id=${encodeURIComponent(img().Id)}&path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
+                `${name}.tar`,
+              )}
+            />
+          )}
+        </Show>
+      </Modal>
+      <DownloadStatusWidget task={download} />
 
       {/* Create container from this image — always mounted; wrapping in <Show>
           would unmount CreateContainerModal (and its embedded PullStatusWidget)

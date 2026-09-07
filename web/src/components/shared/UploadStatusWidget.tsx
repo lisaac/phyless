@@ -1,5 +1,6 @@
 import { Component, Show } from "solid-js";
 import { useFloatingSlot } from "../../stores/floatingStack";
+import { fmtBytes, type createDownloadTask } from "../../api/download";
 
 // Non-blocking floating status card for file transfer progress — matches
 // PullStatusWidget's shell, but driven by XHR/fetch progress events instead
@@ -68,3 +69,18 @@ export const UploadStatusWidget: Component<{
     </Show>
   );
 };
+
+// Thin wrapper around UploadStatusWidget for a createDownloadTask() — the
+// download-progress rendering shared by every page that offers a file
+// download (ContainerDetailPage, ImageListPage's file browser, ...).
+export const DownloadStatusWidget: Component<{ task: ReturnType<typeof createDownloadTask> }> = (props) => (
+  <UploadStatusWidget
+    active={props.task.state().active}
+    label="下载"
+    filename={props.task.state().filename}
+    bytesLabel={fmtBytes(props.task.state().bytes)}
+    done={props.task.state().done}
+    error={props.task.state().error}
+    onClose={props.task.cancel}
+  />
+);

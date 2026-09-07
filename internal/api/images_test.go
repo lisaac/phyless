@@ -15,6 +15,7 @@ import (
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"phyless/internal/audit"
+	"phyless/internal/docker/imagefs"
 )
 
 type imageActionClient struct {
@@ -28,6 +29,10 @@ type imageActionClient struct {
 	imageListErr  error
 	containerErr  error
 	volumeListErr error
+}
+
+func (c *imageActionClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+	return image.InspectResponse{ID: id}, nil
 }
 
 func (c *imageActionClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
@@ -63,7 +68,7 @@ func (c *imageActionClient) ImageRemove(_ context.Context, id string, options im
 
 func TestImageImportAndPruneUseRemoteSourceAndUnusedFilter(t *testing.T) {
 	client := &imageActionClient{}
-	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log"))}
+	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), imagefs: imagefs.New(client)}
 
 	importResponse := httptest.NewRecorder()
 	s.handleImageImport(importResponse, httptest.NewRequest(
@@ -117,6 +122,77 @@ func TestImageTagRequiresValidJSONAndTag(t *testing.T) {
 	if response.Code != http.StatusNoContent || client.tag != "latest" {
 		t.Fatalf("valid tag status = %d, tag = %q", response.Code, client.tag)
 	}
+}
+
+// imageHelperClient simulates an image with a live imagefs helper container so
+// deletion/listing paths that must account for it can be exercised.
+type imageHelperClient struct {
+	client.APIClient
+	calls []string
+}
+
+func (c *imageHelperClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+	return image.InspectResponse{ID: id}, nil
+}
+
+func (c *imageHelperClient) ContainerList(_ context.Context, opts container.ListOptions) ([]container.Summary, error) {
+	// m.find (label=role + label=image) is the only caller passing both
+	// filters at once; other callers (e.g. GC cleanup) filter on role alone.
+	if len(opts.Filters.Get("label")) == 2 {
+		return []container.Summary{{
+			ID:     "helper1",
+			Labels: map[string]string{imagefs.RoleLabel: imagefs.RoleValue, imagefs.ImageLabel: "sha256:image"},
+		}}, nil
+	}
+	return nil, nil
+}
+
+func (c *imageHelperClient) ContainerRemove(_ context.Context, id string, _ container.RemoveOptions) error {
+	c.calls = append(c.calls, "ContainerRemove:"+id)
+	return nil
+}
+
+func (c *imageHelperClient) ImageRemove(_ context.Context, id string, _ image.RemoveOptions) ([]image.DeleteResponse, error) {
+	c.calls = append(c.calls, "ImageRemove:"+id)
+	return nil, nil
+}
+
+func TestDeleteImageReleasesHelperContainerBeforeRemovingImage(t *testing.T) {
+	client := &imageHelperClient{}
+	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), imagefs: imagefs.New(client)}
+
+	response := httptest.NewRecorder()
+	s.handleDeleteImage(response, httptest.NewRequest(http.MethodDelete, "/api/images?id=sha256:image", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	want := []string{"ContainerRemove:helper1", "ImageRemove:sha256:image"}
+	if len(client.calls) != len(want) || client.calls[0] != want[0] || client.calls[1] != want[1] {
+		t.Fatalf("calls = %v, want %v", client.calls, want)
+	}
+}
+
+func TestListContainersHidesImagefsHelper(t *testing.T) {
+	s := &Server{docker: &imageHelperClientList{}}
+	response := httptest.NewRecorder()
+	s.handleListContainers(response, httptest.NewRequest(http.MethodGet, "/api/containers", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "helper1") {
+		t.Fatalf("helper container leaked into list: %s", response.Body.String())
+	}
+}
+
+type imageHelperClientList struct {
+	client.APIClient
+}
+
+func (c *imageHelperClientList) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
+	return []container.Summary{
+		{ID: "app1", Names: []string{"/app"}},
+		{ID: "helper1", Labels: map[string]string{imagefs.RoleLabel: imagefs.RoleValue, imagefs.ImageLabel: "sha256:image"}},
+	}, nil
 }
 
 func TestResourceUsageDiscoveryErrorsAreReported(t *testing.T) {

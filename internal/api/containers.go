@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	pathpkg "path"
+	"slices"
 	"sort"
 	"strings"
 
@@ -21,6 +22,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/internal/docker"
 	dockercontainer "phyless/internal/docker/container"
+	"phyless/internal/docker/imagefs"
 )
 
 // sortMounts gives Mounts a deterministic order. The daemon builds this slice
@@ -47,6 +49,7 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	containers = slices.DeleteFunc(containers, func(c container.Summary) bool { return imagefs.IsHelper(c.Labels) })
 	for i := range containers {
 		sortMounts(containers[i].Mounts)
 		sortPorts(containers[i].Ports)
@@ -632,6 +635,12 @@ func (s *Server) handleContainerDownloadFile(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer rc.Close()
+	serveArchive(w, rc, path)
+}
+
+// serveArchive writes rc as a downloadable tar named after the last segment
+// of path (or "root" for "/"). Shared by container and image file downloads.
+func serveArchive(w http.ResponseWriter, rc io.Reader, path string) {
 	base := path[strings.LastIndex(path, "/")+1:]
 	if base == "" {
 		base = "root"

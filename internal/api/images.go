@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"phyless/internal/docker"
 	dockercontainer "phyless/internal/docker/container"
+	"phyless/internal/docker/imagefs"
 )
 
 type containerRef struct {
@@ -39,6 +41,9 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 	}
 	usedBy := make(map[string][]containerRef)
 	for _, c := range containers {
+		if imagefs.IsHelper(c.Labels) {
+			continue
+		}
 		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
@@ -72,13 +77,23 @@ func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteImage(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	force := r.URL.Query().Get("force") == "true"
-	_, err := s.docker.ImageRemove(r.Context(), id, image.RemoveOptions{Force: force})
-	if err != nil {
+	if err := s.removeImage(r.Context(), id, force); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.auditFromCtx(r, "image.delete", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeImage drops the image's imagefs helper container (if any) before
+// removing the image itself — Docker refuses to remove an image that a
+// container, including our own browsing helper, still references.
+func (s *Server) removeImage(ctx context.Context, id string, force bool) error {
+	if err := s.imagefs.Release(ctx, id); err != nil {
+		return fmt.Errorf("释放镜像文件浏览容器失败: %w", err)
+	}
+	_, err := s.docker.ImageRemove(ctx, id, image.RemoveOptions{Force: force})
+	return err
 }
 
 func flushImageProgress(w http.ResponseWriter) {
@@ -108,7 +123,7 @@ func (s *Server) handleImageDeleteProgress(w http.ResponseWriter, r *http.Reques
 	dockercontainer.EmitStream(w, "开始删除 %d 个镜像", len(body.IDs))
 	flushImageProgress(w)
 	for _, id := range body.IDs {
-		if _, err := s.docker.ImageRemove(r.Context(), id, image.RemoveOptions{Force: body.Force}); err != nil {
+		if err := s.removeImage(r.Context(), id, body.Force); err != nil {
 			s.auditFromCtx(r, "image.delete", id, "failed")
 			dockercontainer.EmitError(w, fmt.Errorf("镜像 %s：%w", id, err))
 		} else {
@@ -117,6 +132,43 @@ func (s *Server) handleImageDeleteProgress(w http.ResponseWriter, r *http.Reques
 		}
 		flushImageProgress(w)
 	}
+}
+
+func (s *Server) handleImageListFiles(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	dirPath := r.URL.Query().Get("path")
+	if dirPath == "" {
+		dirPath = "/"
+	}
+	entries, err := s.imagefs.List(r.Context(), id, dirPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *Server) handleImageDownloadFile(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "/"
+	}
+	rc, err := s.imagefs.Open(r.Context(), id, path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer rc.Close()
+	serveArchive(w, rc, path)
 }
 
 func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {

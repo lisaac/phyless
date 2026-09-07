@@ -8,8 +8,8 @@ import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
-import { UploadStatusWidget } from "../shared/UploadStatusWidget";
-import { streamDownload, fmtBytes } from "../../api/download";
+import { UploadStatusWidget, DownloadStatusWidget } from "../shared/UploadStatusWidget";
+import { createDownloadTask } from "../../api/download";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { CopyToContainerModal } from "./CopyToContainerModal";
@@ -254,31 +254,13 @@ export const ContainerDetailPage: Component = () => {
   // ── File actions ──────────────────────────────────────────────────────────────
   const listFiles = (sub: string) =>
     get<FileEntry[]>(`/api/containers/${id()}/files?path=${encodeURIComponent(sub)}`);
-  const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
-  let downloadController: AbortController | undefined;
-  let downloadGeneration = 0;
-  const downloadFile = async (sub: string, name: string) => {
-    downloadController?.abort();
-    const generation = ++downloadGeneration;
-    const controller = new AbortController();
-    downloadController = controller;
-    const filename = `${name}.tar`;
-    setDownloadState({ active: true, filename, bytes: 0, done: false, error: "" });
-    try {
-      await streamDownload(
-        `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
-        filename,
-        (bytes) => setDownloadState((s) => ({ ...s, bytes })),
-        controller.signal,
-      );
-      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true }));
-    } catch (e) {
-      if (generation === downloadGeneration) setDownloadState((s) => ({ ...s, done: true, error: (e as Error).message }));
-    } finally {
-      if (downloadController === controller) downloadController = undefined;
-    }
-  };
-  onCleanup(() => { downloadGeneration++; downloadController?.abort(); });
+  const download = createDownloadTask();
+  const downloadFile = (sub: string, name: string) =>
+    download.start(
+      `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
+      `${name}.tar`,
+    );
+  onCleanup(() => download.cancel());
   // fetch() exposes no upload-progress events, so use XHR to drive the widget.
   const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
     const uploadToken = getToken();
@@ -811,15 +793,7 @@ export const ContainerDetailPage: Component = () => {
       />
 
       {/* ── Download progress — non-blocking floating card ───────────────── */}
-      <UploadStatusWidget
-        active={downloadState().active}
-        label="下载"
-        filename={downloadState().filename}
-        bytesLabel={fmtBytes(downloadState().bytes)}
-        done={downloadState().done}
-        error={downloadState().error}
-        onClose={() => { downloadGeneration++; downloadController?.abort(); setDownloadState((s) => ({ ...s, active: false })); }}
-      />
+      <DownloadStatusWidget task={download} />
     </div>
   );
 };

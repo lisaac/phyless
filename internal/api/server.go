@@ -15,6 +15,7 @@ import (
 	"phyless/internal/auth"
 	"phyless/internal/docker"
 	dockercompose "phyless/internal/docker/compose"
+	"phyless/internal/docker/imagefs"
 	"phyless/internal/models"
 	"phyless/internal/store"
 	"phyless/internal/ws"
@@ -28,6 +29,7 @@ type Server struct {
 	audit          *audit.Logger
 	docker         dockerclient.APIClient
 	composeRuntime *dockercompose.Runtime
+	imagefs        *imagefs.Manager
 }
 
 func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
@@ -40,6 +42,8 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		_ = dc.Close()
 		panic("cannot initialize Compose: " + err.Error())
 	}
+	mgr := imagefs.New(dc)
+	go mgr.Run(context.Background())
 	srv := &Server{
 		store:          s,
 		jwtSecret:      jwtSecret,
@@ -47,6 +51,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		audit:          audit.New(dataDir + "/audit.log"),
 		docker:         dc,
 		composeRuntime: composeRuntime,
+		imagefs:        mgr,
 	}
 	return srv.routes()
 }
@@ -136,6 +141,7 @@ func (s *Server) routes() http.Handler {
 	// Download routes — browsers can't set Authorization headers on <a href>, use query token instead
 	r.Get("/api/containers/{id}/export", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleContainerExport))
 	r.Get("/api/containers/{id}/files/download", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleContainerDownloadFile))
+	r.Get("/api/images/files/download", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleImageDownloadFile))
 	r.Get("/api/images/save", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleImageSave))
 
 	dist, _ := fs.Sub(web.Dist, "dist") // "dist" is a valid path, Sub cannot fail
@@ -223,6 +229,7 @@ func (s *Server) mountViewerResourceRoutes(r chi.Router) {
 	r.Get("/api/images/detail", s.handleGetImage)
 	r.Get("/api/images/inspect", s.handleImageInspect)
 	r.Get("/api/images/history", s.handleImageHistory)
+	r.Get("/api/images/files", s.handleImageListFiles)
 	r.Get("/api/networks", s.handleListNetworks)
 	r.Get("/api/networks/{id}", s.handleGetNetwork)
 	r.Get("/api/networks/{id}/inspect", s.handleNetworkInspect)
