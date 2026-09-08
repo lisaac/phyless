@@ -477,6 +477,57 @@ func (s *Server) handleGetCompose(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleComposePullPlan lists the images a browser-download client must
+// pre-pull before running Up/Pull with pull_policy=never. The loader still owns
+// "what to pull" (profiles, active services); the client only pulls each ref.
+// Services with a build, or images pinned by digest, are rejected because
+// browser-pull v1 handles neither.
+func (s *Server) handleComposePullPlan(w http.ResponseWriter, r *http.Request) {
+	resolved, err := s.resolveCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
+		return
+	}
+	project, err := s.loadResolvedComposeProject(r.Context(), resolved)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	type planImage struct {
+		Service  string `json:"service"`
+		Ref      string `json:"ref"`
+		Platform string `json:"platform,omitempty"`
+	}
+	type planReject struct {
+		Service string `json:"service"`
+		Ref     string `json:"ref"`
+		Reason  string `json:"reason"`
+	}
+	images := make([]planImage, 0)
+	rejected := make([]planReject, 0)
+	names := make([]string, 0, len(project.Services))
+	for name := range project.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		svc := project.Services[name]
+		if svc.Build != nil {
+			rejected = append(rejected, planReject{Service: name, Ref: svc.Image, Reason: "build"})
+			continue
+		}
+		if svc.Image == "" {
+			continue
+		}
+		if strings.Contains(svc.Image, "@") {
+			rejected = append(rejected, planReject{Service: name, Ref: svc.Image, Reason: "digest"})
+			continue
+		}
+		images = append(images, planImage{Service: name, Ref: svc.Image, Platform: svc.Platform})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"images": images, "rejected": rejected})
+}
+
 func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if strings.HasPrefix(id, "auto:") {
