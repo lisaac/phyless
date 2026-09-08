@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, setToken } from "../api/client";
+import { runBrowserPull } from "./browserPull";
 
 // Global queue for every server-mutating request (pull/upgrade/compose/
 // start/stop/delete/upload/rename/…). Lives at module scope, not inside a
@@ -31,6 +32,9 @@ export interface TaskSpec {
   key?: string;
   meta?: TaskMeta;
   doneLink?: { href: string; label: string };
+  // Transient, never persisted (stripped in persist()): browser-pull registry
+  // credentials must not be written to localStorage task history.
+  secret?: { creds?: { username: string; secret: string } };
 }
 
 export interface Task extends TaskSpec {
@@ -79,7 +83,7 @@ export const [panelHidden, setPanelHidden] = createSignal(tasks.list.length === 
 function persist() {
   try {
     const stored = tasks.list.slice(-MAX_STORED).map((t) => ({
-      ...unwrap(t), file: undefined, body: undefined, layers: [], notes: t.notes.slice(-MAX_STORED_NOTES),
+      ...unwrap(t), file: undefined, body: undefined, secret: undefined, layers: [], notes: t.notes.slice(-MAX_STORED_NOTES),
     }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
   } catch { /* quota / private mode — the in-memory queue still works */ }
@@ -89,6 +93,9 @@ const upd = (id: string, patch: Partial<Task>) => setTasks("list", (t) => t.id =
 const find = (id: string) => tasks.list.find((t) => t.id === id);
 
 const xhrs = new Map<string, XMLHttpRequest>();
+// browser-pull tasks stream over WebSocket instead of XHR; their AbortController
+// lives here so cancel()/settle() can reach it the same way.
+const browserAborts = new Map<string, AbortController>();
 const waiters = new Map<string, (t: Task) => void>();
 let nextId = Date.now();
 
@@ -128,6 +135,7 @@ export function cancel(id: string) {
   if (!t) return;
   if (t.status === "queued") { settle(id, "cancelled", "已取消"); return; }
   xhrs.get(id)?.abort();
+  browserAborts.get(id)?.abort();
 }
 
 export function remove(id: string) {
@@ -148,6 +156,7 @@ function settle(id: string, status: TaskStatus, error = "") {
   if (!t || !isActive(t.status)) return;
   upd(id, { status, error: error.slice(0, MAX_ERROR), finishedAt: Date.now(), uploadPct: null });
   xhrs.delete(id);
+  browserAborts.delete(id);
   persist();
   const snapshot = { ...unwrap(find(id)!) };
   waiters.get(id)?.(snapshot);
@@ -190,10 +199,34 @@ function httpError(status: number, text: string): string {
 // XHR rather than fetch: fetch has no upload-progress events, and XHR's
 // onprogress on the response side gives the same incremental NDJSON parsing
 // — one transport covers uploads, streamed progress and plain JSON writes.
+// startBrowserPull drives a browser-download → WebSocket import task, reporting
+// progress through the same task-note channel the XHR path uses.
+function startBrowserPull(id: string) {
+  const t = find(id)!;
+  const ac = new AbortController();
+  browserAborts.set(id, ac);
+  const note = (m: string) =>
+    setTasks("list", (x) => x.id === id, "notes", (n) => [...n, m.slice(0, MAX_ERROR)].slice(-MAX_NOTES));
+  runBrowserPull(
+    {
+      ref: String(t.meta?.ref ?? ""),
+      platform: String(t.meta?.platform ?? ""),
+      workerUrl: String(t.meta?.workerUrl ?? ""),
+      token: getToken() ?? "",
+      creds: t.secret?.creds,
+    },
+    { note, progress: note, signal: ac.signal },
+  ).then(
+    () => settle(id, "done"),
+    (err) => settle(id, "error", err instanceof Error ? err.message : String(err)),
+  );
+}
+
 function start(id: string) {
   const t = find(id)!;
   upd(id, { status: "running", uploadPct: t.file ? 0 : null });
   persist();
+  if (t.meta?.type === "browser-pull") { startBrowserPull(id); return; }
   const { url, body, file, method } = t;
   const layerMap = new Map<string, LayerProgress>();
   let buf = "";
