@@ -137,6 +137,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/ws/containers/{id}/stats", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, ws.Stats(dc)))
 	r.Get("/ws/events", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, ws.Events(dc)))
 	r.Get("/ws/compose/logs", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleComposeLogsWS))
+	r.Get("/ws/images/load", wsAuthWithUser(jwtSecret, models.RoleOperator, s.lookupUser, ws.ImageLoad(dc)))
 
 	// Download routes — browsers can't set Authorization headers on <a href>, use query token instead
 	r.Get("/api/containers/{id}/export", wsAuthWithUser(jwtSecret, models.RoleViewer, s.lookupUser, s.handleContainerExport))
