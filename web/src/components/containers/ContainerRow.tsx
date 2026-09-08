@@ -1,4 +1,5 @@
 import { Component, JSX, Show, For } from "solid-js";
+import { displayImage } from "../../api/inspect";
 import { useNavigate } from "@solidjs/router";
 import { hasRole } from "../../stores/auth";
 import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
@@ -89,7 +90,7 @@ export const ContainerRow: Component<{
           href={`/containers/${c().Id}`}
           onClick={goto(`/containers/${c().Id}`)}
         >{c().Id.slice(0, 12)}</a>
-        <div class="max-w-[10rem] truncate text-[11px] text-zinc-400" title={c().Image}>{c().Image}</div>
+        <div class="max-w-[10rem] truncate text-[11px] text-zinc-400" title={c().Image}>{displayImage(c().Image, c().Labels)}</div>
         <div class="mt-0.5 text-[11px] text-zinc-400">
           {fmtContainerStatus(c().State, c().Status)}
           {" · 创建 "}{fmtRelTime(c().Created)}

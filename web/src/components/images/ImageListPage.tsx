@@ -39,6 +39,13 @@ const IBtn = (p: { title: string; onClick: () => void; loading?: boolean; danger
   </button>
 );
 
+// "<none> | repo@1234567890ab" — the digest names where an untagged image came from.
+const digestHint = (img: ImageSummary) => {
+  const d = img.RepoDigests?.[0];
+  if (!d) return "";
+  const [repo, digest = ""] = d.split("@sha256:");
+  return ` | ${repo}@${digest.slice(0, 12)}`;
+};
 const imgLabel = (img: ImageSummary) => img.RepoTags?.[0] ?? img.Id.replace("sha256:", "").slice(0, 12);
 
 // "myrepo/app:v2" → "app" — a reasonable default --name for a fresh container
@@ -404,7 +411,7 @@ export const ImageListPage: Component = () => {
                 <div class="min-w-0 w-full px-3 py-2 sm:flex-1">
                   <div class="min-w-0 flex-1">
                     {/* Tags — editable + deletable chips */}
-                    <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;</div>}>
+                    <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;{digestHint(img)}</div>}>
                       <For each={img.RepoTags}>
                         {(tag) => (
                           <div>

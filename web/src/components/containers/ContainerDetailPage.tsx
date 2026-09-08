@@ -17,7 +17,7 @@ import { LogsView } from "../shared/LogsView";
 import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/TimeRangePicker";
 import { ContainerStats } from "./ContainerStats";
 import { FileBrowser } from "../shared/FileBrowser";
-import { inspectToRunCmd } from "../../api/inspect";
+import { inspectToRunCmd, displayImage } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
 import { setTabLabel, removeTab } from "../../stores/tabs";
 import { KV, Sec } from "../shared/KV";
@@ -163,6 +163,9 @@ export const ContainerDetailPage: Component = () => {
   const host = () => inspect()?.HostConfig ?? {};
   // container:<id> mode: no own endpoints, Docker refuses connect/disconnect.
   const sharedNetTarget = () => { const m: string = host().NetworkMode ?? ""; return m.startsWith("container:") ? m.slice("container:".length) : ""; };
+  const [sharedNetName] = createResource(sharedNetTarget, (t) =>
+    t ? get<any>(`/api/containers/${t}/inspect`).then((r) => String(r?.Name ?? "").replace(/^\//, "")).catch(() => "") : Promise.resolve("")
+  );
   const name = () => (inspect()?.Name ?? id()).replace(/^\//, "");
   const state = () => inspect()?.State?.Status ?? "unknown";
   const running = () => state() === "running";
@@ -426,7 +429,7 @@ export const ContainerDetailPage: Component = () => {
             <EditableKV k="名称" value={name()} onSave={saveName} />
             <KV k="ID"><span class="select-all truncate block" title={id()}>{id()}</span></KV>
             <KV k="镜像">
-              <span class="break-all" title={inspect()?.Image}>{cfg().Image}</span>
+              <span class="break-all" title={inspect()?.Image}>{displayImage(cfg().Image, cfg().Labels)}</span>
               <Show when={inspect()?.Image}>
                 <span class="ml-2 text-zinc-500">{inspect()!.Image!.replace(/^sha256:/, "").slice(0, 12)}</span>
               </Show>
@@ -570,7 +573,7 @@ export const ContainerDetailPage: Component = () => {
                   <div class="flex items-center gap-2">
                     <span class="text-zinc-500">模式:</span>
                     <span class="text-zinc-300">共享容器网络</span>
-                    <A class="text-zinc-300 hover:text-indigo-400 transition-colors" href={`/containers/${target()}`}>{target().slice(0, 12)}</A>
+                    <A class="text-zinc-300 hover:text-indigo-400 transition-colors" href={`/containers/${target()}`}>{sharedNetName() || target().slice(0, 12)}</A>
                   </div>
                 )}
               </Show>

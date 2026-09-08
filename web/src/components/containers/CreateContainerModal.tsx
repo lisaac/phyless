@@ -10,7 +10,7 @@ import { copyToClipboard } from "../../api/clipboard";
 import { countComposeServices, cliToCompose } from "../../api/convert";
 import { toast } from "../shared/Toast";
 import { emptyForm, formToPayload, formToRunCmd, parseRunIntoForm, type CreateForm } from "./containerForm";
-import { inspectToRunCmd } from "../../api/inspect";
+import { inspectToRunCmd, displayImage } from "../../api/inspect";
 import { RegisterComposeModal } from "../compose/RegisterComposeModal";
 import type { ImageSummary, NetworkSummary, ContainerSummary, Template } from "../../types";
 
@@ -398,7 +398,7 @@ export const CreateContainerModal: Component<{
             <For each={containers() ?? []}>
               {(c) => (
                 <option value={c.Id}>
-                  {(c.Names[0] ?? "").replace(/^\//, "")} — {c.Image}
+                  {(c.Names[0] ?? "").replace(/^\//, "")} — {displayImage(c.Image, c.Labels)}
                 </option>
               )}
             </For>

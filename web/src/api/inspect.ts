@@ -26,6 +26,15 @@ function parseEnvArr(arr?: unknown): Record<string, string> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** Human-readable image reference. Upgraded containers pin Config.Image to a
+ *  sha256 ID and keep the original tag in a label; prefer the tag. */
+export const UPGRADE_IMAGE_REF_LABEL = "io.phyless.upgrade-image-ref";
+export function displayImage(image: string | undefined, labels?: Record<string, string> | null): string {
+  const img = image ?? "";
+  if (img.startsWith("sha256:")) return labels?.[UPGRADE_IMAGE_REF_LABEL] || img.replace(/^sha256:/, "").slice(0, 12);
+  return img;
+}
+
 export function inspectToRunCmd(container: any, image: any): string {
   const cfg = container?.Config ?? {};
   const img = image?.Config ?? {};
@@ -199,7 +208,7 @@ export function inspectToRunCmd(container: any, image: any): string {
   const entryDiff = !arrEq(cfg.Entrypoint ?? [], img.Entrypoint ?? []);
   const cmdDiff = !arrEq(cfg.Cmd ?? [], img.Cmd ?? []);
   if (entryDiff) run.push(`--entrypoint ${q(cfg.Entrypoint?.[0] ?? "")}`);
-  run.push(q(cfg.Image ?? ""));
+  run.push(q(displayImage(cfg.Image, cfg.Labels)));
   if (entryDiff) (cfg.Entrypoint ?? []).slice(1).forEach((p: string) => run.push(q(p)));
   if (entryDiff || cmdDiff) (cfg.Cmd ?? []).forEach((p: string) => run.push(q(p)));
 

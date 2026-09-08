@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inspectToRunCmd } from "./inspect";
+import { inspectToRunCmd, displayImage, UPGRADE_IMAGE_REF_LABEL } from "./inspect";
 import { shellQuote } from "./shell";
 import { emptyForm, formToPayload, parseRunIntoForm } from "../components/containers/containerForm";
 
@@ -30,5 +30,13 @@ describe("inspect command fidelity", () => {
     const command = inspectToRunCmd({ Config: { Image: "alpine", Env: ["A=$(id)"] } }, {});
     expect(command).toContain("-e 'A=$(id)'");
     expect(formToPayload({ ...emptyForm(), ...parseRunIntoForm("docker run --entrypoint '' alpine") }).entrypoint).toEqual([]);
+  });
+});
+
+describe("displayImage", () => {
+  it("prefers the upgrade label for sha256-pinned images", () => {
+    expect(displayImage("sha256:abcdef0123456789", { [UPGRADE_IMAGE_REF_LABEL]: "vaultwarden/server:latest" })).toBe("vaultwarden/server:latest");
+    expect(displayImage("sha256:abcdef0123456789", {})).toBe("abcdef012345");
+    expect(displayImage("nginx:1.25", {})).toBe("nginx:1.25");
   });
 });

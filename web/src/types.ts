@@ -25,6 +25,7 @@ export interface ContainerSummary {
 export interface ImageSummary {
   Id: string;
   RepoTags: string[];
+  RepoDigests?: string[];
   Size: number;
   Created: number;
   UsedBy?: { Id: string; Name: string }[];
