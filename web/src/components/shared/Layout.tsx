@@ -198,7 +198,6 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
                 <span class="absolute -right-1 -top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />
               </Show>
             </span>
-            <span class="hidden sm:inline">任务</span>
             <Show when={activeCount() > 0}>
               <span class="rounded-full bg-indigo-500/20 px-1.5 text-xs text-indigo-300">{activeCount()}</span>
             </Show>

@@ -41,6 +41,32 @@ const brief = (t: Task): string => {
   return t.notes[t.notes.length - 1] ?? "连接中…";
 };
 
+const fmtTime = (ms: number) =>
+  new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+const fmtDur = (ms: number) => {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+};
+
+// Short id / hash — Docker-style 12-char truncation.
+const shortId = (v: string) => (v.length > 12 ? v.slice(0, 12) : v);
+
+// A few structured facts for the expanded detail: time, duration, the
+// operation and its target name/hash pulled from meta (stores/taskQueue.ts).
+const metaRows = (t: Task): [string, string][] => {
+  const rows: [string, string][] = [["时间", fmtTime(t.createdAt)]];
+  if (t.finishedAt) rows.push(["耗时", fmtDur(t.finishedAt - t.createdAt)]);
+  const op = (t.meta?.verb ?? t.meta?.type) as string | undefined;
+  if (op) rows.push(["操作", op]);
+  const target = (t.containerId ?? t.meta?.containerId ?? t.meta?.composeId ?? t.key) as string | undefined;
+  if (target) rows.push(["目标", shortId(target)]);
+  const ids = t.meta?.ids as string[] | undefined;
+  if (ids?.length) rows.push(["数量", `${ids.length}`]);
+  return rows;
+};
+
 // Global task queue (stores/taskQueue.ts) as a right-side slide-in drawer:
 // click a row to expand its per-layer progress / log detail, click the
 // backdrop (or 关闭) to slide it out.
@@ -123,7 +149,7 @@ export const TaskQueueWidget: Component = () => {
               <div class="border-b border-zinc-800/60 last:border-b-0">
                 {/* Header row — click anywhere to expand/collapse (no arrow). */}
                 <div
-                  class="flex cursor-pointer items-center gap-2.5 px-4 py-2.5 hover:bg-zinc-800/40"
+                  class="flex cursor-pointer items-center gap-2.5 px-4 py-2.5 hover:bg-zinc-800"
                   onClick={() => toggleExpand(t.id)}
                 >
                   <span class={`h-2 w-2 shrink-0 rounded-full ${dotClass(t)}`} />
@@ -138,7 +164,15 @@ export const TaskQueueWidget: Component = () => {
                   >✕</button>
                 </div>
                 <Show when={expanded().has(t.id)}>
-                  <div class="max-h-64 overflow-auto bg-zinc-950/40 px-4 py-3 font-mono text-[11px]">
+                  <div class="max-h-72 overflow-auto border-t border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-[11px]">
+                    <dl class="mb-2 grid grid-cols-[3rem_1fr] gap-x-3 gap-y-0.5">
+                      <For each={metaRows(t)}>
+                        {([k, v]) => (<>
+                          <dt class="text-[10px] uppercase tracking-widest text-zinc-500">{k}</dt>
+                          <dd class="truncate text-zinc-300" title={v}>{v}</dd>
+                        </>)}
+                      </For>
+                    </dl>
                     <Show when={t.uploadPct !== null}>
                       <div class="mb-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
                         <div class="h-full rounded-full bg-indigo-600 transition-all duration-150" style={{ width: `${Math.min(100, t.uploadPct!)}%` }} />

@@ -36,8 +36,15 @@ export const SearchBox: Component<{
   placeholder?: string;
 }> = (p) => (
   <div class="relative w-full sm:max-w-xs">
+    <svg
+      xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"
+      class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
+    >
+      <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
+    </svg>
     <input
-      class="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 pr-8 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-indigo-500"
+      class="w-full border border-zinc-800 bg-zinc-900/60 py-1.5 pl-8 pr-8 text-sm text-zinc-200 placeholder-zinc-500 outline-none focus:border-indigo-500 focus:bg-zinc-900"
       placeholder={p.placeholder}
       value={p.value}
       onInput={(e) => p.onInput(e.currentTarget.value)}
