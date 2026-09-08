@@ -190,15 +190,36 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             onClick={() => setPanelHidden(!panelHidden())}
             title={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
           >
-            <span class={`h-2 w-2 rounded-full ${running() ? "animate-pulse bg-indigo-500" : "bg-zinc-600"}`} />
+            <span class="relative flex">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" class={running() ? "text-indigo-400" : ""}>
+                <path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
+              </svg>
+              <Show when={running()}>
+                <span class="absolute -right-1 -top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />
+              </Show>
+            </span>
             <span class="hidden sm:inline">任务</span>
             <Show when={activeCount() > 0}>
               <span class="rounded-full bg-indigo-500/20 px-1.5 text-xs text-indigo-300">{activeCount()}</span>
             </Show>
           </button>
-          <button class="shrink-0 rounded px-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" onClick={refreshAll} title="立即刷新">↻</button>
-          <details class="relative shrink-0">
-            <summary class="cursor-pointer list-none px-1 text-xs text-zinc-400 hover:text-zinc-100" title="刷新设置">▾</summary>
+          {/* Refresh now — plain icon button, no dropdown arrow beside it. */}
+          <button
+            class={`shrink-0 rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
+            onClick={refreshAll}
+            title="立即刷新"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
+            </svg>
+          </button>
+          {/* Refresh settings — gear, replaces the old ▾ arrow. */}
+          <details class="group relative shrink-0">
+            <summary class="flex cursor-pointer list-none items-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100" title="刷新设置">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </summary>
             <div class="absolute right-0 z-50 mt-2 flex w-48 flex-col gap-2 rounded-lg border border-zinc-700/50 bg-zinc-900 p-3 text-sm text-zinc-200 shadow-2xl">
               <label class="flex items-center gap-2">
                 <input type="checkbox" checked={autoRefresh()} onChange={(e) => setAutoRefresh(e.currentTarget.checked)} />
