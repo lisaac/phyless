@@ -3,7 +3,8 @@ import { createResourceStore } from "../../stores/resource";
 import { Table, type Column } from "../shared/Table";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { post, del } from "../../api/client";
+import { request } from "../../api/client";
+import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
 import type { Registry } from "../../types";
 
@@ -16,15 +17,16 @@ export const RegistriesPage: Component = () => {
   onMount(() => store.refresh());
 
   const create = async () => {
-    try { await post("/api/registries", form()); setShow(false); setForm({ url: "", username: "", password: "" }); await store.refresh(); }
+    try { await queued(`添加仓库 ${form().url}`, "POST", "/api/registries", form()); setShow(false); setForm({ url: "", username: "", password: "" }); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (id: string) => {
-    try { await del(`/api/registries/${id}`); await store.refresh(); }
+    try { await queued("删除仓库", "DELETE", `/api/registries/${id}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
   const test = async (id: string) => {
-    try { const r = await post<{ status: string }>(`/api/registries/${id}/test`); toast.success(r.status); }
+    try { // Connectivity probe, not a state change — stays a direct request.
+      const r = await request<{ status: string }>("POST", `/api/registries/${id}/test`); toast.success(r.status); }
     catch (e) { toast.error((e as Error).message); }
   };
 

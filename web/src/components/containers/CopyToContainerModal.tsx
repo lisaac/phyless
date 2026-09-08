@@ -1,7 +1,7 @@
 import { Component, createSignal, createEffect, createResource, For } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { enqueue } from "../../stores/taskQueue";
 import { get } from "../../api/client";
 import { containerName } from "./containerActions";
 import type { ContainerSummary } from "../../types";
@@ -30,7 +30,6 @@ export const CopyToContainerModal: Component<{
 }> = (props) => {
   const [targetId, setTargetId] = createSignal("");
   const [targetPath, setTargetPath] = createSignal("");
-  const [copying, setCopying] = createSignal(false);
   const [containers] = createResource(() => props.source, () => get<ContainerSummary[]>("/api/containers"));
 
   createEffect(() => {
@@ -47,13 +46,20 @@ export const CopyToContainerModal: Component<{
   };
 
   const confirm = () => {
-    if (!targetId() || !targetPath()) return;
-    setCopying(true);
+    const src = props.source;
+    if (!src || !targetId() || !targetPath()) return;
+    enqueue({
+      title: `复制 ${src.path} → ${targetContainerLabel() || targetId()}`,
+      url: `/api/containers/${src.containerId}/files/copy-to?path=${encodeURIComponent(src.path)}`,
+      body: { target_id: targetId(), target_path: targetPath() },
+      key: targetId(),
+      doneLink: { href: `/containers/${targetId()}?tab=files&path=${encodeURIComponent(targetPath())}`, label: "查看目标目录" },
+    });
+    props.onClose();
   };
 
   return (
-    <>
-      <Modal open={!!props.source && !copying()} onClose={props.onClose} title={`复制到其他容器 — ${props.source?.path ?? ""}`}>
+      <Modal open={!!props.source} onClose={props.onClose} title={`复制到其他容器 — ${props.source?.path ?? ""}`}>
         <div class="flex flex-col gap-3">
           <label class="flex flex-col gap-1">
             <span class="text-xs text-zinc-400">目标容器</span>
@@ -83,18 +89,5 @@ export const CopyToContainerModal: Component<{
           <Button variant="primary" disabled={!targetId() || !targetPath()} onClick={confirm}>确定</Button>
         </div>
       </Modal>
-
-      <PullStatusWidget
-        active={copying()}
-        onClose={() => { setCopying(false); props.onClose(); }}
-        title={`复制 ${props.source?.path ?? ""} → ${targetContainerLabel() || targetId()}`}
-        url={`/api/containers/${props.source?.containerId}/files/copy-to?path=${encodeURIComponent(props.source?.path ?? "")}`}
-        body={{ target_id: targetId(), target_path: targetPath() }}
-        doneLink={{
-          href: `/containers/${targetId()}?tab=files&path=${encodeURIComponent(targetPath())}`,
-          label: "查看目标目录",
-        }}
-      />
-    </>
   );
 };

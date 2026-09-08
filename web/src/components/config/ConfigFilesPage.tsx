@@ -3,7 +3,8 @@ import { FileBrowser } from "../shared/FileBrowser";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
-import { get, put, post, del, getToken, setToken } from "../../api/client";
+import { get } from "../../api/client";
+import { enqueue, queued } from "../../stores/taskQueue";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { toast } from "../shared/Toast";
@@ -69,7 +70,7 @@ export const ConfigFilesPage: Component = () => {
     }
     setSaving(true);
     try {
-      await put(`/api/config/files/content?path=${encodeURIComponent(openPath())}`, content());
+      await queued(`保存 ${openPath()}`, "PUT", `/api/config/files/content?path=${encodeURIComponent(openPath())}`, content(), { key: "config" });
       toast.success("已保存");
     } catch (e) { toast.error((e as Error).message); }
     finally { setSaving(false); }
@@ -79,14 +80,14 @@ export const ConfigFilesPage: Component = () => {
   // handleConfig{Delete,Rename}File) — creating is just a PUT with empty
   // content, same endpoint the editor already saves through.
   const createFile = async (path: string) => {
-    await put(`/api/config/files/content?path=${encodeURIComponent(path)}`, "");
+    await queued(`新建 ${path}`, "PUT", `/api/config/files/content?path=${encodeURIComponent(path)}`, "", { key: "config" });
   };
   const deleteFile = async (path: string) => {
-    await del(`/api/config/files?path=${encodeURIComponent(path)}`);
+    await queued(`删除 ${path}`, "DELETE", `/api/config/files?path=${encodeURIComponent(path)}`, undefined, { key: "config" });
     if (openPath() === path) setOpenPath("");
   };
   const renameFile = async (oldPath: string, newPath: string) => {
-    await post("/api/config/files/rename", { old_path: oldPath, new_path: newPath });
+    await queued(`重命名 ${oldPath}`, "POST", "/api/config/files/rename", { old_path: oldPath, new_path: newPath }, { key: "config" });
     if (openPath() === oldPath) setOpenPath(newPath);
   };
 
@@ -94,47 +95,16 @@ export const ConfigFilesPage: Component = () => {
   // for upload (XHR, since fetch() has no upload-progress events), and the
   // tar-streaming endpoint for download (fetch + a reader loop, since the
   // exact tar size isn't known upfront to compute a percentage).
-  const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
-  let uploadXhr: XMLHttpRequest | undefined;
-  const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
-    const uploadToken = getToken();
-    setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
-    const xhr = new XMLHttpRequest();
-    uploadXhr = xhr;
-    xhr.open("PUT", `/api/config/files/content?path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${uploadToken ?? ""}`);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
-    };
-    xhr.onload = () => {
-      if (xhr.status === 401) {
-        if (uploadToken === getToken()) {
-          setToken(null);
-          window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
-        }
-        setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
-        reject(new Error("unauthorized"));
-        return;
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        setUploadState((s) => ({ ...s, progress: 100, done: true }));
-        resolve();
-      } else {
-        const msg = xhr.responseText || `上传失败 (${xhr.status})`;
-        setUploadState((s) => ({ ...s, done: true, error: msg }));
-        reject(new Error(msg));
-      }
-    };
-    xhr.onerror = () => {
-      setUploadState((s) => ({ ...s, done: true, error: "网络错误" }));
-      reject(new Error("network error"));
-    };
-    xhr.onabort = () => {
-      setUploadState((s) => ({ ...s, done: true }));
-      reject(new Error("aborted"));
-    };
-    xhr.send(file);
-  });
+  const uploadFile = async (sub: string, file: File) => {
+    const t = await enqueue({
+      title: `上传 ${file.name}`,
+      url: `/api/config/files/content?path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`,
+      method: "PUT",
+      file,
+      key: "config",
+    }).done;
+    if (t.status !== "done") throw new Error(t.error);
+  };
 
   const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
   let downloadController: AbortController | undefined;
@@ -202,14 +172,6 @@ export const ConfigFilesPage: Component = () => {
         </div>
       </div>
 
-      <UploadStatusWidget
-        active={uploadState().active}
-        filename={uploadState().filename}
-        progress={uploadState().progress}
-        done={uploadState().done}
-        error={uploadState().error}
-        onClose={() => { uploadXhr?.abort(); setUploadState((s) => ({ ...s, active: false })); }}
-      />
       <UploadStatusWidget
         active={downloadState().active}
         label="下载"

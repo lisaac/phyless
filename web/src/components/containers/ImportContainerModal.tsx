@@ -1,29 +1,29 @@
 import { Component, createSignal } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { PullStatusWidget } from "../shared/PullStatusWidget";
+import { enqueue } from "../../stores/taskQueue";
 
 // Imports a container filesystem tar (the reverse of ContainerDetailPage's
 // "导出 tar" / `docker export`) via the existing /api/containers/import
 // endpoint, which wraps `docker import` — this always produces a new IMAGE,
 // never a running container directly, since a plain filesystem tarball
 // carries no command/env/etc. From the resulting image, use the normal
-// "+ 新建容器" flow to launch it. Reuses PullStatusWidget (same as image
-// import on ImageListPage) for real upload-progress + abort-on-close,
-// instead of a bespoke XHR — see PullStatusWidget's file-upload path.
+// "+ 新建容器" flow to launch it. Runs through the global task queue (upload
+// progress + streamed import output show in the task panel).
 export const ImportContainerModal: Component<{ open: boolean; onClose: () => void }> = (props) => {
   const [ref, setRef] = createSignal("");
   const [file, setFile] = createSignal<File | undefined>(undefined);
-  const [importing, setImporting] = createSignal(false);
 
   const submit = () => {
-    if (!file() || !ref().trim()) return;
-    setImporting(true);
+    const f = file();
+    if (!f || !ref().trim()) return;
+    enqueue({ title: `导入 ${f.name} → ${ref()}`, url: `/api/containers/import?ref=${encodeURIComponent(ref())}`, file: f });
+    setRef(""); setFile(undefined);
+    props.onClose();
   };
 
   return (
-    <>
-      <Modal open={props.open && !importing()} onClose={props.onClose} title="导入容器（tar → 镜像）">
+      <Modal open={props.open} onClose={props.onClose} title="导入容器（tar → 镜像）">
         <div class="flex flex-col gap-3">
           <label class="flex flex-col gap-1">
             <span class="text-xs text-zinc-400">tar 文件（如 docker export 导出的文件）</span>
@@ -53,14 +53,5 @@ export const ImportContainerModal: Component<{ open: boolean; onClose: () => voi
           <Button variant="primary" disabled={!file() || !ref().trim()} onClick={submit}>导入</Button>
         </div>
       </Modal>
-
-      <PullStatusWidget
-        active={importing()}
-        title={`导入 ${file()?.name ?? ""} → ${ref()}`}
-        url={`/api/containers/import?ref=${encodeURIComponent(ref())}`}
-        file={file()}
-        onClose={() => { setImporting(false); props.onClose(); setRef(""); setFile(undefined); }}
-      />
-    </>
   );
 };

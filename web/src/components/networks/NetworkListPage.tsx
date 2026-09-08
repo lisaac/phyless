@@ -2,7 +2,7 @@ import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { post, del } from "../../api/client";
+import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import type { NetworkSummary } from "../../types";
@@ -24,14 +24,14 @@ export const NetworkListPage: Component = () => {
     if (f.gateway) body.gateway = f.gateway;
     if (f.parent) body.parent = f.parent;
     try {
-      await post("/api/networks", body);
+      await queued(`创建网络 ${f.name}`, "POST", "/api/networks", body);
       setShow(false);
       setForm({ name: "", driver: "bridge", subnet: "", gateway: "", parent: "" });
       await store.refresh();
     } catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (id: string) => {
-    try { await del(`/api/networks/${id}`); await store.refresh(); }
+    try { await queued("删除网络", "DELETE", `/api/networks/${id}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
 

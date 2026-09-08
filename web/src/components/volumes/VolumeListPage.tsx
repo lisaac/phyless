@@ -4,7 +4,8 @@ import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
-import { get, post, del } from "../../api/client";
+import { get } from "../../api/client";
+import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { midPath } from "../containers/containerActions";
@@ -24,11 +25,11 @@ export const VolumeListPage: Component = () => {
   onCleanup(() => store.stopPolling());
 
   const create = async () => {
-    try { await post("/api/volumes", { name: name() }); setShow(false); setName(""); await store.refresh(); }
+    try { await queued(`创建卷 ${name()}`, "POST", "/api/volumes", { name: name() }); setShow(false); setName(""); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (n: string) => {
-    try { await del(`/api/volumes/${encodeURIComponent(n)}`); await store.refresh(); }
+    try { await queued(`删除卷 ${n}`, "DELETE", `/api/volumes/${encodeURIComponent(n)}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
   const listFiles = (sub: string) =>

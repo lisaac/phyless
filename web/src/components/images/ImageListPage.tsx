@@ -1,9 +1,9 @@
 import { Component, createSignal, createResource, onMount, onCleanup, Show, For, JSX } from "solid-js";
+import { enqueue, queued, isPending, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { Btn } from "../shared/ActionButton";
@@ -11,7 +11,7 @@ import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
-import { get, del, getToken, post } from "../../api/client";
+import { get, getToken } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import type { ImageSummary, FileEntry } from "../../types";
@@ -80,8 +80,8 @@ const TagChip: Component<{
     const next = draft().trim();
     if (!next || next === p.tag) return;
     try {
-      await post(`/api/images/tag?id=${encodeURIComponent(p.img.Id)}`, { tag: next });
-      await del(`/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
+      await queued(`标签 ${next}`, "POST", `/api/images/tag?id=${encodeURIComponent(p.img.Id)}`, { tag: next });
+      await queued(`移除标签 ${p.tag}`, "DELETE", `/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
       toast.success("已重命名标签");
       p.onChanged();
     } catch (e) { toast.error((e as Error).message); }
@@ -94,7 +94,7 @@ const TagChip: Component<{
       return;
     }
     try {
-      await del(`/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
+      await queued(`移除标签 ${p.tag}`, "DELETE", `/api/images/untag?ref=${encodeURIComponent(p.tag)}`);
       p.onChanged();
     } catch (e) { toast.error((e as Error).message); }
   };
@@ -127,24 +127,12 @@ const TagChip: Component<{
   );
 };
 
-type ImageTask = "pull" | "load" | "import" | "delete" | "prune";
-
 export const ImageListPage: Component = () => {
   const store = createResourceStore<ImageSummary>("/api/images");
   const view = createListView(store.items, (img) => `${(img.RepoTags ?? []).join(" ")} ${img.Id}`);
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
   const [showRemoteImport, setShowRemoteImport] = createSignal(false);
-  // Shared streaming-task state — drives PullStatusWidget for pull, Load, and
-  // remote Import without duplicating progress handling.
-  const [taskActive, setTaskActive] = createSignal(false);
-  const [taskTitle, setTaskTitle] = createSignal("");
-  const [taskUrl, setTaskUrl] = createSignal("");
-  const [taskBody, setTaskBody] = createSignal<unknown>(undefined);
-  const [taskFile, setTaskFile] = createSignal<File | undefined>(undefined);
-  const [taskKind, setTaskKind] = createSignal<ImageTask>("pull");
-  const [taskDeleteIds, setTaskDeleteIds] = createSignal<string[]>([]);
-  const [taskDeleteForce, setTaskDeleteForce] = createSignal(false);
   const [pullProxyUrl, setPullProxyUrl] = createSignal("");
   const [pullRegistryId, setPullRegistryId] = createSignal("");
   const [pullPlatform, setPullPlatform] = createSignal("");
@@ -160,7 +148,6 @@ export const ImageListPage: Component = () => {
   const download = createDownloadTask();
   const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
-  const [pruning, setPruning] = createSignal(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [inspectData] = createResource(inspectFor, (img) => get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`));
 
@@ -176,34 +163,27 @@ export const ImageListPage: Component = () => {
     setShowRemoteImport(false); setRemoteImportURL(""); setRemoteImportRef(""); setRemoteImportFile(undefined);
   };
 
+  // Long-running image ops go through the global task queue (progress in the
+  // task panel, survives navigation). meta drives the settle listener below.
   const startPull = () => {
-    // ponytail: one progress card per page; close it before starting another task.
-    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
     const ref = pullRef().trim();
     if (!ref) return;
-    setTaskKind("pull");
-    setTaskTitle(`拉取 ${ref}`);
-    setTaskUrl("/api/images/pull");
-    setTaskBody({ image: ref, ...pullOptionsPayload({
-      proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform(),
-    }) });
-    setTaskFile(undefined);
-    setShowPullInput(false);
-    setTaskActive(true);
+    enqueue({
+      title: `拉取 ${ref}`,
+      url: "/api/images/pull",
+      body: { image: ref, ...pullOptionsPayload({ proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform() }) },
+      key: `image:${ref}`,
+      meta: { type: "pull" },
+    });
+    setPullRef("");
+    closePullInput();
   };
 
   const startImport = (file: File) => {
-    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
-    setTaskKind("load");
-    setTaskTitle(`Load ${file.name}`);
-    setTaskUrl("/api/images/load");
-    setTaskBody(undefined);
-    setTaskFile(file);
-    setTaskActive(true);
+    enqueue({ title: `Load ${file.name}`, url: "/api/images/load", file, meta: { type: "load" } });
   };
 
   const startRemoteImport = () => {
-    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
     const source = remoteImportURL().trim();
     try {
       const u = new URL(source);
@@ -212,25 +192,14 @@ export const ImageListPage: Component = () => {
       toast.error("请输入有效的 http(s) 远程 tar URL");
       return;
     }
-    setTaskKind("import");
-    setTaskTitle(`Import ${source}`);
-    setTaskUrl("/api/images/import");
-    setTaskBody({ source, ref: remoteImportRef().trim() });
-    setTaskFile(undefined);
-    setShowRemoteImport(false);
-    setTaskActive(true);
+    enqueue({ title: `Import ${source}`, url: "/api/images/import", body: { source, ref: remoteImportRef().trim() }, meta: { type: "import" } });
+    closeRemoteImport();
   };
 
   const startLocalImport = (file: File) => {
-    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
     const ref = remoteImportRef().trim();
-    setTaskKind("import");
-    setTaskTitle(`Import ${file.name}`);
-    setTaskUrl(`/api/images/import${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`);
-    setTaskBody(undefined);
-    setTaskFile(file);
-    setShowRemoteImport(false);
-    setTaskActive(true);
+    enqueue({ title: `Import ${file.name}`, url: `/api/images/import${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`, file, meta: { type: "import" } });
+    closeRemoteImport();
   };
 
   const toggle = (id: string) =>
@@ -241,65 +210,59 @@ export const ImageListPage: Component = () => {
   const allSelected = () => view.filtered().length > 0 && view.filtered().every((img) => selected().has(img.Id));
 
   const startImageDelete = (ids: string[], force = false) => {
-    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
     if (!ids.length) return;
     setConfirmDelete(null);
     setForceDelete(null);
     setSelected(new Set<string>());
-    setTaskKind("delete");
-    setTaskDeleteIds(ids);
-    setTaskDeleteForce(force);
-    setTaskTitle(`${force ? "强制删除" : "删除"} ${ids.length} 个镜像`);
-    setTaskUrl("/api/images/delete");
-    setTaskBody({ ids, force });
-    setTaskFile(undefined);
-    setTaskActive(true);
+    enqueue({
+      title: `${force ? "强制删除" : "删除"} ${ids.length} 个镜像`,
+      url: "/api/images/delete",
+      body: { ids, force },
+      key: "images:delete",
+      meta: { type: "image-delete", ids, force },
+    });
   };
 
   const bulkRemove = () => startImageDelete([...selected()]);
 
   const prune = () => {
-    if (taskActive()) { toast.error("请先关闭当前进度卡片"); return; }
-    setTaskKind("prune");
-    setTaskDeleteIds([]);
-    setTaskDeleteForce(false);
-    setTaskTitle("清理镜像");
-    setTaskUrl("/api/images/prune");
-    setTaskBody(undefined);
-    setTaskFile(undefined);
-    setPruning(true);
     setSelected(new Set<string>());
-    setTaskActive(true);
+    enqueue({ title: "清理镜像", url: "/api/images/prune", key: "images:delete", meta: { type: "prune" } });
   };
 
   const remove = (id: string, force = false) => startImageDelete([id], force);
-  const deleting = (id: string) => taskActive() && taskKind() === "delete" && taskDeleteIds().includes(id);
-  const taskDone = () => {
-    const kind = taskKind();
-    if (kind === "delete") toast.success(`已删除 ${taskDeleteIds().length} 个镜像`);
-    if (kind === "prune") { setPruning(false); toast.success("镜像清理完成"); }
-    void store.refresh();
-  };
-  const taskError = (message: string) => {
-    const kind = taskKind();
-    if (kind === "prune") setPruning(false);
-    if (kind !== "delete" && kind !== "prune") return;
-    void store.refresh();
-    if (kind === "delete" && taskDeleteIds().length === 1 && !taskDeleteForce() &&
-        (message.includes("must be forced") || message.includes("is being used") || message.includes("referenced"))) {
-      const id = taskDeleteIds()[0];
+  const deleting = (id: string) => isPending((t) => t.meta?.type === "image-delete" && (t.meta.ids as string[]).includes(id));
+  const pruning = () => isPending((t) => t.meta?.type === "prune");
+
+  // Page-level reactions to finished image tasks (while this page is mounted;
+  // otherwise the outcome just stays in the task panel). List refresh itself is
+  // handled by createResourceStore.
+  const onSettled = (e: Event) => {
+    const t = (e as CustomEvent<Task>).detail;
+    const kind = t.meta?.type;
+    if (kind !== "image-delete" && kind !== "prune") return;
+    if (t.status === "done") {
+      toast.success(kind === "prune" ? "镜像清理完成" : `已删除 ${(t.meta!.ids as string[]).length} 个镜像`);
+      return;
+    }
+    if (t.status !== "error") return;
+    const ids = (t.meta!.ids as string[] | undefined) ?? [];
+    if (kind === "image-delete" && ids.length === 1 && !t.meta!.force &&
+        (t.error.includes("must be forced") || t.error.includes("is being used") || t.error.includes("referenced"))) {
+      const id = ids[0];
       const img = store.items().find(i => i.Id === id) ?? null;
-      setTaskActive(false);
       setForceDelete(img ?? { Id: id, RepoTags: [], Size: 0, Created: 0 });
       return;
     }
-    toast.error(message);
+    toast.error(t.error);
   };
+  onMount(() => window.addEventListener(SETTLED_EVENT, onSettled));
+  onCleanup(() => window.removeEventListener(SETTLED_EVENT, onSettled));
 
   const addTag = async () => {
     const img = tagFor(); if (!img) return;
     try {
-      await post(`/api/images/tag?id=${encodeURIComponent(img.Id)}`, { tag: tagVal() });
+      await queued(`标签 ${tagVal()}`, "POST", `/api/images/tag?id=${encodeURIComponent(img.Id)}`, { tag: tagVal() });
       toast.success("打标签成功");
       setTagFor(null); setTagVal("");
       await store.refresh();
@@ -318,7 +281,7 @@ export const ImageListPage: Component = () => {
           <div class="flex items-center gap-2">
             <button
               class="rounded-md border border-red-500/30 px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
-              disabled={taskActive() || pruning()}
+              disabled={pruning()}
               title={pruning() ? "清理中" : "清理所有未被容器使用的镜像"}
               onClick={() => {
                 if (confirm("清理所有未被容器使用的镜像？此操作不可撤销。")) void prune();
@@ -328,32 +291,26 @@ export const ImageListPage: Component = () => {
             </button>
             <button
               class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
-              disabled={taskActive()}
-              title={taskActive() ? "已有任务进行中" : undefined}
               onClick={() => setShowPullInput(true)}
             >
               + 拉取镜像
             </button>
             <button
               class="rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 disabled:opacity-50"
-              disabled={taskActive()}
-              title={taskActive() ? "已有任务进行中" : "Import：导入容器导出的 rootfs tar，可选远程 URL 或本地文件"}
+              title="Import：导入容器导出的 rootfs tar，可选远程 URL 或本地文件"
               onClick={() => setShowRemoteImport(true)}
             >
               + Import 镜像
             </button>
             <label
-              class={`rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 ${
-                taskActive() ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-              }`}
-              title={taskActive() ? "已有任务进行中" : "Load：导入由镜像 save 导出的 tar 文件"}
+              class="cursor-pointer rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100"
+              title="Load：导入由镜像 save 导出的 tar 文件"
             >
               + Load 镜像
               <input
                 type="file"
                 accept=".tar,.tar.gz,.tgz"
                 class="hidden"
-                disabled={taskActive()}
                 onChange={(e) => {
                   const file = e.currentTarget.files?.[0];
                   e.currentTarget.value = "";
@@ -377,7 +334,7 @@ export const ImageListPage: Component = () => {
           <Btn
             title="删除选中镜像"
             danger
-            disabled={selectedCount() === 0 || taskActive()}
+            disabled={selectedCount() === 0}
             onClick={() => {
               if (confirm(`删除选中的 ${selectedCount()} 个镜像？`)) void bulkRemove();
             }}
@@ -569,18 +526,6 @@ export const ImageListPage: Component = () => {
       </Modal>
 
       {/* Pull/import progress — non-blocking floating card, rest of the page stays usable */}
-      <PullStatusWidget
-        active={taskActive()}
-        onClose={() => { setTaskActive(false); setPruning(false); setPullRef(""); setTaskDeleteIds([]); clearPullOptions(); closeRemoteImport(); }}
-        title={taskTitle()}
-        url={taskUrl()}
-        body={taskBody()}
-        file={taskFile()}
-        onDone={taskDone}
-        onError={taskError}
-        onSettled={() => { setTaskBody(undefined); setTaskFile(undefined); clearPullOptions(); }}
-      />
-
       {/* Tag modal */}
       <Modal open={!!tagFor()} onClose={() => setTagFor(null)} title="添加标签">
         <p class="mb-2 text-xs text-zinc-500">
@@ -649,13 +594,9 @@ export const ImageListPage: Component = () => {
       </Modal>
       <DownloadStatusWidget task={download} />
 
-      {/* Create container from this image — always mounted; wrapping in <Show>
-          would unmount CreateContainerModal (and its embedded PullStatusWidget)
-          the instant onClose fires. */}
       <CreateContainerModal
         open={!!createFrom()}
         onClose={() => setCreateFrom(null)}
-        onCreated={() => setCreateFrom(null)}
         initialRun={createFrom() ? `docker run -d --name ${suggestName(imgLabel(createFrom()!))} ${imgLabel(createFrom()!)}` : ""}
       />
     </div>

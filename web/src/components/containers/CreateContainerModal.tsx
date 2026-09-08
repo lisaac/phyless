@@ -1,11 +1,11 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
-import { get, post, del, imageInspectUrl } from "../../api/client";
+import { get, imageInspectUrl } from "../../api/client";
+import { enqueue, queued } from "../../stores/taskQueue";
 import { copyToClipboard } from "../../api/clipboard";
 import { countComposeServices, cliToCompose } from "../../api/convert";
 import { toast } from "../shared/Toast";
@@ -49,7 +49,6 @@ function autoH(el: HTMLTextAreaElement) {
 export const CreateContainerModal: Component<{
   open: boolean;
   onClose: () => void;
-  onCreated: () => void;
   // When set, jumps to CMD tab with this run command pre-loaded and hides the source selection row.
   initialRun?: string;
 }> = (props) => {
@@ -68,9 +67,6 @@ export const CreateContainerModal: Component<{
   const isMulti = () => serviceCount() > 1;
   const [savingTpl, setSavingTpl] = createSignal(false);
   const [tplName, setTplName] = createSignal("");
-  const [creating, setCreating] = createSignal(false);
-  const [createTitle, setCreateTitle] = createSignal("");
-  const [createBody, setCreateBody] = createSignal<unknown>(undefined);
   const [pullProxyUrl, setPullProxyUrl] = createSignal("");
   const [pullRegistryId, setPullRegistryId] = createSignal("");
   const [pullPlatform, setPullPlatform] = createSignal("");
@@ -175,16 +171,19 @@ export const CreateContainerModal: Component<{
     setTab(newTab);
   };
 
-  // Creation streams progress via PullStatusWidget (non-blocking), so close
-  // this form immediately and hand off to the floating widget below.
+  // Creation streams progress through the global task queue, so close this
+  // form immediately and hand off to the task panel.
   const submit = () => {
-    if (creating()) { toast.error("请先关闭当前进度卡片"); return; }
     if (!form().image.trim()) { toast.error("请填写镜像名称"); return; }
-    setCreateTitle(`创建 ${form().name || form().image}`);
-    setCreateBody({ ...formToPayload(form()), ...pullOptionsPayload({
-      proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform(),
-    }) });
-    setCreating(true);
+    enqueue({
+      title: `创建 ${form().name || form().image}`,
+      url: "/api/containers",
+      body: { ...formToPayload(form()), ...pullOptionsPayload({
+        proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform(),
+      }) },
+      key: form().name ? `container:${form().name}` : undefined,
+      meta: { type: "create" },
+    });
     setForm(emptyForm());
     setSelectedTplId("");
     setSelectedContainerId("");
@@ -231,7 +230,7 @@ export const CreateContainerModal: Component<{
     const name = tplName().trim();
     if (!name) return;
     try {
-      await post("/api/templates", { name, cmd: getCurrentRun() });
+      await queued(`保存模板 ${name}`, "POST", "/api/templates", { name, cmd: getCurrentRun() });
       toast.success(`模板 "${name}" 已保存`);
       setTplName("");
       setSavingTpl(false);
@@ -243,7 +242,7 @@ export const CreateContainerModal: Component<{
 
   const deleteTemplate = async (id: string) => {
     try {
-      await del(`/api/templates/${id}`);
+      await queued("删除模板", "DELETE", `/api/templates/${id}`);
       refetchTpls();
     } catch (e) {
       toast.error((e as Error).message);
@@ -680,15 +679,6 @@ export const CreateContainerModal: Component<{
       initialCompose={liveCompose()}
       onClose={() => setShowRegister(false)}
       onRegistered={() => { setShowRegister(false); closeModal(); }}
-    />
-    <PullStatusWidget
-      active={creating()}
-      onClose={() => { setCreating(false); clearPullOptions(); }}
-      title={createTitle()}
-      url="/api/containers"
-      body={createBody()}
-      onDone={() => props.onCreated()}
-      onSettled={() => { setCreateBody(undefined); clearPullOptions(); }}
     />
     </>
   );

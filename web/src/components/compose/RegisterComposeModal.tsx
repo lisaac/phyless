@@ -3,7 +3,8 @@ import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { CodeEditor } from "../shared/CodeEditor";
 import { PathPicker } from "../shared/PathPicker";
-import { get, post, put } from "../../api/client";
+import { get } from "../../api/client";
+import { queued } from "../../stores/taskQueue";
 import { fetchTextFile } from "../../api/textFile";
 import { toast } from "../shared/Toast";
 import type { FileEntry } from "../../types";
@@ -118,9 +119,9 @@ export const RegisterComposeModal: Component<{
         // /api/fs/file's PUT handler (internal/api/fs.go) MkdirAlls the
         // file's parent directory before writing, so a base_dir that
         // doesn't exist yet gets created as a side effect of writing here.
-        await put(`/api/fs/file?path=${encodeURIComponent(composeFilePath)}`, composeContent());
+        await queued(`写入 ${composeFilePath}`, "PUT", `/api/fs/file?path=${encodeURIComponent(composeFilePath)}`, composeContent());
       }
-      await post("/api/compose", {
+      await queued(`注册 Compose ${n}`, "POST", "/api/compose", {
         name: n,
         base_dir: dir,
         compose_file: composeFilePath,

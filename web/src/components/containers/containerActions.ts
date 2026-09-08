@@ -1,6 +1,4 @@
-import { createSignal } from "solid-js";
-import { post, del } from "../../api/client";
-import { toast } from "../shared/Toast";
+import { enqueue, isPending } from "../../stores/taskQueue";
 import type { ContainerSummary } from "../../types";
 
 export function containerName(c: ContainerSummary): string {
@@ -29,27 +27,22 @@ export function midPath(p: string, max = 26): string {
   return p.slice(0, head) + "…" + p.slice(p.length - tail);
 }
 
-// Per-container start/stop/pause/kill/delete with a loading flag per (id, verb)
-// pair — one instance per page, parameterized by that page's own refresh (so
-// ContainerListPage refreshes its store and ComposeListPage refreshes its own
-// containers store, but the pending/act logic itself isn't duplicated).
-export function createContainerActions(refresh: () => Promise<void>) {
-  const [pending, setPending] = createSignal<Set<string>>(new Set());
-  const mark = (id: string, verb: string, on: boolean) =>
-    setPending((p) => { const n = new Set(p); on ? n.add(`${id}:${verb}`) : n.delete(`${id}:${verb}`); return n; });
-  const isP = (id: string, verb: string) => pending().has(`${id}:${verb}`);
-  const act = async (id: string, verb: string) => {
-    mark(id, verb, true);
-    try {
-      if (verb === "delete") await del(`/api/containers/${id}`);
-      else await post(`/api/containers/${id}/${verb}`);
-      await refresh();
-    } catch (e) {
-      toast.error(`${verb} 失败: ${(e as Error).message}`);
-    } finally {
-      mark(id, verb, false);
-    }
-  };
+export const VERB_LABEL: Record<string, string> = {
+  start: "启动", stop: "停止", restart: "重启", pause: "暂停", unpause: "恢复", kill: "强制关闭", delete: "删除",
+};
+
+// Per-container start/stop/pause/kill/delete through the global task queue
+// (stores/taskQueue.ts): same container id = same key, so verbs on one
+// container run in order; list stores refresh themselves on settle.
+export function createContainerActions() {
+  const isP = (id: string, verb: string) => isPending((t) => t.meta?.containerId === id && t.meta?.verb === verb);
+  const act = (id: string, verb: string, name?: string) => enqueue({
+    title: `${VERB_LABEL[verb] ?? verb} ${name || id.slice(0, 12)}`,
+    method: verb === "delete" ? "DELETE" : "POST",
+    url: verb === "delete" ? `/api/containers/${id}` : `/api/containers/${id}/${verb}`,
+    key: id,
+    meta: { containerId: id, verb },
+  }).done;
   return { isP, act };
 }
 

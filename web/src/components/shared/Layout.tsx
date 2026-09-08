@@ -5,6 +5,7 @@ import { theme, toggleTheme } from "../../stores/theme";
 import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type PageTab } from "../../stores/tabs";
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
+import { TaskQueueWidget } from "./TaskQueueWidget";
 
 const CLOSE_ANIM_MS = 200;
 
@@ -191,6 +192,9 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           {props.children}
         </main>
       </div>
+      {/* Global task queue panel — mounted once here (inside the Router, so
+          it can navigate) and never remounted by route changes. */}
+      <TaskQueueWidget />
     </div>
   );
 };

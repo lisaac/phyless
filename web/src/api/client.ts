@@ -62,9 +62,9 @@ export async function request<T>(method: string, path: string, body?: unknown): 
 }
 
 export const get = <T>(p: string) => request<T>("GET", p);
-export const post = <T>(p: string, body?: unknown) => request<T>("POST", p, body);
-export const put = <T>(p: string, body?: unknown) => request<T>("PUT", p, body);
-export const del = <T>(p: string) => request<T>("DELETE", p);
+// No post/put/del: every server-mutating request goes through
+// stores/taskQueue.ts (enqueue / queued) so it survives navigation and
+// shows in the task panel.
 
 // Image refs (e.g. "sha256:abc", "nginx:latest") contain colons, so the id
 // travels as a query param rather than a path segment — see server.go.

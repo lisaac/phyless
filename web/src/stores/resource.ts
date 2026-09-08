@@ -1,5 +1,6 @@
 import { createSignal, type Accessor } from "solid-js";
 import { get } from "../api/client";
+import { SETTLED_EVENT } from "./taskQueue";
 
 export interface ResourceStore<T> {
   items: Accessor<T[]>;
@@ -30,6 +31,9 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
       schedule();
     }
   };
+  // Any queued write finishing (stores/taskQueue.ts) refreshes every polling
+  // store, instead of each page wiring its own onDone → refresh.
+  const onSettled = () => { if (!document.hidden) void refresh(); };
   const schedule = () => {
     if (!polling || document.hidden || timer) return;
     timer = setInterval(() => { if (!document.hidden) void refresh(); }, 5000); // ponytail: one fallback poll per store
@@ -72,6 +76,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
     if (polling) return;
     polling = true;
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener(SETTLED_EVENT, onSettled);
     if (!document.hidden) {
       void refresh();
       schedule();
@@ -84,6 +89,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
     generation++;
     setLoading(false);
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener(SETTLED_EVENT, onSettled);
   };
 
   return { items, loading, error, refresh, startPolling, stopPolling };

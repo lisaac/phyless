@@ -2,10 +2,9 @@ import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
-import { Modal } from "../shared/Modal";
-import { PullStatusWidget } from "../shared/PullStatusWidget";
-import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
-import { get, del, imageInspectUrl } from "../../api/client";
+import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
+import { get, imageInspectUrl } from "../../api/client";
+import { queued } from "../../stores/taskQueue";
 import { inspectToRunCmd } from "../../api/inspect";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -16,7 +15,7 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb, VERB_LABEL } from "./composeShared";
+import { containersOf, representative, ActBtn, ComposeIcon } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
@@ -25,43 +24,16 @@ export const ComposeListPage: Component = () => {
   const navigate = useNavigate();
   const store = createResourceStore<ComposeProject>("/api/compose");
   const containers = createResourceStore<ContainerSummary>("/api/containers");
-  const { isP, act } = createContainerActions(containers.refresh);
+  const { isP, act } = createContainerActions();
   const view = createListView(store.items, (p) =>
     `${p.name} ${p.id} ${p.base_dir} ${p.compose_file} ${containersOf(p, containers.items())
       .map((c) => `${c.Names.join(" ")} ${c.Image}`).join(" ")}`, { rowHeight: 72 });
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
-  const [composeAction, setComposeAction] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
-  const [composeOptionsTarget, setComposeOptionsTarget] = createSignal<{ id: string; name: string; verb: ComposeVerb } | null>(null);
-  const [composeOptionsOpen, setComposeOptionsOpen] = createSignal(false);
-  const [composeProxyUrl, setComposeProxyUrl] = createSignal("");
-  const [composeRegistryIds, setComposeRegistryIds] = createSignal<string[]>([]);
-  const [composeBody, setComposeBody] = createSignal<unknown>(undefined);
-  const isRunning = (id: string, verb: ComposeVerb) => composeAction()?.id === id && composeAction()?.verb === verb;
-  const clearComposeOptions = () => { setComposeProxyUrl(""); setComposeRegistryIds([]); };
-  const closeComposeOptions = () => { setComposeOptionsOpen(false); setComposeOptionsTarget(null); clearComposeOptions(); };
-  const requestComposeAction = (action: { id: string; name: string; verb: ComposeVerb }) => {
-    if (composeAction()) { toast.error("请先关闭当前进度卡片"); return; }
-    if (action.verb === "up" || action.verb === "pull") {
-      clearComposeOptions();
-      setComposeOptionsTarget(action);
-      setComposeOptionsOpen(true);
-    } else {
-      setComposeBody(undefined);
-      setComposeAction(action);
-    }
-  };
-  const startComposeAction = () => {
-    if (composeAction()) { toast.error("请先关闭当前进度卡片"); return; }
-    const target = composeOptionsTarget();
-    if (!target) return;
-    const options = pullOptionsPayload({ proxyUrl: composeProxyUrl(), registryIds: composeRegistryIds() });
-    setComposeBody(Object.keys(options).length > 0 ? options : undefined);
-    setComposeOptionsOpen(false);
-    setComposeOptionsTarget(null);
-    setComposeAction(target);
-  };
+  const [composeTarget, setComposeTarget] = createSignal<ComposeAction | null>(null);
+  const isRunning = isComposeRunning;
+  const request = (a: ComposeAction) => requestComposeAction(a, setComposeTarget);
   // Run/Compose reuses the same flow as the container list's own Run/Compose
   // button: feed CreateContainerModal the merged run commands and let its
   // own single-vs-multi detection decide between "创建容器" and "注册
@@ -89,7 +61,7 @@ export const ComposeListPage: Component = () => {
   const remove = async (id: string, name: string) => {
     if (!confirm(`删除 Compose 项目 ${name}？`)) return;
     try {
-      await del(`/api/compose?id=${encodeURIComponent(id)}`);
+      await queued(`删除 Compose ${name}`, "DELETE", `/api/compose?id=${encodeURIComponent(id)}`, undefined, { key: `compose:${id}` });
       await store.refresh();
       toast.success("已删除");
     } catch (e) { toast.error((e as Error).message); }
@@ -158,16 +130,16 @@ export const ComposeListPage: Component = () => {
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <Show when={hasRole("operator")}>
-                      <ActBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => requestComposeAction({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
-                      <ActBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => requestComposeAction({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
-                      <ActBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => requestComposeAction({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
+                      <ActBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
+                      <ActBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
+                      <ActBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
                       <ActBtn
                         danger
                         title="docker compose down（停止并移除容器、网络）"
                         loading={isRunning(p.id, "down")}
-                        onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) requestComposeAction({ id: p.id, name: p.name, verb: "down" }); }}
+                        onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) request({ id: p.id, name: p.name, verb: "down" }); }}
                       >⊘ Down</ActBtn>
-                      <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => requestComposeAction({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
+                      <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <ActBtn
@@ -239,33 +211,9 @@ export const ComposeListPage: Component = () => {
         open={runText() !== null}
         initialRun={runText() ?? undefined}
         onClose={() => setRunText(null)}
-        onCreated={() => { setRunText(null); void store.refresh(); void containers.refresh(); }}
       />
 
-      <Modal open={composeOptionsOpen()} onClose={closeComposeOptions} title={`${VERB_LABEL[composeOptionsTarget()?.verb ?? "pull"]} — ${composeOptionsTarget()?.name ?? ""}`}>
-        <p class="mb-3 text-xs text-zinc-500">代理和仓库凭据仅对本次 Compose 操作生效，不会写入项目文件或容器环境。</p>
-        <PullOptions
-          proxyUrl={composeProxyUrl()}
-          registryIds={composeRegistryIds()}
-          multipleRegistries
-          onProxyUrlChange={setComposeProxyUrl}
-          onRegistryIdsChange={setComposeRegistryIds}
-        />
-        <div class="mt-4 flex justify-end gap-2">
-          <Button onClick={closeComposeOptions}>取消</Button>
-          <Button variant="primary" onClick={startComposeAction}>{VERB_LABEL[composeOptionsTarget()?.verb ?? "pull"]}</Button>
-        </div>
-      </Modal>
-
-      <PullStatusWidget
-        active={!!composeAction()}
-        title={`${VERB_LABEL[composeAction()?.verb ?? "up"]} — ${composeAction()?.name ?? ""}`}
-        url={`/api/compose/${composeAction()?.verb ?? "up"}?id=${encodeURIComponent(composeAction()?.id ?? "")}`}
-        body={composeBody()}
-        onDone={() => { void store.refresh(); void containers.refresh(); }}
-        onSettled={() => { setComposeBody(undefined); clearComposeOptions(); }}
-        onClose={() => { setComposeAction(null); setComposeBody(undefined); clearComposeOptions(); }}
-      />
+      <ComposeActionModal target={composeTarget()} onClose={() => setComposeTarget(null)} />
     </div>
   );
 };

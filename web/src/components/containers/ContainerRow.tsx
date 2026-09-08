@@ -33,7 +33,7 @@ export const ContainerRow: Component<{
   selected?: boolean;
   onToggleSelect?: () => void;
   isP: (id: string, verb: string) => boolean;
-  act: (id: string, verb: string) => void | Promise<void>;
+  act: (id: string, verb: string, name?: string) => void | Promise<unknown>;
   onViewCmd: (target: { id: string; name: string }) => void;
   onConsole?: (target: { id: string; name: string }) => void;
 }> = (p) => {
@@ -98,16 +98,16 @@ export const ContainerRow: Component<{
         <Show when={hasRole("operator")}>
           <div class="mt-1 flex items-center gap-0.5">
             <Show when={!running() && !paused()}>
-              <IBtn title="启动" loading={p.isP(c().Id, "start")} onClick={() => void p.act(c().Id, "start")}>▶</IBtn>
+              <IBtn title="启动" loading={p.isP(c().Id, "start")} onClick={() => void p.act(c().Id, "start", name())}>▶</IBtn>
             </Show>
             <Show when={paused()}>
-              <IBtn title="恢复运行" loading={p.isP(c().Id, "unpause")} onClick={() => void p.act(c().Id, "unpause")}>▶</IBtn>
+              <IBtn title="恢复运行" loading={p.isP(c().Id, "unpause")} onClick={() => void p.act(c().Id, "unpause", name())}>▶</IBtn>
             </Show>
             <Show when={running()}>
-              <IBtn title="停止" loading={p.isP(c().Id, "stop")} onClick={() => void p.act(c().Id, "stop")}>■</IBtn>
-              <IBtn title="暂停" loading={p.isP(c().Id, "pause")} onClick={() => void p.act(c().Id, "pause")}>⏸</IBtn>
-              <IBtn title="重启" loading={p.isP(c().Id, "restart")} onClick={() => void p.act(c().Id, "restart")}>↺</IBtn>
-              <IBtn title="强制关闭 (SIGKILL)" loading={p.isP(c().Id, "kill")} onClick={() => void p.act(c().Id, "kill")} danger>✕</IBtn>
+              <IBtn title="停止" loading={p.isP(c().Id, "stop")} onClick={() => void p.act(c().Id, "stop", name())}>■</IBtn>
+              <IBtn title="暂停" loading={p.isP(c().Id, "pause")} onClick={() => void p.act(c().Id, "pause", name())}>⏸</IBtn>
+              <IBtn title="重启" loading={p.isP(c().Id, "restart")} onClick={() => void p.act(c().Id, "restart", name())}>↺</IBtn>
+              <IBtn title="强制关闭 (SIGKILL)" loading={p.isP(c().Id, "kill")} onClick={() => void p.act(c().Id, "kill", name())} danger>✕</IBtn>
             </Show>
 
             <span class="mx-0.5 text-zinc-400">│</span>
@@ -120,7 +120,7 @@ export const ContainerRow: Component<{
 
             <Show when={!running()}>
               <span class="mx-0.5 text-zinc-400">│</span>
-              <IBtn title="删除容器" danger loading={p.isP(c().Id, "delete")} onClick={() => { if (confirm(`删除容器 ${name() || c().Id.slice(0, 8)}？`)) void p.act(c().Id, "delete"); }}>⊖</IBtn>
+              <IBtn title="删除容器" danger loading={p.isP(c().Id, "delete")} onClick={() => { if (confirm(`删除容器 ${name() || c().Id.slice(0, 8)}？`)) void p.act(c().Id, "delete", name()); }}>⊖</IBtn>
             </Show>
           </div>
         </Show>

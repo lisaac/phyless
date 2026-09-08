@@ -3,7 +3,7 @@ import { createResourceStore } from "../../stores/resource";
 import { get, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
-import { createContainerActions } from "./containerActions";
+import { createContainerActions, containerName } from "./containerActions";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { ViewCmdModal } from "./ViewCmdModal";
@@ -18,7 +18,7 @@ const DEFAULT_BULK_RUN = "docker run -d --name my-container nginx:latest";
 // ── Main page ──────────────────────────────────────────────────────────────────
 export const ContainerListPage: Component = () => {
   const store = createResourceStore<ContainerSummary>("/api/containers");
-  const { isP, act } = createContainerActions(store.refresh);
+  const { isP, act } = createContainerActions();
   const view = createListView(store.items, (c) =>
     `${c.Names.join(" ")} ${c.Image} ${c.Id} ${c.Status}`);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
@@ -40,8 +40,9 @@ export const ContainerListPage: Component = () => {
   const toggleAll = (v: boolean) =>
     setSelected(v ? new Set<string>(view.filtered().map((c) => c.Id)) : new Set<string>());
 
-  const bulk = async (verb: "start" | "stop" | "kill" | "delete") => {
-    await Promise.all([...selected()].map((id) => act(id, verb)));
+  const bulk = (verb: "start" | "stop" | "kill" | "delete") => {
+    const byId = new Map(store.items().map((c) => [c.Id, containerName(c)]));
+    for (const id of selected()) void act(id, verb, byId.get(id));
     setSelected(new Set<string>());
   };
 
@@ -148,7 +149,6 @@ export const ContainerListPage: Component = () => {
       <CreateContainerModal
         open={showCreate()}
         onClose={() => setShowCreate(false)}
-        onCreated={() => { setShowCreate(false); void store.refresh(); }}
       />
 
       {/* ── Bulk Run/Compose modal — same component, fed the selected
@@ -157,7 +157,6 @@ export const ContainerListPage: Component = () => {
         open={bulkRunText() !== null}
         initialRun={bulkRunText() ?? undefined}
         onClose={() => setBulkRunText(null)}
-        onCreated={() => { setBulkRunText(null); void store.refresh(); }}
       />
 
       {/* ── Import container (tar → image) modal ─────────────────────────────── */}

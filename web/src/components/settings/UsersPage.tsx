@@ -3,7 +3,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Table, type Column } from "../shared/Table";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { post, del } from "../../api/client";
+import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
 import type { User, Role } from "../../types";
 
@@ -19,13 +19,13 @@ export const UsersPage: Component = () => {
 
   const create = async () => {
     try {
-      await post("/api/users", form());
+      await queued(`创建用户 ${form().username}`, "POST", "/api/users", form());
       setShow(false); setForm({ username: "", password: "", role: "viewer" });
       await store.refresh();
     } catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (id: string) => {
-    try { await del(`/api/users/${id}`); await store.refresh(); }
+    try { await queued("删除用户", "DELETE", `/api/users/${id}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
 

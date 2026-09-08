@@ -2,13 +2,14 @@ import {
   Component, createSignal, createResource, createEffect, For, Show, onMount, onCleanup, startTransition,
 } from "solid-js";
 import { A, useParams, useSearchParams, useNavigate } from "@solidjs/router";
-import { get, post, del, put, getToken, setToken, imageInspectUrl } from "../../api/client";
+import { get, getToken, imageInspectUrl } from "../../api/client";
+import { enqueue, queued, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
+import { createContainerActions } from "./containerActions";
 import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { PullStatusWidget } from "../shared/PullStatusWidget";
 import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
-import { UploadStatusWidget, DownloadStatusWidget } from "../shared/UploadStatusWidget";
+import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
@@ -150,14 +151,29 @@ export const ContainerDetailPage: Component = () => {
   const [showCmdModal, setShowCmdModal] = createSignal(false);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
-  const [upgrading, setUpgrading] = createSignal(false);
   const [showUpgradeOptions, setShowUpgradeOptions] = createSignal(false);
   const [upgradeProxyUrl, setUpgradeProxyUrl] = createSignal("");
   const [upgradeRegistryId, setUpgradeRegistryId] = createSignal("");
-  const [upgradeBody, setUpgradeBody] = createSignal<unknown>(undefined);
-  let upgradeTargetId = "";
-  const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
-  let uploadXhr: XMLHttpRequest | undefined;
+
+  // React to queued tasks on this container finishing (while mounted): refetch
+  // after any of them; after a successful upgrade or delete, move to the new
+  // container / back to the list — same tab dance as before, see Layout.tsx.
+  const onSettled = (e: Event) => {
+    const t = (e as CustomEvent<Task>).detail;
+    if (t.meta?.containerId !== id()) return;
+    const oldPath = `/containers/${id()}`;
+    if (t.status === "done" && t.meta.verb === "delete") {
+      void startTransition(() => navigate("/containers", { replace: true })).then(() => removeTab(oldPath));
+      return;
+    }
+    if (t.status === "done" && t.meta.type === "upgrade" && t.containerId && t.containerId !== id()) {
+      void startTransition(() => navigate(`/containers/${t.containerId}`, { replace: true })).then(() => removeTab(oldPath));
+      return;
+    }
+    void refetch();
+  };
+  onMount(() => window.addEventListener(SETTLED_EVENT, onSettled));
+  onCleanup(() => window.removeEventListener(SETTLED_EVENT, onSettled));
 
   const cfg  = () => inspect()?.Config ?? {};
   const host = () => inspect()?.HostConfig ?? {};
@@ -189,18 +205,9 @@ export const ContainerDetailPage: Component = () => {
   const [logRange, setLogRange] = createSignal<TimeRange>({});
 
   // ── Actions ──────────────────────────────────────────────────────────────────
-  const [pending, setPending] = createSignal<Set<string>>(new Set());
-  const isP = (v: string) => pending().has(v);
-
-  const act = async (verb: string) => {
-    setPending((p) => { const n = new Set(p); n.add(verb); return n; });
-    try {
-      await post(`/api/containers/${id()}/${verb}`);
-      await refetch();
-      toast.success(`${verb} 完成`);
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setPending((p) => { const n = new Set(p); n.delete(verb); return n; }); }
-  };
+  const actions = createContainerActions();
+  const isP = (verb: string) => actions.isP(id(), verb);
+  const act = (verb: string) => actions.act(id(), verb, name());
 
   const openCmdModal = async () => {
     try {
@@ -218,12 +225,15 @@ export const ContainerDetailPage: Component = () => {
   const closeUpgradeOptions = () => { setShowUpgradeOptions(false); clearUpgradeOptions(); };
   const doUpgrade = () => { clearUpgradeOptions(); setShowUpgradeOptions(true); };
   const startUpgrade = () => {
-    if (upgrading()) { toast.error("请先关闭当前进度卡片"); return; }
-    upgradeTargetId = id();
     const options = pullOptionsPayload({ proxyUrl: upgradeProxyUrl(), registryId: upgradeRegistryId() });
-    setUpgradeBody(Object.keys(options).length > 0 ? options : undefined);
-    setShowUpgradeOptions(false);
-    setUpgrading(true);
+    enqueue({
+      title: `升级 — ${name()}`,
+      url: `/api/containers/${id()}/upgrade`,
+      body: Object.keys(options).length > 0 ? options : undefined,
+      key: id(),
+      meta: { type: "upgrade", containerId: id() },
+    });
+    closeUpgradeOptions();
   };
 
   // ── Inline resource save ──────────────────────────────────────────────────────
@@ -244,7 +254,7 @@ export const ContainerDetailPage: Component = () => {
         RestartPolicy: h?.RestartPolicy ?? { Name: "no", MaximumRetryCount: 0 },
       };
       const merged = { ...base, ...patch };
-      await put(`/api/containers/${id()}/resources`, merged);
+      await queued(`更新资源 ${name()}`, "PUT", `/api/containers/${id()}/resources`, merged, { key: id(), meta: { containerId: id() } });
       await new Promise((r) => setTimeout(r, 250));
       await refetch();
       toast.success("已更新");
@@ -253,7 +263,7 @@ export const ContainerDetailPage: Component = () => {
 
   const saveName = async (v: string) => {
     try {
-      await post(`/api/containers/${id()}/rename`, { name: v });
+      await queued(`重命名 ${name()} → ${v}`, "POST", `/api/containers/${id()}/rename`, { name: v }, { key: id(), meta: { containerId: id() } });
       await refetch();
     } catch (e) { toast.error((e as Error).message); }
   };
@@ -268,51 +278,20 @@ export const ContainerDetailPage: Component = () => {
       `${name}.tar`,
     );
   onCleanup(() => download.cancel());
-  // fetch() exposes no upload-progress events, so use XHR to drive the widget.
-  const uploadFile = (sub: string, file: File) => new Promise<void>((resolve, reject) => {
-    const uploadToken = getToken();
-    setUploadState({ active: true, filename: file.name, progress: 0, done: false, error: "" });
-    const xhr = new XMLHttpRequest();
-    uploadXhr = xhr;
-    xhr.open("POST", `/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${uploadToken ?? ""}`);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) setUploadState((s) => ({ ...s, progress: (e.loaded / e.total) * 100 }));
-    };
-    xhr.onload = () => {
-      if (xhr.status === 401) {
-        if (uploadToken === getToken()) {
-          setToken(null);
-          window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
-        }
-        setUploadState((s) => ({ ...s, done: true, error: "未授权" }));
-        reject(new Error("unauthorized"));
-        return;
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        setUploadState((s) => ({ ...s, progress: 100, done: true }));
-        resolve();
-      } else {
-        const msg = xhr.responseText || `上传失败 (${xhr.status})`;
-        setUploadState((s) => ({ ...s, done: true, error: msg }));
-        reject(new Error(msg));
-      }
-    };
-    xhr.onerror = () => {
-      setUploadState((s) => ({ ...s, done: true, error: "网络错误" }));
-      reject(new Error("network error"));
-    };
-    xhr.onabort = () => {
-      setUploadState((s) => ({ ...s, done: true }));
-      reject(new Error("aborted"));
-    };
-    xhr.send(file);
-  });
+  const uploadFile = async (sub: string, file: File) => {
+    const t = await enqueue({
+      title: `上传 ${file.name}`,
+      url: `/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`,
+      file,
+      key: id(),
+    }).done;
+    if (t.status !== "done") throw new Error(t.error);
+  };
   const deleteFile = async (path: string) => {
-    await del(`/api/containers/${id()}/files?path=${encodeURIComponent(path)}`);
+    await queued(`删除文件 ${path}`, "DELETE", `/api/containers/${id()}/files?path=${encodeURIComponent(path)}`, undefined, { key: id() });
   };
   const renameFile = async (oldPath: string, newPath: string) => {
-    await post(`/api/containers/${id()}/files/rename`, { old_path: oldPath, new_path: newPath });
+    await queued(`重命名 ${oldPath}`, "POST", `/api/containers/${id()}/files/rename`, { old_path: oldPath, new_path: newPath }, { key: id() });
   };
 
   // ── Network actions ────────────────────────────────────────────────────────────
@@ -325,14 +304,14 @@ export const ContainerDetailPage: Component = () => {
   });
   const doConnectNet = async (netName: string) => {
     try {
-      await post(`/api/networks/${encodeURIComponent(netName)}/connect`, { container: id() });
+      await queued(`连接网络 ${netName}`, "POST", `/api/networks/${encodeURIComponent(netName)}/connect`, { container: id() }, { key: id() });
       await refetch();
       toast.success("已连接");
     } catch (e) { toast.error((e as Error).message); }
   };
   const doDisconnectNet = async (netName: string) => {
     try {
-      await post(`/api/networks/${encodeURIComponent(netName)}/disconnect`, { container: id(), force: false });
+      await queued(`断开网络 ${netName}`, "POST", `/api/networks/${encodeURIComponent(netName)}/disconnect`, { container: id(), force: false }, { key: id() });
       await refetch();
       toast.success("已断开");
     } catch (e) { toast.error((e as Error).message); }
@@ -399,16 +378,7 @@ export const ContainerDetailPage: Component = () => {
               <Btn onClick={() => setConsoleTarget({ id: id(), name: name() })}>&gt;_ 控制台</Btn>
             </Show>
             <span class="mx-0.5 text-zinc-600">│</span>
-            <Btn danger onClick={async () => {
-              if (!confirm(`删除容器 ${name()}?`)) return;
-              try {
-                await del(`/api/containers/${id()}`);
-                const path = `/containers/${id()}`;
-                await startTransition(() => navigate("/containers", { replace: true }));
-                removeTab(path);
-              }
-              catch (e) { toast.error((e as Error).message); }
-            }}>⊖ 移除</Btn>
+            <Btn danger loading={isP("delete")} onClick={() => { if (confirm(`删除容器 ${name()}?`)) void act("delete"); }}>⊖ 移除</Btn>
           </div>
         </Show>
       </Show>
@@ -757,13 +727,10 @@ export const ContainerDetailPage: Component = () => {
         </pre>
       </Show>
 
-      {/* ── Run/Compose modal (reuse CreateContainerModal) ──────────────────
-          Always mounted — wrapping in <Show> would unmount CreateContainerModal
-          (and its embedded PullStatusWidget) the instant onClose fires. */}
+      {/* ── Run/Compose modal (reuse CreateContainerModal) ────────────────── */}
       <CreateContainerModal
         open={showCmdModal()}
         onClose={() => setShowCmdModal(false)}
-        onCreated={() => { setShowCmdModal(false); void refetch(); }}
         initialRun={runCmd()}
       />
 
@@ -786,36 +753,6 @@ export const ContainerDetailPage: Component = () => {
           <Button variant="primary" onClick={startUpgrade}>升级</Button>
         </div>
       </Modal>
-
-      {/* ── Upgrade progress — non-blocking floating card ────────────────── */}
-      <PullStatusWidget
-        active={upgrading()}
-        onClose={() => { setUpgrading(false); setUpgradeBody(undefined); clearUpgradeOptions(); }}
-        title={`升级 — ${name()}`}
-        url={`/api/containers/${id()}/upgrade`}
-        body={upgradeBody()}
-        onDone={(newContainerID) => {
-          if (id() !== upgradeTargetId) return;
-          if (!newContainerID || newContainerID === upgradeTargetId) {
-            void refetch();
-            return;
-          }
-          const oldPath = `/containers/${upgradeTargetId}`;
-          void startTransition(() => navigate(`/containers/${newContainerID}`, { replace: true }))
-            .then(() => removeTab(oldPath));
-        }}
-        onSettled={() => { setUpgradeBody(undefined); clearUpgradeOptions(); }}
-      />
-
-      {/* ── Upload progress — non-blocking floating card ─────────────────── */}
-      <UploadStatusWidget
-        active={uploadState().active}
-        filename={uploadState().filename}
-        progress={uploadState().progress}
-        done={uploadState().done}
-        error={uploadState().error}
-        onClose={() => { uploadXhr?.abort(); setUploadState((s) => ({ ...s, active: false })); }}
-      />
 
       {/* ── Download progress — non-blocking floating card ───────────────── */}
       <DownloadStatusWidget task={download} />

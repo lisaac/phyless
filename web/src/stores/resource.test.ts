@@ -56,3 +56,18 @@ describe("createResourceStore", () => {
     vi.useRealTimers();
   });
 });
+
+describe("createResourceStore + task queue", () => {
+  it("refreshes when a queued task settles while polling", async () => {
+    const get = vi.spyOn(client, "get").mockResolvedValue([]);
+    const store = createResourceStore("/api/things");
+    store.startPolling();
+    await Promise.resolve();
+    const before = get.mock.calls.length;
+    window.dispatchEvent(new CustomEvent("phyless:task-settled", { detail: { status: "done" } }));
+    expect(get.mock.calls.length).toBe(before + 1);
+    store.stopPolling();
+    window.dispatchEvent(new CustomEvent("phyless:task-settled", { detail: { status: "done" } }));
+    expect(get.mock.calls.length).toBe(before + 1);
+  });
+});
