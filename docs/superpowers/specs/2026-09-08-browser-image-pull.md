@@ -39,12 +39,14 @@ phyless 已有 WS 基建（logs/stats/terminal/compose-logs），复用鉴权与
 
 ## 3. 适用范围（v1）
 
-- 单镜像拉取：镜像页「拉取」、容器创建/升级时的镜像。
+- 单镜像拉取：镜像页「拉取」。
 - Compose：**预加载 + 本地编排**（见 §7）。
 - 仅 tag 引用、仅 Linux 单平台。
 - layer 压缩格式 gzip / zstd / 未压缩一律**原样透传**（不在浏览器解压），拒 foreign/non-distributable 层。
 
-**明确不做（v1）**：digest（`@sha256:`）引用、all-tags、含 `build` 的 compose 服务、浏览器侧解压/预览层内容、并行 layer 下载、TLS/H2 的 `fetch` 流式方案。
+「下载方式」开关由 `PullOptions` 的 `allowBrowser` 显式开启，只有真正接管 browser-pull 任务的入口才亮出它。
+
+**明确不做（v1）**：容器创建/升级入口的浏览器下载（沿用「预加载 + 本地动作」模式，作为后续；当前这些入口只有服务端代理）、digest（`@sha256:`）引用、all-tags、含 `build` 的 compose 服务、浏览器侧解压/预览层内容、并行 layer 下载、TLS/H2 的 `fetch` 流式方案。
 
 ## 4. CF Worker（`cloudflare-worker/registry-proxy.js`）
 
