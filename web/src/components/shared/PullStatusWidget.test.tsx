@@ -43,14 +43,37 @@ describe("pull progress outcome", () => {
     expect(view.container.querySelector(".bg-emerald-500")).toBeNull();
   });
 
-  it("clears request options after success without replaying the POST", () => {
+  it("clears request options or changes URL after success without replaying the POST", () => {
     const [body, setBody] = createSignal<unknown>({ proxy_url: "http://proxy:8080" });
+    const [url, setUrl] = createSignal("/pull");
     const done = vi.fn();
-    render(() => <PullStatusWidget active title="Pull" url="/pull" body={body()} onClose={() => {}} onDone={done} onSettled={() => setBody(undefined)} />);
+    render(() => <PullStatusWidget active title="Pull" url={url()} body={body()} onClose={() => {}} onDone={done} onSettled={() => { setBody(undefined); setUrl("/containers/new-container/upgrade"); }} />);
     FakeXHR.requests[0].finish('{"status":"done"}\n');
     expect(done).toHaveBeenCalledTimes(1);
     expect(body()).toBeUndefined();
+    expect(url()).toBe("/containers/new-container/upgrade");
     expect(FakeXHR.requests).toHaveLength(1);
+  });
+
+  it("passes the resulting container ID to onDone", () => {
+    const done = vi.fn();
+    render(() => <PullStatusWidget active title="Upgrade" url="/upgrade" onClose={() => {}} onDone={done} />);
+    FakeXHR.requests[0].finish('{"stream":"done","container_id":"new-container"}\n');
+    expect(done).toHaveBeenCalledWith("new-container");
+  });
+
+  it("keeps onDone compatible when progress has no container ID", () => {
+    const done = vi.fn();
+    render(() => <PullStatusWidget active title="Pull" url="/pull" onClose={() => {}} onDone={done} />);
+    FakeXHR.requests[0].finish('{"status":"done"}\n');
+    expect(done).toHaveBeenCalledWith(undefined);
+  });
+
+  it("does not pass a container ID on errors", () => {
+    const done = vi.fn();
+    render(() => <PullStatusWidget active title="Upgrade" url="/upgrade" onClose={() => {}} onDone={done} />);
+    FakeXHR.requests[0].finish('{"error":"denied","container_id":"new-container"}\n');
+    expect(done).not.toHaveBeenCalled();
   });
 
   it("treats cancellation as failure and settles once", () => {

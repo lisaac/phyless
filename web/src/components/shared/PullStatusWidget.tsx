@@ -32,7 +32,7 @@ export const PullStatusWidget: Component<{
   url: string;
   body?: unknown;
   file?: File;
-  onDone?: () => void;
+  onDone?: (containerId?: string) => void;
   onError?: (message: string) => void;
   onSettled?: () => void;
   onClose: () => void;
@@ -195,7 +195,7 @@ export const PullStatusWidget: Component<{
         return;
       }
       setDone(true);
-      if (!failed && !cancelled()) props.onDone?.();
+      if (!failed && !cancelled()) props.onDone?.(containerId() || undefined);
       settle();
     };
     req.onerror = () => finishError("网络错误");

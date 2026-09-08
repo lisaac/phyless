@@ -1,6 +1,7 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -29,6 +31,8 @@ type upgradeClient struct {
 	startCalls           []string
 	stopCalls            []string
 	removeCalls          []string
+	networkDisconnects   []string
+	networkConnects      []string
 	renameCalls          [][3]string
 	createdConfig        *container.Config
 	createdHostConfig    *container.HostConfig
@@ -36,6 +40,7 @@ type upgradeClient struct {
 	createdName          string
 	pullHook             func()
 	createHook           func()
+	networks             map[string]network.Inspect
 }
 
 func newUpgradeClient() *upgradeClient {
@@ -52,6 +57,7 @@ func newUpgradeClient() *upgradeClient {
 		},
 		oldImage: image.InspectResponse{ID: "old", Os: "linux", Architecture: "arm64"},
 		newImage: image.InspectResponse{ID: "new", Os: "linux", Architecture: "arm64"},
+		networks: make(map[string]network.Inspect),
 	}
 }
 
@@ -111,6 +117,26 @@ func (c *upgradeClient) ContainerStart(_ context.Context, id string, _ container
 	c.startCalls = append(c.startCalls, id)
 	if c.startError && id == "new-container" {
 		return errors.New("start failed")
+	}
+	return nil
+}
+
+func (c *upgradeClient) NetworkInspect(_ context.Context, name string, _ network.InspectOptions) (network.Inspect, error) {
+	if info, ok := c.networks[name]; ok {
+		return info, nil
+	}
+	return network.Inspect{}, errors.New("network not found")
+}
+
+func (c *upgradeClient) NetworkDisconnect(_ context.Context, name, _ string, _ bool) error {
+	c.networkDisconnects = append(c.networkDisconnects, name)
+	return nil
+}
+
+func (c *upgradeClient) NetworkConnect(_ context.Context, name, _ string, endpoint *network.EndpointSettings) error {
+	c.networkConnects = append(c.networkConnects, name)
+	if endpoint == nil || endpoint.IPAMConfig == nil || endpoint.IPAMConfig.IPv4Address != "10.0.0.2" {
+		return errors.New("unexpected endpoint config")
 	}
 	return nil
 }
@@ -185,6 +211,10 @@ func TestUpgradeCancellationBeforeMutation(t *testing.T) {
 func TestUpgradeCancellationAfterCreateCleansReplacement(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := newUpgradeClient()
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"macvlan-net": {IPAddress: "10.0.0.2"},
+	}}
+	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
 	c.createHook = cancel
 	_, err := Upgrade(ctx, c, "old-container", io.Discard, image.PullOptions{})
 	if !errors.Is(err, context.Canceled) {
@@ -192,6 +222,9 @@ func TestUpgradeCancellationAfterCreateCleansReplacement(t *testing.T) {
 	}
 	if len(c.stopCalls) != 0 || len(c.removeCalls) != 1 || len(c.startCalls) != 1 || c.startCalls[0] != "old-container" {
 		t.Fatalf("cancellation after create changed old state: stop=%v remove=%v start=%v", c.stopCalls, c.removeCalls, c.startCalls)
+	}
+	if len(c.networkDisconnects) != 0 || len(c.networkConnects) != 0 {
+		t.Fatalf("cancellation after create changed old network: disconnect=%v connect=%v", c.networkDisconnects, c.networkConnects)
 	}
 }
 
@@ -203,7 +236,7 @@ func TestUpgradeRejectsUnsafeModesBeforePull(t *testing.T) {
 				c.info.HostConfig.AutoRemove = true
 			} else if name == "static-ip" {
 				c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
-					"app-net": {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: "10.0.0.2"}},
+					"bridge": {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: "10.0.0.2"}},
 				}}
 			} else if name == "paused" {
 				c.info.State.Paused = true
@@ -240,6 +273,17 @@ func TestDuplicatePreservesNetworkAndAnonymousVolume(t *testing.T) {
 	}
 }
 
+func TestCloneHostConfigReusesAnonymousVolumeBind(t *testing.T) {
+	info := container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{HostConfig: &container.HostConfig{Binds: []string{"/data"}}},
+		Mounts:            []container.MountPoint{{Type: mount.TypeVolume, Name: "anon-volume", Destination: "/data", RW: true}},
+	}
+	hostCfg := cloneHostConfig(info)
+	if len(hostCfg.Binds) != 0 || len(hostCfg.Mounts) != 1 || hostCfg.Mounts[0].Source != "anon-volume" || hostCfg.Mounts[0].Target != "/data" || len(info.HostConfig.Binds) != 1 || info.HostConfig.Binds[0] != "/data" {
+		t.Fatalf("anonymous volume bind = %#v", hostCfg)
+	}
+}
+
 func TestDuplicateRejectsStaticNetworkAddress(t *testing.T) {
 	c := newUpgradeClient()
 	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
@@ -250,6 +294,110 @@ func TestDuplicateRejectsStaticNetworkAddress(t *testing.T) {
 	}
 	if c.createdConfig != nil {
 		t.Fatal("duplicate created a container before rejecting static address")
+	}
+}
+
+func TestUpgradePreservesMacvlanAddress(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"macvlan-net": {IPAddress: "10.0.0.2"},
+	}}
+	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ep := c.createdNetworkConfig.EndpointsConfig["macvlan-net"]
+	if ep == nil || ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address != "10.0.0.2" {
+		t.Fatalf("macvlan address = %#v", ep)
+	}
+}
+
+func TestUpgradePreservesMacvlanMixedIPFamilies(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"macvlan-net": {
+			IPAMConfig:        &network.EndpointIPAMConfig{IPv4Address: "10.0.0.2"},
+			IPAddress:         "10.0.0.2",
+			GlobalIPv6Address: "2001:db8::2",
+		},
+	}}
+	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ipam := c.createdNetworkConfig.EndpointsConfig["macvlan-net"].IPAMConfig
+	if ipam == nil || ipam.IPv4Address != "10.0.0.2" || ipam.IPv6Address != "2001:db8::2" {
+		t.Fatalf("mixed macvlan addresses = %#v", ipam)
+	}
+}
+
+func TestUpgradeDoesNotPinDynamicBridgeAddress(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"app-net": {IPAddress: "10.0.0.2"},
+	}}
+	c.networks["app-net"] = network.Inspect{Driver: "bridge"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if ep := c.createdNetworkConfig.EndpointsConfig["app-net"]; ep == nil || ep.IPAMConfig != nil {
+		t.Fatalf("dynamic bridge address was pinned: %#v", ep)
+	}
+}
+
+func TestUpgradePreservesStaticUserDefinedAddress(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"app-net": {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: "10.0.0.2"}},
+	}}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ep := c.createdNetworkConfig.EndpointsConfig["app-net"]
+	if ep == nil || ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address != "10.0.0.2" {
+		t.Fatalf("static address = %#v", ep)
+	}
+}
+
+func TestUpgradeRestoresMacvlanAddressOnStartFailure(t *testing.T) {
+	c := newUpgradeClient()
+	c.startError = true
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"macvlan-net": {IPAddress: "10.0.0.2"},
+	}}
+	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
+		t.Fatal("expected replacement start failure")
+	}
+	if len(c.networkDisconnects) != 1 || len(c.networkConnects) != 1 {
+		t.Fatalf("network restore calls = disconnect=%v connect=%v", c.networkDisconnects, c.networkConnects)
+	}
+}
+
+func TestUpgradeContainerNetworkModeClearsConflictingOptions(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.Config.Hostname = "pod19-host"
+	c.info.Config.ExposedPorts = nat.PortSet{"80/tcp": {}}
+	c.info.Config.MacAddress = "02:42:ac:11:00:02"
+	c.info.HostConfig.NetworkMode = container.NetworkMode("container:pod19")
+	c.info.HostConfig.DNS = []string{"1.1.1.1"}
+	c.info.HostConfig.DNSSearch = []string{"example.com"}
+	c.info.HostConfig.DNSOptions = []string{"ndots:1"}
+	c.info.HostConfig.Links = []string{"db:db"}
+	c.info.HostConfig.ExtraHosts = []string{"host:127.0.0.1"}
+	c.info.HostConfig.PortBindings = nat.PortMap{"80/tcp": {{HostPort: "8080"}}}
+	c.info.HostConfig.PublishAllPorts = true
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if c.createdConfig.Hostname != "" || len(c.createdConfig.ExposedPorts) != 0 || c.createdConfig.MacAddress != "" {
+		t.Fatalf("container config conflicts remain: %#v", c.createdConfig)
+	}
+	if c.createdHostConfig.NetworkMode != container.NetworkMode("container:pod19") || len(c.createdHostConfig.DNS) != 0 || len(c.createdHostConfig.DNSSearch) != 0 || len(c.createdHostConfig.DNSOptions) != 0 || len(c.createdHostConfig.Links) != 0 || len(c.createdHostConfig.ExtraHosts) != 0 || len(c.createdHostConfig.PortBindings) != 0 || c.createdHostConfig.PublishAllPorts {
+		t.Fatalf("host config conflicts remain: %#v", c.createdHostConfig)
+	}
+	if c.createdNetworkConfig != nil {
+		t.Fatalf("container network mode should not have endpoint config: %#v", c.createdNetworkConfig)
 	}
 }
 
@@ -278,17 +426,25 @@ func TestUpgradeKeepsOriginalImageReferenceForNextPull(t *testing.T) {
 	}
 }
 
-func TestUpgradeRemovalFailureRestoresOriginal(t *testing.T) {
+func TestUpgradeRemovalFailureKeepsSwitchedContainer(t *testing.T) {
 	c := newUpgradeClient()
 	c.removeErrorID = "old-container"
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
-		t.Fatal("expected old removal error")
+	var progress bytes.Buffer
+	newID, err := Upgrade(context.Background(), c, "old-container", &progress, image.PullOptions{})
+	if err != nil || newID != "new-container" {
+		t.Fatalf("upgrade = %q, %v", newID, err)
 	}
-	if len(c.renameCalls) != 4 || c.renameCalls[2][0] != "new-container" || c.renameCalls[2][1] != c.createdName || c.renameCalls[3][0] != "old-container" || c.renameCalls[3][1] != "app" {
-		t.Fatalf("rollback renames = %v", c.renameCalls)
+	if len(c.renameCalls) != 2 || c.renameCalls[0][0] != "old-container" || c.renameCalls[1][0] != "new-container" {
+		t.Fatalf("switch renames = %v", c.renameCalls)
 	}
-	if len(c.startCalls) != 2 || c.startCalls[1] != "old-container" {
-		t.Fatalf("old state was not restored: %v", c.startCalls)
+	if len(c.startCalls) != 1 || c.startCalls[0] != "new-container" {
+		t.Fatalf("replacement was not kept running: %v", c.startCalls)
+	}
+	if len(c.removeCalls) != 1 || c.removeCalls[0] != "old-container" {
+		t.Fatalf("replacement was removed after old cleanup failure: %v", c.removeCalls)
+	}
+	if !strings.Contains(progress.String(), "旧容器清理失败") || !strings.Contains(progress.String(), "升级完成") {
+		t.Fatalf("progress did not report successful switch and cleanup warning: %s", progress.String())
 	}
 }
 

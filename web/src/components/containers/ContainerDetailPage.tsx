@@ -1,7 +1,7 @@
 import {
   Component, createSignal, createResource, createEffect, For, Show, onMount, onCleanup, startTransition,
 } from "solid-js";
-import { useParams, useSearchParams, useNavigate } from "@solidjs/router";
+import { A, useParams, useSearchParams, useNavigate } from "@solidjs/router";
 import { get, post, del, put, getToken, setToken, imageInspectUrl } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
@@ -155,11 +155,14 @@ export const ContainerDetailPage: Component = () => {
   const [upgradeProxyUrl, setUpgradeProxyUrl] = createSignal("");
   const [upgradeRegistryId, setUpgradeRegistryId] = createSignal("");
   const [upgradeBody, setUpgradeBody] = createSignal<unknown>(undefined);
+  let upgradeTargetId = "";
   const [uploadState, setUploadState] = createSignal({ active: false, filename: "", progress: 0, done: false, error: "" });
   let uploadXhr: XMLHttpRequest | undefined;
 
   const cfg  = () => inspect()?.Config ?? {};
   const host = () => inspect()?.HostConfig ?? {};
+  // container:<id> mode: no own endpoints, Docker refuses connect/disconnect.
+  const sharedNetTarget = () => { const m: string = host().NetworkMode ?? ""; return m.startsWith("container:") ? m.slice("container:".length) : ""; };
   const name = () => (inspect()?.Name ?? id()).replace(/^\//, "");
   const state = () => inspect()?.State?.Status ?? "unknown";
   const running = () => state() === "running";
@@ -213,6 +216,7 @@ export const ContainerDetailPage: Component = () => {
   const doUpgrade = () => { clearUpgradeOptions(); setShowUpgradeOptions(true); };
   const startUpgrade = () => {
     if (upgrading()) { toast.error("请先关闭当前进度卡片"); return; }
+    upgradeTargetId = id();
     const options = pullOptionsPayload({ proxyUrl: upgradeProxyUrl(), registryId: upgradeRegistryId() });
     setUpgradeBody(Object.keys(options).length > 0 ? options : undefined);
     setShowUpgradeOptions(false);
@@ -561,6 +565,15 @@ export const ContainerDetailPage: Component = () => {
 
             <Sec>网络</Sec>
             <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <Show when={sharedNetTarget()}>
+                {(target) => (
+                  <div class="flex items-center gap-2">
+                    <span class="text-zinc-500">模式:</span>
+                    <span class="text-zinc-300">共享容器网络</span>
+                    <A class="text-zinc-300 hover:text-indigo-400 transition-colors" href={`/containers/${target()}`}>{target().slice(0, 12)}</A>
+                  </div>
+                )}
+              </Show>
               <For each={Object.entries(inspect()?.NetworkSettings?.Networks ?? {})}>
                 {([netName, net]: [string, any]) => (
                   <div class="flex items-center gap-2">
@@ -572,7 +585,7 @@ export const ContainerDetailPage: Component = () => {
                   </div>
                 )}
               </For>
-              <Show when={hasRole("operator")}>
+              <Show when={hasRole("operator") && !sharedNetTarget()}>
                 <button
                   class="text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors"
                   onClick={() => setNetDlg(true)}
@@ -778,7 +791,16 @@ export const ContainerDetailPage: Component = () => {
         title={`升级 — ${name()}`}
         url={`/api/containers/${id()}/upgrade`}
         body={upgradeBody()}
-        onDone={() => void refetch()}
+        onDone={(newContainerID) => {
+          if (id() !== upgradeTargetId) return;
+          if (!newContainerID || newContainerID === upgradeTargetId) {
+            void refetch();
+            return;
+          }
+          const oldPath = `/containers/${upgradeTargetId}`;
+          void startTransition(() => navigate(`/containers/${newContainerID}`, { replace: true }))
+            .then(() => removeTab(oldPath));
+        }}
         onSettled={() => { setUpgradeBody(undefined); clearUpgradeOptions(); }}
       />
 
