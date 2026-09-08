@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, setToken } from "../api/client";
-import { runBrowserPull } from "./browserPull";
+import { runBrowserPull, runBrowserPullCompose } from "./browserPull";
 
 // Global queue for every server-mutating request (pull/upgrade/compose/
 // start/stop/delete/upload/rename/…). Lives at module scope, not inside a
@@ -222,11 +222,35 @@ function startBrowserPull(id: string) {
   );
 }
 
+// startBrowserPullCompose preloads every project image in the browser, then
+// (for "up") runs compose up with pull_policy=never so the daemon stays offline.
+function startBrowserPullCompose(id: string) {
+  const t = find(id)!;
+  const ac = new AbortController();
+  browserAborts.set(id, ac);
+  const note = (m: string) =>
+    setTasks("list", (x) => x.id === id, "notes", (n) => [...n, m.slice(0, MAX_ERROR)].slice(-MAX_NOTES));
+  runBrowserPullCompose(
+    {
+      id: String(t.meta?.composeId ?? ""),
+      mode: t.meta?.mode === "up" ? "up" : "pull",
+      workerUrl: String(t.meta?.workerUrl ?? ""),
+      token: getToken() ?? "",
+      creds: t.secret?.creds,
+    },
+    { note, progress: note, signal: ac.signal },
+  ).then(
+    () => settle(id, "done"),
+    (err) => settle(id, "error", err instanceof Error ? err.message : String(err)),
+  );
+}
+
 function start(id: string) {
   const t = find(id)!;
   upd(id, { status: "running", uploadPct: t.file ? 0 : null });
   persist();
   if (t.meta?.type === "browser-pull") { startBrowserPull(id); return; }
+  if (t.meta?.type === "browser-pull-compose") { startBrowserPullCompose(id); return; }
   const { url, body, file, method } = t;
   const layerMap = new Map<string, LayerProgress>();
   let buf = "";

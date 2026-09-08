@@ -1,8 +1,9 @@
 import { Component, createSignal, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload } from "../shared/PullOptions";
 import { enqueue, isPending } from "../../stores/taskQueue";
+import { toast } from "../shared/Toast";
 import { VERB_LABEL, type ComposeVerb } from "./composeShared";
 
 export interface ComposeAction { id: string; name: string; verb: ComposeVerb; }
@@ -36,6 +37,18 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
   const start = () => {
     const t = props.target;
     if (!t) return;
+    if (isBrowserDownload(pull.value)) {
+      if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+      enqueue({
+        title: `${VERB_LABEL[t.verb]} — ${t.name}`,
+        url: "",
+        key: `compose:${t.id}`,
+        meta: { type: "browser-pull-compose", composeId: t.id, verb: t.verb, mode: t.verb === "up" ? "up" : "pull", workerUrl: pull.value.workerUrl ?? "" },
+        secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+      });
+      close();
+      return;
+    }
     const options = { ...pull.payload(), ...(t.verb === "up" ? { pull_policy: pullPolicy() } : {}) };
     void startComposeAction(t, Object.keys(options).length > 0 ? options : undefined);
     close();
@@ -45,7 +58,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
       {(t) => (
         <Modal open onClose={close} title={`${VERB_LABEL[t().verb]} — ${t().name}`}>
           <p class="mb-3 text-xs text-zinc-500">代理和仓库凭据仅对本次 Compose 操作生效，不会写入项目文件或容器环境。</p>
-          <Show when={t().verb === "up"}>
+          <Show when={t().verb === "up" && !isBrowserDownload(pull.value)}>
             <label class="mb-3 block">
               <span class="mb-1 block text-xs text-zinc-500">镜像拉取策略</span>
               <div class="relative">
@@ -63,7 +76,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
               </div>
             </label>
           </Show>
-          <PullOptions options={pull} multipleRegistries />
+          <PullOptions options={pull} multipleRegistries allowBrowser />
           <div class="mt-4 flex justify-end gap-2">
             <Button onClick={close}>取消</Button>
             <Button variant="primary" onClick={start}>{VERB_LABEL[t().verb]}</Button>
