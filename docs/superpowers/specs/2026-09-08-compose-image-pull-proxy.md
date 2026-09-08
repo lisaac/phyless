@@ -50,6 +50,17 @@ HTTP / WebSocket handler
 
 代理策略通过请求级 context typed key 传递，不改 SDK 方法签名、不使用全局可变代理、不让 handler 分叉出另一套下载接口。
 
+### 2.3 当前实际 API
+
+当前 Docker SDK 固定为 `github.com/docker/docker/client`（v28.5.2），实际调用如下：
+
+| 场景 | Go API | Docker Engine endpoint |
+| --- | --- | --- |
+| 无代理 | `client.APIClient.ImagePull` | `POST /images/create` |
+| 有代理，导入阶段 | `client.APIClient.ImageLoad` | `POST /images/load` |
+
+有代理时，Registry 访问由 `go-containerregistry` 的 `remote` 实现完成，tar 数据经 `io.Pipe` 交给 `ImageLoad`；不会再次调用 daemon 的 `ImagePull`。Compose 的 `pkg/api.Compose` 服务接收注入的包装 client，其内部所有镜像拉取最终仍调用包装后的 `ImagePull`，不是调用 `docker compose` 命令。
+
 ## 3. 镜像拉取流程
 
 ### 3.1 无代理
