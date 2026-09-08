@@ -104,7 +104,7 @@ describe("resolveImage", () => {
     expect(img.config.hex).toBe("cfg");
     expect(img.layers.map((l) => l.hex)).toEqual(["l1", "l2"]);
     expect(img.layers[1].mediaType).toContain("zstd"); // zstd passes through
-    expect(img.manifest.digest).toBe("sha256:img");
+    expect(img.manifest.digest).toMatch(/^sha256:[0-9a-f]{64}$/); // computed from bytes, not the header
     expect(img.authHeader).toBe("Bearer tok");
   });
 

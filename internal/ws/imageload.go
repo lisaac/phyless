@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"phyless/internal/docker"
 
@@ -22,7 +23,10 @@ const (
 	// maxImageLoadFrame bounds a single client tar frame. The browser chunks the
 	// stream well below this; the pipe below provides real backpressure.
 	maxImageLoadFrame = 8 << 20
-	safeLoadMessage   = "镜像导入失败"
+	// imageLoadIdleTimeout bounds the gap between client frames so an idle or
+	// stalled connection cannot pin the goroutine and its pending ImageLoad.
+	imageLoadIdleTimeout = 2 * time.Minute
+	safeLoadMessage      = "镜像导入失败"
 )
 
 // imageLoader is the only Docker method this endpoint needs. Narrowing the
@@ -89,6 +93,11 @@ func ImageLoad(cli imageLoader) http.HandlerFunc {
 // aborts the load instead of importing a truncated archive.
 func readFramesToPipe(conn *websocket.Conn, pw *io.PipeWriter) error {
 	for {
+		// Refresh the idle deadline before each frame: a client that stops
+		// sending (or never starts) trips this instead of pinning the handler.
+		if err := conn.SetReadDeadline(time.Now().Add(imageLoadIdleTimeout)); err != nil {
+			return err
+		}
 		mt, data, err := conn.ReadMessage()
 		if err != nil {
 			return err

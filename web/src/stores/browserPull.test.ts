@@ -19,6 +19,7 @@ function makeDeps(over: Partial<BrowserPullDeps> = {}): BrowserPullDeps {
     buildDockerLoadTar: vi.fn(() => new ReadableStream()),
     streamTarToDaemon: vi.fn(async () => {}),
     inspectLocalId: vi.fn(async () => null),
+    daemonPlatform: vi.fn(async () => "linux/amd64"),
     openLayer: vi.fn(async () => new ReadableStream()),
     ...over,
   };
@@ -33,6 +34,13 @@ describe("runBrowserPull", () => {
     expect(deps.resolveImage).toHaveBeenCalledWith("nginx:1.27", "linux/amd64", "https://w", undefined);
     expect(deps.buildDockerLoadTar).toHaveBeenCalledOnce();
     expect(deps.streamTarToDaemon).toHaveBeenCalledOnce();
+  });
+
+  it("resolves the daemon platform when none is given", async () => {
+    const deps = makeDeps({ daemonPlatform: vi.fn(async () => "linux/arm64") });
+    await runBrowserPull({ ref: "nginx:1.27", platform: "", workerUrl: "https://w", token: "t" }, cb(), deps);
+    expect(deps.daemonPlatform).toHaveBeenCalledOnce();
+    expect(deps.resolveImage).toHaveBeenCalledWith("nginx:1.27", "linux/arm64", "https://w", undefined);
   });
 
   it("skips the download when the image is already up to date", async () => {

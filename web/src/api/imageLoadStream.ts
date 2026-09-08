@@ -36,11 +36,16 @@ export function streamTarToDaemon(opts: StreamOpts): Promise<void> {
   const socket = new Ctor(url);
   socket.binaryType = "arraybuffer";
 
+  const reader = opts.tar.getReader();
+
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     const finish = (err?: Error) => {
       if (settled) return;
       settled = true;
+      // Cancel the tar reader so an in-flight layer fetch (and its connection)
+      // is torn down promptly instead of lingering until GC.
+      reader.cancel().catch(() => {});
       try {
         socket.close();
       } catch {
@@ -78,7 +83,7 @@ export function streamTarToDaemon(opts: StreamOpts): Promise<void> {
     socket.onclose = () => finish(new Error("连接已关闭"));
 
     socket.onopen = () => {
-      void pump(socket, opts.tar, threshold, sleep, opts.signal).catch((err) =>
+      void pump(socket, reader, threshold, sleep, opts.signal).catch((err) =>
         finish(err instanceof Error ? err : new Error(String(err))),
       );
     };
@@ -87,12 +92,11 @@ export function streamTarToDaemon(opts: StreamOpts): Promise<void> {
 
 async function pump(
   socket: SocketLike,
-  tar: ReadableStream<Uint8Array>,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
   threshold: number,
   sleep: (ms: number) => Promise<void>,
   signal?: AbortSignal,
 ): Promise<void> {
-  const reader = tar.getReader();
   try {
     for (;;) {
       if (signal?.aborted) return;

@@ -160,6 +160,19 @@ async function fetchToken(
   return token;
 }
 
+// authHeaderFromChallenge turns a 401's WWW-Authenticate header into a fresh
+// Authorization header. Used to re-authorize a layer blob fetch whose token has
+// expired mid-pull (registry tokens are short-lived; a large image can outlive
+// the one obtained during the manifest phase).
+export async function authHeaderFromChallenge(workerUrl: string, wwwAuthenticate: string, creds?: Creds): Promise<string> {
+  const challenge = parseWWWAuthenticate(wwwAuthenticate);
+  if (challenge.scheme === "basic") {
+    if (!creds) throw new Error("该镜像需要登录凭据");
+    return "Basic " + btoa(`${creds.username}:${creds.secret}`);
+  }
+  return "Bearer " + (await fetchToken(workerUrl, challenge, creds));
+}
+
 async function readBounded(resp: Response, limit: number): Promise<Uint8Array> {
   const len = resp.headers.get("Content-Length");
   if (len && Number(len) > limit) throw new Error("registry 响应过大");
@@ -234,7 +247,11 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
     if (layer.size < 0) throw new Error("镜像层大小无效");
   }
 
-  const manifestDigest = resp.headers.get("Docker-Content-Digest") || (await sha256Digest(raw));
+  // Compute the manifest digest from the exact bytes we received rather than
+  // trusting Docker-Content-Digest: dockerTar names the manifest blob and the
+  // index.json entry by this digest, so a header that disagrees with the bytes
+  // would make `docker load`'s OCI path fail digest verification.
+  const manifestDigest = await sha256Digest(raw);
 
   const configResp = await authorizedGet(workerUrl, blobUrl(parsed.registryHost, parsed.repository, doc.config.digest), "*/*", creds, cache);
   const configBytes = await readBounded(configResp, MAX_META);

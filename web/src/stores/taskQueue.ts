@@ -158,7 +158,9 @@ function settle(id: string, status: TaskStatus, error = "") {
   xhrs.delete(id);
   browserAborts.delete(id);
   persist();
-  const snapshot = { ...unwrap(find(id)!) };
+  // Strip transient credentials before broadcasting: the snapshot goes to every
+  // SETTLED_EVENT listener and to the enqueue().done/queued() promise consumers.
+  const snapshot = { ...unwrap(find(id)!), secret: undefined };
   waiters.get(id)?.(snapshot);
   waiters.delete(id);
   window.dispatchEvent(new CustomEvent(SETTLED_EVENT, { detail: snapshot }));
@@ -218,7 +220,7 @@ function startBrowserPull(id: string) {
     { note, progress: note, signal: ac.signal },
   ).then(
     () => settle(id, "done"),
-    (err) => settle(id, "error", err instanceof Error ? err.message : String(err)),
+    (err) => settle(id, ac.signal.aborted ? "cancelled" : "error", err instanceof Error ? err.message : String(err)),
   );
 }
 
@@ -241,7 +243,7 @@ function startBrowserPullCompose(id: string) {
     { note, progress: note, signal: ac.signal },
   ).then(
     () => settle(id, "done"),
-    (err) => settle(id, "error", err instanceof Error ? err.message : String(err)),
+    (err) => settle(id, ac.signal.aborted ? "cancelled" : "error", err instanceof Error ? err.message : String(err)),
   );
 }
 

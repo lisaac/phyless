@@ -3,7 +3,7 @@
 // queue wires note/progress/signal to a task's UI state.
 
 import { buildDockerLoadTar } from "../api/dockerTar";
-import { resolveImage, layerBlobUrl, type Creds, type ResolvedImage } from "../api/registryPull";
+import { resolveImage, layerBlobUrl, authHeaderFromChallenge, type Creds, type ResolvedImage } from "../api/registryPull";
 import { streamTarToDaemon } from "../api/imageLoadStream";
 import { get } from "../api/client";
 
@@ -26,7 +26,9 @@ export interface BrowserPullDeps {
   buildDockerLoadTar: typeof buildDockerLoadTar;
   streamTarToDaemon: typeof streamTarToDaemon;
   inspectLocalId: (ref: string) => Promise<string | null>;
-  openLayer: (img: ResolvedImage, index: number, workerUrl: string, signal: AbortSignal) => Promise<ReadableStream<Uint8Array>>;
+  // Daemon OS/arch (e.g. "linux/arm64"), used when the caller left platform blank.
+  daemonPlatform: () => Promise<string>;
+  openLayer: (img: ResolvedImage, index: number, workerUrl: string, signal: AbortSignal, creds?: Creds) => Promise<ReadableStream<Uint8Array>>;
 }
 
 export const defaultDeps: BrowserPullDeps = {
@@ -41,12 +43,28 @@ export const defaultDeps: BrowserPullDeps = {
       return null; // not present locally (or inspect failed) — proceed to pull
     }
   },
-  openLayer: async (img, index, workerUrl, signal) => {
+  daemonPlatform: async () => {
+    try {
+      const p = await get<{ os?: string; architecture?: string }>("/api/system/platform");
+      if (p?.os && p?.architecture) return `${p.os}/${p.architecture}`;
+    } catch {
+      /* fall back below */
+    }
+    return "linux/amd64";
+  },
+  openLayer: async (img, index, workerUrl, signal, creds) => {
     const layer = img.layers[index];
-    const resp = await fetch(layerBlobUrl(workerUrl, img.registryHost, img.repository, layer.digest), {
-      headers: img.authHeader ? { Authorization: img.authHeader } : {},
-      signal,
-    });
+    const url = layerBlobUrl(workerUrl, img.registryHost, img.repository, layer.digest);
+    let resp = await fetch(url, { headers: img.authHeader ? { Authorization: img.authHeader } : {}, signal });
+    if (resp.status === 401) {
+      // The manifest-phase token can expire before a large image finishes; get a
+      // fresh one from the challenge and reuse it for the remaining layers.
+      const wa = resp.headers.get("WWW-Authenticate");
+      if (wa) {
+        img.authHeader = await authHeaderFromChallenge(workerUrl, wa, creds);
+        resp = await fetch(url, { headers: { Authorization: img.authHeader }, signal });
+      }
+    }
     if (!resp.ok || !resp.body) throw new Error(`下载镜像层失败（${resp.status}）`);
     return resp.body;
   },
@@ -54,7 +72,8 @@ export const defaultDeps: BrowserPullDeps = {
 
 export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullCallbacks, deps: BrowserPullDeps = defaultDeps): Promise<void> {
   cb.note("解析镜像信息…");
-  const img = await deps.resolveImage(params.ref, params.platform, params.workerUrl, params.creds);
+  const platform = params.platform?.trim() || (await deps.daemonPlatform());
+  const img = await deps.resolveImage(params.ref, platform, params.workerUrl, params.creds);
 
   const localId = await deps.inspectLocalId(img.repoTag);
   if (localId && localId === `sha256:${img.config.hex}`) {
@@ -70,7 +89,7 @@ export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullC
     repoTag: img.repoTag,
     manifest: img.manifest,
     platform: img.platform,
-    openLayer: (i) => deps.openLayer(img, i, params.workerUrl, cb.signal),
+    openLayer: (i) => deps.openLayer(img, i, params.workerUrl, cb.signal, params.creds),
   });
   await deps.streamTarToDaemon({ tar, token: params.token, onProgress: cb.progress, signal: cb.signal });
 }

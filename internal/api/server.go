@@ -242,6 +242,7 @@ func (s *Server) mountViewerResourceRoutes(r chi.Router) {
 	r.Get("/api/compose/detail", s.handleGetCompose)
 	r.Get("/api/compose/config", s.handleComposeResolvedConfig)
 	r.Get("/api/compose/pull-plan", s.handleComposePullPlan)
+	r.Get("/api/system/platform", s.handleSystemPlatform)
 	r.Get("/api/compose/files", s.handleComposeListFiles)
 	r.Get("/api/compose/files/content", s.handleComposeGetFileContent)
 	r.Get("/api/compose/files/download", s.handleComposeDownloadFile)
