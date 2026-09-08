@@ -2,6 +2,16 @@ import { Component, createResource, createUniqueId, For, Show } from "solid-js";
 import { createStore } from "solid-js/store";
 import { get } from "../../api/client";
 import type { Registry } from "../../types";
+import type { TaskSpec } from "../../stores/taskQueue";
+import {
+  type DownloadMode,
+  getDownloadMode,
+  setDownloadMode,
+  getWorkerUrl,
+  setWorkerUrl,
+  getRememberedCreds,
+  rememberCreds,
+} from "../../stores/browserPullSettings";
 
 export interface PullOptionsValue {
   proxyUrl?: string;
@@ -10,6 +20,12 @@ export interface PullOptionsValue {
   registryId?: string;
   registryIds?: string[];
   platform?: string;
+  // Browser-download mode: pull the image in the browser (via the CF worker)
+  // and stream it into the daemon, instead of the server-side proxy path.
+  downloadMode?: DownloadMode;
+  workerUrl?: string;
+  creds?: { username: string; secret: string };
+  rememberCreds?: boolean;
 }
 
 const PULL_PROXY_STORAGE_KEY = "phyless_pull_proxy_url";
@@ -63,13 +79,36 @@ export function pullOptionsPayload(value: PullOptionsValue): Record<string, unkn
 // upgrade, compose up/pull). reset() is what callers run on close: useProxy
 // is opt-in per open, the URL itself comes back from this browser's memory.
 export function createPullOptions() {
+  const remembered = readRememberedCreds();
   const fresh = (): Required<PullOptionsValue> => ({
     proxyUrl: readPullProxyUrl(), useProxy: false, registryId: "", registryIds: [], platform: "",
+    downloadMode: getDownloadMode(), workerUrl: getWorkerUrl(),
+    creds: remembered ?? { username: "", secret: "" }, rememberCreds: !!remembered,
   });
   const [value, set] = createStore(fresh());
   return { value, set, payload: () => pullOptionsPayload(value), reset: () => set(fresh()) };
 }
 export type PullOptionsState = ReturnType<typeof createPullOptions>;
+
+function readRememberedCreds() {
+  return getRememberedCreds();
+}
+
+export function isBrowserDownload(value: PullOptionsValue): boolean {
+  return value.downloadMode === "browser";
+}
+
+// Build a browser-pull task spec. Credentials go in `secret` (never persisted
+// to task history); ref/platform/workerUrl are non-sensitive and ride in meta.
+export function browserPullSpec(title: string, ref: string, key: string, value: PullOptionsValue): TaskSpec {
+  return {
+    title,
+    url: "",
+    key,
+    meta: { type: "browser-pull", ref, platform: value.platform?.trim() ?? "", workerUrl: value.workerUrl ?? "" },
+    secret: value.creds?.secret ? { creds: value.creds } : undefined,
+  };
+}
 
 const PLATFORM_HINTS = ["linux/amd64", "linux/arm64", "linux/arm/v7"];
 
@@ -77,6 +116,9 @@ export const PullOptions: Component<{
   options: PullOptionsState;
   showPlatform?: boolean;
   multipleRegistries?: boolean;
+  // Expose the browser-download mode. Only entry points that actually handle a
+  // browser-pull task (image pull, compose) set this; others stay proxy-only.
+  allowBrowser?: boolean;
 }> = (props) => {
   const [registries] = createResource(() => get<Registry[]>("/api/registries"));
   const platformListId = createUniqueId();
@@ -87,9 +129,83 @@ export const PullOptions: Component<{
     set("registryIds", ids.includes(id) ? ids.filter((v) => v !== id) : [...ids, id]);
   };
 
+  const setMode = (mode: DownloadMode) => {
+    set("downloadMode", mode);
+    setDownloadMode(mode);
+  };
+  const browserMode = () => !!props.allowBrowser && value.downloadMode === "browser";
+
   return (
     <div class="space-y-3 border-t border-zinc-800 pt-3">
-      <div class="text-xs text-zinc-400">本次拉取选项</div>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <span class="text-xs text-zinc-400">本次拉取选项</span>
+        <Show when={props.allowBrowser}>
+          <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="phyless 服务端经代理拉取镜像">
+            <input type="radio" name="download-mode" checked={value.downloadMode !== "browser"} onChange={() => setMode("proxy")} />
+            服务端代理
+          </label>
+          <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="浏览器经 CF worker 下载并流式导入，适合服务端连不上 registry 的场景">
+            <input type="radio" name="download-mode" checked={value.downloadMode === "browser"} onChange={() => setMode("browser")} />
+            浏览器下载
+          </label>
+        </Show>
+      </div>
+
+      <Show when={browserMode()}>
+        <div class="space-y-3">
+          <div>
+            <span class="mb-1 block text-xs text-zinc-500">CF worker 地址</span>
+            <input
+              class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500"
+              placeholder="https://your-worker.workers.dev"
+              autocomplete="off"
+              spellcheck={false}
+              value={value.workerUrl}
+              onInput={(e) => {
+                set("workerUrl", e.currentTarget.value);
+                setWorkerUrl(e.currentTarget.value);
+              }}
+            />
+            <p class="mt-1 text-[11px] text-zinc-600">浏览器经此 worker 访问 registry；仅保存合法 https 地址（不含用户名/密码）。</p>
+          </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label class="block">
+              <span class="mb-1 block text-xs text-zinc-500">私有镜像用户名（可选）</span>
+              <input
+                class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-500"
+                autocomplete="off"
+                value={value.creds?.username ?? ""}
+                onInput={(e) => set("creds", { ...value.creds, username: e.currentTarget.value, secret: value.creds?.secret ?? "" })}
+              />
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-xs text-zinc-500">密码 / Token（可选）</span>
+              <input
+                type="password"
+                class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-500"
+                autocomplete="off"
+                value={value.creds?.secret ?? ""}
+                onInput={(e) => set("creds", { ...value.creds, username: value.creds?.username ?? "", secret: e.currentTarget.value })}
+              />
+            </label>
+          </div>
+          <label class="flex items-center gap-1.5 text-xs text-zinc-500">
+            <input
+              type="checkbox"
+              checked={!!value.rememberCreds}
+              onChange={(e) => {
+                const on = e.currentTarget.checked;
+                set("rememberCreds", on);
+                rememberCreds(on && value.creds?.secret ? value.creds : null);
+              }}
+            />
+            记住凭据（仅此浏览器，明文存于 localStorage，XSS 可读取）
+          </label>
+          <p class="text-[11px] text-zinc-600">凭据只经浏览器与你的 worker 发往 registry，不会发送给 phyless 服务端。</p>
+        </div>
+      </Show>
+
+      <Show when={!browserMode()}>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label class="mb-1 flex items-center gap-1.5 text-xs text-zinc-500" title="只对本次请求生效，不会写入容器、Compose 文件或全局设置">
@@ -156,6 +272,7 @@ export const PullOptions: Component<{
           </div>
         </Show>
       </div>
+      </Show>
 
       <Show when={props.showPlatform}>
         <label class="block">

@@ -169,7 +169,7 @@ async function readBounded(resp: Response, limit: number): Promise<Uint8Array> {
 }
 
 async function sha256Digest(bytes: Uint8Array): Promise<string> {
-  const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource);
   const hex = Array.from(new Uint8Array(hash))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");

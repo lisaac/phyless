@@ -4,7 +4,7 @@ import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { PullOptions, createPullOptions } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { Btn } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
@@ -163,13 +163,18 @@ export const ImageListPage: Component = () => {
   const startPull = () => {
     const ref = pullRef().trim();
     if (!ref) return;
-    enqueue({
-      title: `拉取 ${ref}`,
-      url: "/api/images/pull",
-      body: { image: ref, ...pull.payload() },
-      key: `image:${ref}`,
-      meta: { type: "pull" },
-    });
+    if (isBrowserDownload(pull.value)) {
+      if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+      enqueue(browserPullSpec(`拉取 ${ref}`, ref, `image:${ref}`, pull.value));
+    } else {
+      enqueue({
+        title: `拉取 ${ref}`,
+        url: "/api/images/pull",
+        body: { image: ref, ...pull.payload() },
+        key: `image:${ref}`,
+        meta: { type: "pull" },
+      });
+    }
     setPullRef("");
     closePullInput();
   };
@@ -505,7 +510,7 @@ export const ImageListPage: Component = () => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={(el: any) => setTimeout(() => el?.focus(), 50)}
         />
-        <PullOptions options={pull} showPlatform />
+        <PullOptions options={pull} showPlatform allowBrowser />
         <div class="flex justify-end gap-2">
           <Button onClick={closePullInput}>取消</Button>
           <Button variant="primary" onClick={startPull}>拉取</Button>
