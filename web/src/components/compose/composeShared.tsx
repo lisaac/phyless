@@ -25,8 +25,8 @@ export function representative(cs: ContainerSummary[]): ContainerSummary | undef
   return cs.find((c) => c.State === "running") ?? cs[0];
 }
 
-export type ComposeVerb = "up" | "stop" | "down" | "restart" | "pull";
-export const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", down: "Down", restart: "Restart", pull: "Pull" };
+export type ComposeVerb = "up" | "stop" | "down" | "restart" | "pull" | "build";
+export const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", down: "Down", restart: "Restart", pull: "Pull", build: "Build" };
 
 // Stack/layers icon used everywhere a compose project needs a visual marker:
 // the tab strip, the list row, and the detail page heading.

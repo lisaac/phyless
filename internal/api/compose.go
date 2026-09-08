@@ -37,6 +37,7 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Post("/api/compose/stop", s.handleComposeStop)
 	r.Post("/api/compose/down", s.handleComposeDown)
 	r.Post("/api/compose/pull", s.handleComposePull)
+	r.Post("/api/compose/build", s.handleComposeBuild)
 	r.Post("/api/compose/restart", s.handleComposeRestart)
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
 	r.Delete("/api/compose/files", s.handleComposeDeleteFile)
@@ -104,6 +105,9 @@ type ComposeInfo struct {
 	Discovered  bool   `json:"discovered"`
 	Running     int    `json:"running"`
 	Total       int    `json:"total"`
+	// CanBuild is true only when the project's compose file is readable and at
+	// least one service declares a build. The list's Build button keys off it.
+	CanBuild bool `json:"can_build"`
 }
 
 // discoverProjects groups all containers by their compose project label.
@@ -167,7 +171,10 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 
 	var out []ComposeInfo
 	for _, p := range cfg.ComposeProjects {
-		out = append(out, ComposeInfo{ComposeProject: p})
+		// ponytail: parse each registered project's YAML every list poll (5s) to
+		// decide the Build button. Registered projects are few and their files are
+		// local; cache by file mtime if this ever shows up in profiling.
+		out = append(out, ComposeInfo{ComposeProject: p, CanBuild: s.projectHasBuild(r.Context(), p)})
 	}
 
 	// A single registered entry may match one running stack. If several
@@ -497,8 +504,31 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// projectHasBuild reports whether a project's compose file loads and any
+// service declares a build. Best-effort: an unreadable file (missing, not
+// mounted, invalid) yields false, matching "only when the yaml can be read".
+func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) bool {
+	if s.composeRuntime == nil {
+		return false
+	}
+	project, err := s.composeRuntime.LoadProject(ctx, composeProjectOptions(p))
+	if err != nil {
+		return false
+	}
+	for _, service := range project.Services {
+		if service.Build != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleComposeUp(w http.ResponseWriter, r *http.Request) {
 	s.runComposeOperation(w, r, "up")
+}
+
+func (s *Server) handleComposeBuild(w http.ResponseWriter, r *http.Request) {
+	s.runComposeOperation(w, r, "build")
 }
 
 func (s *Server) handleComposeStop(w http.ResponseWriter, r *http.Request) {
@@ -601,6 +631,15 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 					err = service.Compose().Stop(ctx, projectName, composeapi.StopOptions{Project: project})
 				case "down":
 					err = service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project})
+				case "build":
+					if project == nil {
+						err = fmt.Errorf("compose build requires a readable project file")
+						break
+					}
+					err = service.Compose().Build(ctx, project, composeapi.BuildOptions{
+						Progress: "plain",
+						Out:      output,
+					})
 				case "pull":
 					if project == nil {
 						err = fmt.Errorf("compose pull requires a readable project file")
@@ -704,7 +743,7 @@ func validateComposeOperation(ctx context.Context, operation string, project *co
 			}
 			return fmt.Errorf("compose service %q uses external provider %q, which is not supported by the embedded API", name, provider)
 		}
-		if operation != "up" && operation != "pull" || service.Build == nil {
+		if operation != "up" && operation != "pull" && operation != "build" || service.Build == nil {
 			continue
 		}
 		if phyDocker.HasPullProxy(ctx) {

@@ -139,7 +139,14 @@ export const ComposeListPage: Component = () => {
                   </div>
                   <div class="flex shrink-0 flex-wrap items-center gap-0.5 sm:ml-auto sm:justify-end" onClick={(e) => e.stopPropagation()}>
                     <Show when={hasRole("operator")}>
-                      <Show when={p.discovered} fallback={<ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>}>
+                      <Show when={p.discovered} fallback={
+                        <>
+                          <Show when={p.can_build}>
+                            <ActBtn title="docker compose build" loading={isRunning(p.id, "build")} onClick={() => request({ id: p.id, name: p.name, verb: "build" })}>🔨 Build</ActBtn>
+                          </Show>
+                          <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>
+                        </>
+                      }>
                         <ActBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕ 注册</ActBtn>
                       </Show>
                       <span class="mx-0.5 text-zinc-600">│</span>

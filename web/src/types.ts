@@ -58,6 +58,8 @@ export interface ComposeProject {
   discovered?: boolean;
   running?: number;
   total?: number;
+  // List responses only: compose file is readable and a service declares build.
+  can_build?: boolean;
 }
 
 export interface Registry {
