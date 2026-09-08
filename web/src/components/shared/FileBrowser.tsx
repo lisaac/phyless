@@ -1,4 +1,4 @@
-import { Component, createSignal, createResource, createEffect, For, Show, createMemo } from "solid-js";
+import { Component, createSignal, createResource, createEffect, For, Show, Suspense, createMemo } from "solid-js";
 import type { FileEntry } from "../../types";
 
 function fmtSize(b: number): string {
@@ -13,6 +13,15 @@ function fmtTime(unix?: number): string {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
 }
 
+// Border-radius is force-zeroed globally (index.css), so a CSS ring spinner
+// would render square — use an SVG circle instead.
+const Spinner: Component<{ size?: number }> = (p) => (
+  <svg class="animate-spin text-zinc-500" width={p.size ?? 16} height={p.size ?? 16} viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-opacity="0.25" />
+    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+  </svg>
+);
+
 function pathSegments(p: string) {
   const parts = p.split("/").filter(Boolean);
   return [
@@ -21,7 +30,7 @@ function pathSegments(p: string) {
   ];
 }
 
-export const FileBrowser: Component<{
+interface FileBrowserProps {
   listPath: (sub: string) => Promise<FileEntry[]>;
   // (fullSubPath, displayName) — the caller drives the actual transfer
   // (progress widget, auth, etc.); this just tells it what got clicked.
@@ -42,7 +51,21 @@ export const FileBrowser: Component<{
   // refetch — leaving the previous container's stale listing on screen while
   // every action (delete/rename/copy) silently targets the new container.
   instanceKey?: string;
-}> = (props) => {
+}
+
+// The resource + its eager `sorted` memo are created in the component body,
+// which runs under whatever <Suspense> is active at mount. The app has one
+// at the root (App.tsx), so a first-fetch suspend there blanks the whole
+// page (and the modal, killing click-outside-to-cancel). Wrapping the body
+// in its OWN <Suspense> here means the body runs under this boundary instead
+// — first load shows just the spinner, the modal stays put.
+export const FileBrowser: Component<FileBrowserProps> = (props) => (
+  <Suspense fallback={<div class="flex items-center justify-center gap-2 py-12 text-xs text-zinc-500"><Spinner size={20} /> 加载中…</div>}>
+    <FileBrowserInner {...props} />
+  </Suspense>
+);
+
+const FileBrowserInner: Component<FileBrowserProps> = (props) => {
   const [path, setPath] = createSignal(props.initialPath ?? "/");
   createEffect(() => {
     props.instanceKey;
@@ -55,8 +78,14 @@ export const FileBrowser: Component<{
     if (sortCol() === col) setSortDir((d) => (d === 1 ? -1 : 1));
     else { setSortCol(col); setSortDir(1); }
   };
+  // Read `.latest`, never `entries()`: the app has a single root <Suspense>
+  // (App.tsx), so reading a loading resource under it re-suspends the WHOLE
+  // app to a bare "加载中…" on every folder click — blanking the modal (and
+  // its click-outside-to-close) and jumping the page. `.latest` keeps the
+  // previous rows visible during refetch and never triggers Suspense.
+  const rows = () => entries.latest;
   const sorted = createMemo(() => {
-    const es = [...(entries() ?? [])];
+    const es = [...(rows() ?? [])];
     const col = sortCol(), dir = sortDir();
     return es.sort((a, b) => {
       let av: any, bv: any;
@@ -210,15 +239,14 @@ export const FileBrowser: Component<{
         </Show>
       </div>
 
-      <Show when={entries.loading}>
-        <div class="flex items-center gap-2 py-6 text-xs text-zinc-500">
-          <span class="animate-spin">⟳</span> 加载中…
-        </div>
-      </Show>
       <Show when={entries.error}>
-        <p class="text-sm text-red-400">{String(entries.error)}</p>
+        <p class="py-6 text-center text-sm text-red-400">{String(entries.error)}</p>
       </Show>
-      <Show when={!entries.error && !entries.loading}>
+      {/* Refetch keeps rows on screen (`.latest` doesn't re-suspend): just dim
+          + overlay a spinner — no unmount, no page jump. */}
+      <Show when={!entries.error}>
+       <div class="relative">
+        <div classList={{ "pointer-events-none opacity-40 transition-opacity": entries.loading }}>
         <table class="w-full text-left">
           <thead>
             <tr class="text-[11px] text-zinc-500 select-none">
@@ -306,9 +334,14 @@ export const FileBrowser: Component<{
             </For>
           </tbody>
         </table>
-        <Show when={(entries() ?? []).length === 0 && !entries.loading}>
+        <Show when={sorted().length === 0}>
           <p class="py-4 text-center text-xs text-zinc-500">空目录</p>
         </Show>
+        </div>
+        <Show when={entries.loading}>
+          <div class="pointer-events-none absolute left-1/2 top-12 -translate-x-1/2"><Spinner size={22} /></div>
+        </Show>
+       </div>
       </Show>
     </div>
   );

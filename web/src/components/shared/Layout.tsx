@@ -2,6 +2,7 @@ import { Component, JSX, createSignal, createEffect, onMount, onCleanup, startTr
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
+import { ThemeIcon } from "./ThemeIcon";
 import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type PageTab } from "../../stores/tabs";
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
@@ -235,11 +236,11 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             </div>
           </details>
           <button
-            class="shrink-0 text-zinc-400 hover:text-zinc-100"
+            class="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             onClick={toggleTheme}
             title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
           >
-            {theme() === "dark" ? "☀" : "☽"}
+            <ThemeIcon dark={theme() === "dark"} />
           </button>
         </header>
 
