@@ -28,6 +28,14 @@ export function representative(cs: ContainerSummary[]): ContainerSummary | undef
 export type ComposeVerb = "up" | "stop" | "down" | "restart" | "pull" | "build";
 export const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", down: "Down", restart: "Restart", pull: "Pull", build: "Build" };
 
+// A project supports `build` when any service declares a build section. The list
+// keys off the backend's can_build flag (it has no per-service data); the detail
+// page derives the same answer from its loaded services, so both views gate the
+// Build button on identical logic.
+export function servicesHaveBuild(services: Record<string, Record<string, unknown>> | undefined | null): boolean {
+  return !!services && Object.values(services).some((s) => s?.build != null);
+}
+
 // Stack/layers icon used everywhere a compose project needs a visual marker:
 // the tab strip, the list row, and the detail page heading.
 export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => (

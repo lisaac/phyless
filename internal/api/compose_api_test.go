@@ -247,6 +247,63 @@ func TestComposeOperationValidationBoundaries(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("disabled build validation = %v", err)
 	}
+	// The build operation is subject to the same build-config checks as up/pull.
+	if err := validateComposeOperation(proxied, "build", project); err == nil || !strings.Contains(err.Error(), "pull proxy") {
+		t.Fatalf("proxy build op validation = %v", err)
+	}
+	if err := validateComposeOperation(context.Background(), "build", &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
+		"remote": {Name: "remote", Build: &composetypes.BuildConfig{Context: "git://example/repo"}},
+	}}); err == nil || !strings.Contains(err.Error(), "remote build context") {
+		t.Fatalf("remote build context validation = %v", err)
+	}
+}
+
+func TestListComposeReportsCanBuild(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	writeCompose := func(body string) (dir, file string) {
+		dir = t.TempDir()
+		file = filepath.Join(dir, "compose.yaml")
+		if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir, file
+	}
+	buildDir, buildFile := writeCompose("services:\n  app:\n    build: .\n")
+	imageDir, imageFile := writeCompose("services:\n  app:\n    image: busybox\n")
+
+	projectStore := store.New(filepath.Join(t.TempDir(), "config.json"))
+	if err := projectStore.Write(&store.Config{ComposeProjects: []models.ComposeProject{
+		{ID: "build", Name: "with-build", BaseDir: buildDir, ComposeFile: buildFile},
+		{ID: "image", Name: "image-only", BaseDir: imageDir, ComposeFile: imageFile},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{store: projectStore, docker: &composeDiscoveryClient{}, buildCache: newBuildCapabilityCache()}
+	runtime, err := dockercompose.NewRuntime(server.docker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.composeRuntime = runtime
+
+	res := httptest.NewRecorder()
+	server.handleListCompose(res, httptest.NewRequest(http.MethodGet, "/api/compose", nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	var out []ComposeInfo
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	canBuild := map[string]bool{}
+	for _, info := range out {
+		canBuild[info.ID] = info.CanBuild
+	}
+	if !canBuild["build"] {
+		t.Errorf("with-build can_build = false, want true")
+	}
+	if canBuild["image"] {
+		t.Errorf("image-only can_build = true, want false")
+	}
 }
 
 func TestComposeOperationLockIsPerProjectAndRejectsDuplicates(t *testing.T) {

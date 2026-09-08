@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	composeapi "github.com/docker/compose/v2/pkg/api"
@@ -76,6 +78,29 @@ var composeOperationState = struct {
 	sync.Mutex
 	active map[string]struct{}
 }{active: make(map[string]struct{})}
+
+// buildCapabilityCache memoizes per-project can_build results, keyed by the
+// project's compose file mtimes, so the 5s list poll re-parses a project's YAML
+// only when it actually changes. inflight single-flights each project: while one
+// evaluation runs (or hangs on a slow directory), other polls reuse the last
+// known value instead of stacking goroutines.
+type buildCapabilityCache struct {
+	mu       sync.Mutex
+	entries  map[string]buildCacheEntry
+	inflight map[string]struct{}
+}
+
+type buildCacheEntry struct {
+	signature string
+	canBuild  bool
+}
+
+func newBuildCapabilityCache() *buildCapabilityCache {
+	return &buildCapabilityCache{
+		entries:  make(map[string]buildCacheEntry),
+		inflight: make(map[string]struct{}),
+	}
+}
 
 func tryComposeOperation(projectName string) (func(), bool) {
 	projectName = strings.TrimSpace(strings.ToLower(projectName))
@@ -169,12 +194,10 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	canBuild := s.computeCanBuild(r.Context(), cfg.ComposeProjects)
 	var out []ComposeInfo
-	for _, p := range cfg.ComposeProjects {
-		// ponytail: parse each registered project's YAML every list poll (5s) to
-		// decide the Build button. Registered projects are few and their files are
-		// local; cache by file mtime if this ever shows up in profiling.
-		out = append(out, ComposeInfo{ComposeProject: p, CanBuild: s.projectHasBuild(r.Context(), p)})
+	for i, p := range cfg.ComposeProjects {
+		out = append(out, ComposeInfo{ComposeProject: p, CanBuild: canBuild[i]})
 	}
 
 	// A single registered entry may match one running stack. If several
@@ -555,15 +578,83 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// computeCanBuild resolves can_build for the given registered projects. It runs
+// the per-project checks concurrently and returns after a short deadline so one
+// slow or hung project directory cannot stall the frequently polled list. A
+// project whose check is still running (or hung) is single-flighted in the
+// cache, so late results just fill in on a later poll rather than blocking.
+func (s *Server) computeCanBuild(ctx context.Context, projects []models.ComposeProject) []bool {
+	results := make([]bool, len(projects))
+	if len(projects) == 0 {
+		return results
+	}
+	var wg sync.WaitGroup
+	for i := range projects {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = s.projectHasBuild(ctx, projects[i])
+		}(i)
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+	}
+	return results
+}
+
 // projectHasBuild reports whether a project's compose file loads and any
-// service declares a build. Best-effort: an unreadable file (missing, not
-// mounted, invalid) yields false, matching "only when the yaml can be read".
+// (default-profile) service declares a build. Results are memoized by the
+// compose files' mtimes so the 5s list poll re-parses only changed projects;
+// a single-flight guard keeps a slow/hung directory from piling up goroutines.
+// Best-effort: an unreadable file (missing, not mounted, invalid) yields false,
+// matching "only when the yaml can be read".
 func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) bool {
 	if s.composeRuntime == nil {
 		return false
 	}
+	c := s.buildCache
+	if c == nil {
+		return s.loadProjectHasBuild(ctx, p) // no cache (e.g. tests build Server directly)
+	}
+
+	c.mu.Lock()
+	if _, busy := c.inflight[p.ID]; busy {
+		// A prior evaluation is still running (typically a slow/hung dir).
+		// Reuse the last known value instead of blocking or stacking goroutines.
+		v := c.entries[p.ID].canBuild
+		c.mu.Unlock()
+		return v
+	}
+	c.inflight[p.ID] = struct{}{}
+	c.mu.Unlock()
+	defer func() { c.mu.Lock(); delete(c.inflight, p.ID); c.mu.Unlock() }()
+
+	// ponytail: signature covers the top-level compose files only, not included
+	// or .env files; build-presence rarely depends on those. Widen the stat set
+	// if a stale Build button on an include/env edit ever bites.
+	sig := composeFileSignature(p)
+	c.mu.Lock()
+	entry, ok := c.entries[p.ID]
+	c.mu.Unlock()
+	if ok && entry.signature == sig {
+		return entry.canBuild
+	}
+
+	canBuild := s.loadProjectHasBuild(ctx, p)
+	c.mu.Lock()
+	c.entries[p.ID] = buildCacheEntry{signature: sig, canBuild: canBuild}
+	c.mu.Unlock()
+	return canBuild
+}
+
+func (s *Server) loadProjectHasBuild(ctx context.Context, p models.ComposeProject) bool {
 	project, err := s.composeRuntime.LoadProject(ctx, composeProjectOptions(p))
 	if err != nil {
+		log.Printf("compose: can_build check for %q failed: %v", p.ID, err)
 		return false
 	}
 	for _, service := range project.Services {
@@ -572,6 +663,25 @@ func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) b
 		}
 	}
 	return false
+}
+
+// composeFileSignature fingerprints a project's compose files by path+mtime+size
+// so an unchanged project can skip re-parsing. An unreadable file yields "",
+// which forces a reload (that then also fails, yielding can_build=false).
+func composeFileSignature(p models.ComposeProject) string {
+	paths := normalizeComposePaths(p.BaseDir, p.ComposeFile)
+	if len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			return ""
+		}
+		fmt.Fprintf(&b, "%s:%d:%d;", path, info.ModTime().UnixNano(), info.Size())
+	}
+	return b.String()
 }
 
 func (s *Server) handleComposeUp(w http.ResponseWriter, r *http.Request) {

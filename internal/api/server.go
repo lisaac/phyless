@@ -30,6 +30,7 @@ type Server struct {
 	docker         dockerclient.APIClient
 	composeRuntime *dockercompose.Runtime
 	imagefs        *imagefs.Manager
+	buildCache     *buildCapabilityCache
 }
 
 func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
@@ -52,6 +53,7 @@ func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
 		docker:         dc,
 		composeRuntime: composeRuntime,
 		imagefs:        mgr,
+		buildCache:     newBuildCapabilityCache(),
 	}
 	return srv.routes()
 }

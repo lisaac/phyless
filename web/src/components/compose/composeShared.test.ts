@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { containersOf, LABEL_CONFIG_FILES, LABEL_PROJECT } from "./composeShared";
+import { containersOf, servicesHaveBuild, VERB_LABEL, LABEL_CONFIG_FILES, LABEL_PROJECT } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 describe("Compose container matching", () => {
@@ -22,5 +22,18 @@ describe("Compose container matching", () => {
     expect(containersOf(project, containers)).toEqual(containers);
     expect(containersOf({ ...project, compose_file: "/stack/compose.yaml,/stack/different.yaml" }, containers)).toEqual([]);
     expect(containersOf({ ...project, compose_file: "" }, containers)).toEqual([]);
+  });
+});
+
+describe("servicesHaveBuild", () => {
+  it("is true only when some service declares build", () => {
+    expect(servicesHaveBuild({ app: { build: { context: "." } }, db: { image: "pg" } })).toBe(true);
+    expect(servicesHaveBuild({ app: { image: "busybox" } })).toBe(false);
+    expect(servicesHaveBuild({})).toBe(false);
+    expect(servicesHaveBuild(undefined)).toBe(false);
+  });
+
+  it("labels the build verb", () => {
+    expect(VERB_LABEL.build).toBe("Build");
   });
 });

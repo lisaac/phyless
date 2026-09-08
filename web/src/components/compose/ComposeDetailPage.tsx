@@ -22,7 +22,7 @@ import { ContainerRow } from "../containers/ContainerRow";
 import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
-import { containersOf, representative, ActBtn, ComposeIcon, type ComposeVerb } from "./composeShared";
+import { containersOf, representative, ActBtn, ComposeIcon, servicesHaveBuild, type ComposeVerb } from "./composeShared";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { enqueue, queued } from "../../stores/taskQueue";
 import type { ComposeProject, ContainerSummary, FileEntry } from "../../types";
@@ -256,6 +256,9 @@ export const ComposeDetailPage: Component = () => {
             onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) request({ id: id(), name: project()?.name ?? id(), verb: "down" }); }}
           >⊘ Down</ActBtn>
           <ActBtn title="docker compose pull" loading={isRunning("pull")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "pull" })}>↓ Pull</ActBtn>
+          <Show when={servicesHaveBuild(detail()?.services)}>
+            <ActBtn title="docker compose build" loading={isRunning("build")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "build" })}>🔨 Build</ActBtn>
+          </Show>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>⧉ Run/Compose</ActBtn>
         </div>
