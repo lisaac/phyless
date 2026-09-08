@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
+import { PullOptions, createPullOptions } from "../shared/PullOptions";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
@@ -67,9 +67,7 @@ export const CreateContainerModal: Component<{
   const isMulti = () => serviceCount() > 1;
   const [savingTpl, setSavingTpl] = createSignal(false);
   const [tplName, setTplName] = createSignal("");
-  const [pullProxyUrl, setPullProxyUrl] = createSignal("");
-  const [pullRegistryId, setPullRegistryId] = createSignal("");
-  const [pullPlatform, setPullPlatform] = createSignal("");
+  const pull = createPullOptions();
 
   const [allImages] = createResource(
     () => props.open,
@@ -86,9 +84,7 @@ export const CreateContainerModal: Component<{
   // onClose), so this can no longer rely on remount-time signal init.
   createEffect(() => {
     if (!props.open) return;
-    setPullProxyUrl("");
-    setPullRegistryId("");
-    setPullPlatform("");
+    pull.reset();
     if (props.initialRun) {
       setRunCmd(props.initialRun);
       setLiveRun(props.initialRun);
@@ -178,9 +174,7 @@ export const CreateContainerModal: Component<{
     enqueue({
       title: `创建 ${form().name || form().image}`,
       url: "/api/containers",
-      body: { ...formToPayload(form()), ...pullOptionsPayload({
-        proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform(),
-      }) },
+      body: { ...formToPayload(form()), ...pull.payload() },
       key: form().name ? `container:${form().name}` : undefined,
       meta: { type: "create" },
     });
@@ -190,10 +184,7 @@ export const CreateContainerModal: Component<{
     closeModal();
   };
 
-  const clearPullOptions = () => {
-    setPullProxyUrl(""); setPullRegistryId(""); setPullPlatform("");
-  };
-  const closeModal = () => { clearPullOptions(); props.onClose(); };
+  const closeModal = () => { pull.reset(); props.onClose(); };
 
   const loadTemplate = (cmd: string) => {
     setRunCmd(cmd);
@@ -416,15 +407,7 @@ export const CreateContainerModal: Component<{
       </div>
 
       <Show when={!isMulti()}>
-        <PullOptions
-          proxyUrl={pullProxyUrl()}
-          registryId={pullRegistryId()}
-          platform={pullPlatform()}
-          showPlatform
-          onProxyUrlChange={setPullProxyUrl}
-          onRegistryIdChange={setPullRegistryId}
-          onPlatformChange={setPullPlatform}
-        />
+        <PullOptions options={pull} showPlatform />
       </Show>
 
       {/* ── Save template bar ─────────────────────────────────────────────── */}

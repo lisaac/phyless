@@ -1,9 +1,12 @@
-import { Component, createResource, createUniqueId, For, Show, onMount } from "solid-js";
+import { Component, createResource, createUniqueId, For, Show } from "solid-js";
+import { createStore } from "solid-js/store";
 import { get } from "../../api/client";
 import type { Registry } from "../../types";
 
 export interface PullOptionsValue {
   proxyUrl?: string;
+  // Explicit opt-in per form open; the remembered URL alone never sends a proxy.
+  useProxy?: boolean;
   registryId?: string;
   registryIds?: string[];
   platform?: string;
@@ -49,63 +52,64 @@ export function rememberPullProxyUrl(raw: string): void {
 // the short-lived values so closing a modal can release them immediately.
 export function pullOptionsPayload(value: PullOptionsValue): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  if (value.proxyUrl?.trim()) out.proxy_url = value.proxyUrl.trim();
+  if (value.useProxy && value.proxyUrl?.trim()) out.proxy_url = value.proxyUrl.trim();
   if (value.registryId) out.registry_id = value.registryId;
   if (value.registryIds?.length) out.registry_ids = value.registryIds;
   if (value.platform?.trim()) out.platform = value.platform.trim();
   return out;
 }
 
+// One state holder shared by every pull form (image pull, create container,
+// upgrade, compose up/pull). reset() is what callers run on close: useProxy
+// is opt-in per open, the URL itself comes back from this browser's memory.
+export function createPullOptions() {
+  const fresh = (): Required<PullOptionsValue> => ({
+    proxyUrl: readPullProxyUrl(), useProxy: false, registryId: "", registryIds: [], platform: "",
+  });
+  const [value, set] = createStore(fresh());
+  return { value, set, payload: () => pullOptionsPayload(value), reset: () => set(fresh()) };
+}
+export type PullOptionsState = ReturnType<typeof createPullOptions>;
+
 const PLATFORM_HINTS = ["linux/amd64", "linux/arm64", "linux/arm/v7"];
 
 export const PullOptions: Component<{
-  proxyUrl: string;
-  registryId?: string;
-  registryIds?: string[];
-  platform?: string;
+  options: PullOptionsState;
   showPlatform?: boolean;
   multipleRegistries?: boolean;
-  onProxyUrlChange: (value: string) => void;
-  onRegistryIdChange?: (value: string) => void;
-  onRegistryIdsChange?: (value: string[]) => void;
-  onPlatformChange?: (value: string) => void;
 }> = (props) => {
   const [registries] = createResource(() => get<Registry[]>("/api/registries"));
   const platformListId = createUniqueId();
-  const selectedIds = () => props.registryIds ?? [];
-
-  onMount(() => {
-    if (!props.proxyUrl.trim()) {
-      const stored = readPullProxyUrl();
-      if (stored) props.onProxyUrlChange(stored);
-    }
-  });
+  const { value, set } = props.options;
 
   const toggleRegistry = (id: string) => {
-    const ids = selectedIds();
-    props.onRegistryIdsChange?.(ids.includes(id) ? ids.filter((v) => v !== id) : [...ids, id]);
+    const ids = value.registryIds;
+    set("registryIds", ids.includes(id) ? ids.filter((v) => v !== id) : [...ids, id]);
   };
 
   return (
     <div class="space-y-3 border-t border-zinc-800 pt-3">
       <div class="text-xs text-zinc-400">本次拉取选项</div>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label class="block">
-          <span class="mb-1 block text-xs text-zinc-500" title="只对本次请求生效，不会写入容器、Compose 文件或全局设置">代理地址（记住此浏览器）</span>
+        <div>
+          <label class="mb-1 flex items-center gap-1.5 text-xs text-zinc-500" title="只对本次请求生效，不会写入容器、Compose 文件或全局设置">
+            <input type="checkbox" checked={value.useProxy} onChange={(e) => set("useProxy", e.currentTarget.checked)} />
+            使用代理（地址记住此浏览器）
+          </label>
           <input
-            class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500"
+            class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500 disabled:opacity-40"
             placeholder="http://host.docker.internal:7890"
             autocomplete="off"
             spellcheck={false}
-            value={props.proxyUrl}
+            disabled={!value.useProxy}
+            value={value.proxyUrl}
             onInput={(e) => {
-              const value = e.currentTarget.value;
-              props.onProxyUrlChange(value);
-              rememberPullProxyUrl(value);
+              set("proxyUrl", e.currentTarget.value);
+              rememberPullProxyUrl(e.currentTarget.value);
             }}
           />
           <p class="mt-1 text-[11px] text-zinc-600">地址需从 phyless 容器可达；有效的无认证地址会记住，含用户名/密码的地址不会保存。</p>
-        </label>
+        </div>
 
         <Show when={props.multipleRegistries} fallback={
           <label class="block">
@@ -113,8 +117,8 @@ export const PullOptions: Component<{
             <div class="relative">
               <select
                 class="w-full appearance-none border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 pr-8 text-sm outline-none focus:border-indigo-500"
-                value={props.registryId ?? ""}
-                onChange={(e) => props.onRegistryIdChange?.(e.currentTarget.value)}
+                value={value.registryId}
+                onChange={(e) => set("registryId", e.currentTarget.value)}
               >
                 <option value="">不指定（匿名）</option>
                 <For each={registries() ?? []}>
@@ -140,7 +144,7 @@ export const PullOptions: Component<{
                     <label class="flex items-center gap-1 text-xs text-zinc-300">
                       <input
                         type="checkbox"
-                        checked={selectedIds().includes(registry.id)}
+                        checked={value.registryIds.includes(registry.id)}
                         onChange={() => toggleRegistry(registry.id)}
                       />
                       <span>{registry.url}{registry.username ? `（${registry.username}）` : ""}</span>
@@ -160,8 +164,8 @@ export const PullOptions: Component<{
             list={platformListId}
             class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 font-mono text-sm outline-none transition-colors focus:border-indigo-500"
             placeholder="留空使用 Docker daemon 平台"
-            value={props.platform ?? ""}
-            onInput={(e) => props.onPlatformChange?.(e.currentTarget.value)}
+            value={value.platform}
+            onInput={(e) => set("platform", e.currentTarget.value)}
           />
           <datalist id={platformListId}>
             <For each={PLATFORM_HINTS}>{(platform) => <option value={platform} />}</For>

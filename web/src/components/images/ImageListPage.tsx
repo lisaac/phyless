@@ -4,7 +4,7 @@ import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
+import { PullOptions, createPullOptions } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { Btn } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
@@ -133,9 +133,7 @@ export const ImageListPage: Component = () => {
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
   const [showRemoteImport, setShowRemoteImport] = createSignal(false);
-  const [pullProxyUrl, setPullProxyUrl] = createSignal("");
-  const [pullRegistryId, setPullRegistryId] = createSignal("");
-  const [pullPlatform, setPullPlatform] = createSignal("");
+  const pull = createPullOptions();
   const [remoteImportURL, setRemoteImportURL] = createSignal("");
   const [remoteImportRef, setRemoteImportRef] = createSignal("");
   const [remoteImportFile, setRemoteImportFile] = createSignal<File | undefined>(undefined);
@@ -155,10 +153,7 @@ export const ImageListPage: Component = () => {
   onCleanup(() => store.stopPolling());
   onCleanup(() => download.cancel());
 
-  const clearPullOptions = () => {
-    setPullProxyUrl(""); setPullRegistryId(""); setPullPlatform("");
-  };
-  const closePullInput = () => { setShowPullInput(false); clearPullOptions(); };
+  const closePullInput = () => { setShowPullInput(false); pull.reset(); };
   const closeRemoteImport = () => {
     setShowRemoteImport(false); setRemoteImportURL(""); setRemoteImportRef(""); setRemoteImportFile(undefined);
   };
@@ -171,7 +166,7 @@ export const ImageListPage: Component = () => {
     enqueue({
       title: `拉取 ${ref}`,
       url: "/api/images/pull",
-      body: { image: ref, ...pullOptionsPayload({ proxyUrl: pullProxyUrl(), registryId: pullRegistryId(), platform: pullPlatform() }) },
+      body: { image: ref, ...pull.payload() },
       key: `image:${ref}`,
       meta: { type: "pull" },
     });
@@ -510,15 +505,7 @@ export const ImageListPage: Component = () => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={(el: any) => setTimeout(() => el?.focus(), 50)}
         />
-        <PullOptions
-          proxyUrl={pullProxyUrl()}
-          registryId={pullRegistryId()}
-          platform={pullPlatform()}
-          showPlatform
-          onProxyUrlChange={setPullProxyUrl}
-          onRegistryIdChange={setPullRegistryId}
-          onPlatformChange={setPullPlatform}
-        />
+        <PullOptions options={pull} showPlatform />
         <div class="flex justify-end gap-2">
           <Button onClick={closePullInput}>取消</Button>
           <Button variant="primary" onClick={startPull}>拉取</Button>

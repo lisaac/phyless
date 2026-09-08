@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types/registry"
 	"phyless/internal/docker"
@@ -14,6 +15,28 @@ type requestPullOptions struct {
 	RegistryID  string   `json:"registry_id,omitempty"`
 	Platform    string   `json:"platform,omitempty"`
 	RegistryIDs []string `json:"registry_ids,omitempty"`
+	// PullPolicy overrides every Compose service's pull_policy for one Up,
+	// like `docker compose up --pull`. Empty leaves the project unchanged.
+	PullPolicy string `json:"pull_policy,omitempty"`
+}
+
+func (o requestPullOptions) validComposePullPolicy() bool {
+	switch o.PullPolicy {
+	case "", composetypes.PullPolicyMissing, composetypes.PullPolicyAlways, composetypes.PullPolicyNever:
+		return true
+	}
+	return false
+}
+
+// applyComposePullPolicy mirrors createOptions.Apply in compose v2's CLI.
+func applyComposePullPolicy(project *composetypes.Project, policy string) {
+	if policy == "" || project == nil {
+		return
+	}
+	for name, service := range project.Services {
+		service.PullPolicy = policy
+		project.Services[name] = service
+	}
 }
 
 func (s *Server) pullContext(ctx context.Context, proxyURL string) (context.Context, error) {

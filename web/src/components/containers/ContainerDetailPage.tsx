@@ -8,7 +8,7 @@ import { createContainerActions } from "./containerActions";
 import { toast } from "../shared/Toast";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
-import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
+import { PullOptions, createPullOptions } from "../shared/PullOptions";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { CreateContainerModal } from "./CreateContainerModal";
@@ -152,8 +152,7 @@ export const ContainerDetailPage: Component = () => {
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
   const [showUpgradeOptions, setShowUpgradeOptions] = createSignal(false);
-  const [upgradeProxyUrl, setUpgradeProxyUrl] = createSignal("");
-  const [upgradeRegistryId, setUpgradeRegistryId] = createSignal("");
+  const upgradePull = createPullOptions();
 
   // React to queued tasks on this container finishing (while mounted): refetch
   // after any of them; after a successful upgrade or delete, move to the new
@@ -221,11 +220,10 @@ export const ContainerDetailPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  const clearUpgradeOptions = () => { setUpgradeProxyUrl(""); setUpgradeRegistryId(""); };
-  const closeUpgradeOptions = () => { setShowUpgradeOptions(false); clearUpgradeOptions(); };
-  const doUpgrade = () => { clearUpgradeOptions(); setShowUpgradeOptions(true); };
+  const closeUpgradeOptions = () => { setShowUpgradeOptions(false); upgradePull.reset(); };
+  const doUpgrade = () => { upgradePull.reset(); setShowUpgradeOptions(true); };
   const startUpgrade = () => {
-    const options = pullOptionsPayload({ proxyUrl: upgradeProxyUrl(), registryId: upgradeRegistryId() });
+    const options = upgradePull.payload();
     enqueue({
       title: `升级 — ${name()}`,
       url: `/api/containers/${id()}/upgrade`,
@@ -742,12 +740,7 @@ export const ContainerDetailPage: Component = () => {
 
       <Modal open={showUpgradeOptions()} onClose={closeUpgradeOptions} title={`升级 — ${name()}`}>
         <p class="mb-3 text-xs text-zinc-500">先按本次选项拉取镜像，成功后再替换容器；留空则沿用 Docker 默认行为。</p>
-        <PullOptions
-          proxyUrl={upgradeProxyUrl()}
-          registryId={upgradeRegistryId()}
-          onProxyUrlChange={setUpgradeProxyUrl}
-          onRegistryIdChange={setUpgradeRegistryId}
-        />
+        <PullOptions options={upgradePull} />
         <div class="mt-4 flex justify-end gap-2">
           <Button onClick={closeUpgradeOptions}>取消</Button>
           <Button variant="primary" onClick={startUpgrade}>升级</Button>

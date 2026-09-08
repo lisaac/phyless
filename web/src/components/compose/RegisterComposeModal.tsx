@@ -11,6 +11,9 @@ import type { FileEntry } from "../../types";
 
 const COMPOSE_NAMES = ["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"];
 
+// Name fallback when the user leaves 名称 empty: last path segment.
+export const dirBasename = (dir: string) => dir.replace(/\/+$/, "").split("/").pop() || dir;
+
 function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
 }
@@ -98,9 +101,9 @@ export const RegisterComposeModal: Component<{
 
   const submit = async () => {
     const dir = baseDir().trim();
-    const n = name().trim();
     const cName = composeName().trim() || "compose.yaml";
-    if (!n || !dir) { toast.error("请填写名称和路径"); return; }
+    if (!dir) { toast.error("请填写路径"); return; }
+    const n = name().trim() || dirBasename(dir);
     setSaving(true);
     try {
       // Fresh check right before writing — dirNames() can be stale (typed
@@ -140,7 +143,7 @@ export const RegisterComposeModal: Component<{
       <div class="flex flex-col gap-3">
         <label class="block">
           <span class="mb-1 block text-xs text-zinc-400">名称</span>
-          <input class={fieldCls} placeholder="my-app" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+          <input class={fieldCls} placeholder="留空则使用目录名" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
         </label>
         <label class="block">
           <span class="mb-1 block text-xs text-zinc-400">路径</span>

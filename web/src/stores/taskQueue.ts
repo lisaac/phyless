@@ -72,8 +72,9 @@ function load(): Task[] {
 }
 
 export const [tasks, setTasks] = createStore<{ list: Task[] }>({ list: load() });
-// Panel visibility: ✕ hides it; the next enqueue shows it again.
-export const [panelHidden, setPanelHidden] = createSignal(false);
+// Panel visibility: 隐藏 / the header 任务 button toggles it; the next enqueue
+// shows it again. Starts hidden when there is nothing to show.
+export const [panelHidden, setPanelHidden] = createSignal(tasks.list.length === 0);
 
 function persist() {
   try {

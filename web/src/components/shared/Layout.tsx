@@ -6,6 +6,8 @@ import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { TaskQueueWidget } from "./TaskQueueWidget";
+import { tasks, panelHidden, setPanelHidden, isActive } from "../../stores/taskQueue";
+import { autoRefresh, refreshSeconds, setAutoRefresh, setRefreshSeconds, refreshAll } from "../../stores/refresh";
 
 const CLOSE_ANIM_MS = 200;
 
@@ -124,6 +126,9 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     void startTransition(() => navigate(dest, { replace: true })).then(() => removeTab(path));
   };
 
+  const activeCount = () => tasks.list.filter((t) => isActive(t.status)).length;
+  const running = () => tasks.list.some((t) => t.status === "running");
+
   return (
     <div class="flex h-full overflow-hidden">
       {/* ── Desktop sidebar (lg+) ─────────────────────────────────────── */}
@@ -179,8 +184,38 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             </For>
           </div>
 
+          {/* Right group: task panel toggle, refresh now + settings, theme. */}
           <button
-            class="ml-auto shrink-0 text-zinc-400 hover:text-zinc-100"
+            class={`ml-auto flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
+            onClick={() => setPanelHidden(!panelHidden())}
+            title={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
+          >
+            <span class={`h-2 w-2 rounded-full ${running() ? "animate-pulse bg-indigo-500" : "bg-zinc-600"}`} />
+            <span class="hidden sm:inline">任务</span>
+            <Show when={activeCount() > 0}>
+              <span class="rounded-full bg-indigo-500/20 px-1.5 text-xs text-indigo-300">{activeCount()}</span>
+            </Show>
+          </button>
+          <button class="shrink-0 rounded px-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" onClick={refreshAll} title="立即刷新">↻</button>
+          <details class="relative shrink-0">
+            <summary class="cursor-pointer list-none px-1 text-xs text-zinc-400 hover:text-zinc-100" title="刷新设置">▾</summary>
+            <div class="absolute right-0 z-50 mt-2 flex w-48 flex-col gap-2 rounded-lg border border-zinc-700/50 bg-zinc-900 p-3 text-sm text-zinc-200 shadow-2xl">
+              <label class="flex items-center gap-2">
+                <input type="checkbox" checked={autoRefresh()} onChange={(e) => setAutoRefresh(e.currentTarget.checked)} />
+                自动刷新
+              </label>
+              <label class="flex items-center justify-between gap-2">
+                刷新间隔（秒）
+                <input
+                  type="number" min="1" step="1" value={refreshSeconds()}
+                  class="w-16 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right"
+                  onChange={(e) => setRefreshSeconds(Number(e.currentTarget.value))}
+                />
+              </label>
+            </div>
+          </details>
+          <button
+            class="shrink-0 text-zinc-400 hover:text-zinc-100"
             onClick={toggleTheme}
             title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
           >

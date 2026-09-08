@@ -525,19 +525,23 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 		writeComposeLookupError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("X-Accel-Buffering", "no")
-
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	output := dockercompose.NewNDJSONWriter(w, cancel)
+	ctx, options, request, err := s.composeRequest(ctx, r, output)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		s.auditFromCtx(r, "compose."+operation, resolved.display.Name, "failed")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Accel-Buffering", "no")
 	if s.composeRuntime == nil {
 		finalErr := finishComposeOperation(w, output, ctx, fmt.Errorf("compose runtime is not initialized"))
 		s.auditFromCtx(r, "compose."+operation, resolved.display.Name, composeOperationResult(finalErr))
 		return
 	}
-	ctx, request, err := s.composeRequest(ctx, r, output)
-	if err == nil {
+	{
 		var project *composetypes.Project
 		project, err = s.loadResolvedComposeProject(ctx, resolved)
 		if err != nil && composeCanUseRunningFallback(operation, resolved, err) {
@@ -578,6 +582,7 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 						err = fmt.Errorf("compose up requires a readable project file")
 						break
 					}
+					applyComposePullPolicy(project, options.PullPolicy)
 					err = service.Compose().Up(ctx, project, composeapi.UpOptions{
 						Create: composeapi.CreateOptions{
 							Build: &composeapi.BuildOptions{
@@ -622,22 +627,25 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 	s.auditFromCtx(r, "compose."+operation, auditTarget, composeOperationResult(finalErr))
 }
 
-func (s *Server) composeRequest(ctx context.Context, r *http.Request, output io.Writer) (context.Context, dockercompose.ServiceOptions, error) {
+func (s *Server) composeRequest(ctx context.Context, r *http.Request, output io.Writer) (context.Context, requestPullOptions, dockercompose.ServiceOptions, error) {
 	var options requestPullOptions
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&options); err != nil && err != io.EOF {
-			return ctx, dockercompose.ServiceOptions{}, fmt.Errorf("invalid JSON")
+			return ctx, options, dockercompose.ServiceOptions{}, fmt.Errorf("invalid JSON")
 		}
+	}
+	if !options.validComposePullPolicy() {
+		return ctx, options, dockercompose.ServiceOptions{}, fmt.Errorf("invalid pull_policy %q: use missing, always or never", options.PullPolicy)
 	}
 	ctx, err := s.pullContext(ctx, options.ProxyURL)
 	if err != nil {
-		return ctx, dockercompose.ServiceOptions{}, err
+		return ctx, options, dockercompose.ServiceOptions{}, err
 	}
 	auths, err := s.composeRegistryAuth(options.RegistryIDs)
 	if err != nil {
-		return ctx, dockercompose.ServiceOptions{}, err
+		return ctx, options, dockercompose.ServiceOptions{}, err
 	}
-	return ctx, dockercompose.ServiceOptions{Output: output, AuthConfigs: auths}, nil
+	return ctx, options, dockercompose.ServiceOptions{Output: output, AuthConfigs: auths}, nil
 }
 
 func finishComposeOperation(w http.ResponseWriter, output *dockercompose.NDJSONWriter, ctx context.Context, err error) error {

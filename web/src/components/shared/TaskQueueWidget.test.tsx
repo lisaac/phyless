@@ -37,7 +37,25 @@ describe("TaskQueueWidget", () => {
     expect(view.getByText("Downloading")).toBeTruthy();
   });
 
-  it("hides on ✕ and comes back when a new task is enqueued", async () => {
+  it("auto-hides 10 s after every task settled successfully, not after an error", async () => {
+    vi.useFakeTimers();
+    const q = await import("../../stores/taskQueue");
+    const { TaskQueueWidget } = await import("./TaskQueueWidget");
+    q.enqueue({ title: "one", url: "/1" });
+    const view = render(() => <TaskQueueWidget />);
+    FakeXHR.requests[0].finish("");
+    vi.advanceTimersByTime(9_000);
+    expect(view.getByText("one")).toBeTruthy();
+    vi.advanceTimersByTime(1_000);
+    expect(view.queryByText("one")).toBeNull();
+    q.enqueue({ title: "two", url: "/2" });
+    FakeXHR.requests[1].finish('{"error":"denied"}\n');
+    vi.advanceTimersByTime(20_000);
+    expect(view.getByText("two")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("hides on 隐藏 and comes back when a new task is enqueued", async () => {
     const q = await import("../../stores/taskQueue");
     const { TaskQueueWidget } = await import("./TaskQueueWidget");
     q.enqueue({ title: "one", url: "/1" });

@@ -1,7 +1,7 @@
 import { Component, createSignal, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, pullOptionsPayload } from "../shared/PullOptions";
+import { PullOptions, createPullOptions } from "../shared/PullOptions";
 import { enqueue, isPending } from "../../stores/taskQueue";
 import { VERB_LABEL, type ComposeVerb } from "./composeShared";
 
@@ -30,13 +30,13 @@ export const requestComposeAction = (a: ComposeAction, openOptions: (a: ComposeA
 };
 
 export const ComposeActionModal: Component<{ target: ComposeAction | null; onClose: () => void }> = (props) => {
-  const [proxyUrl, setProxyUrl] = createSignal("");
-  const [registryIds, setRegistryIds] = createSignal<string[]>([]);
-  const close = () => { setProxyUrl(""); setRegistryIds([]); props.onClose(); };
+  const pull = createPullOptions();
+  const [pullPolicy, setPullPolicy] = createSignal("missing"); // up only
+  const close = () => { pull.reset(); setPullPolicy("missing"); props.onClose(); };
   const start = () => {
     const t = props.target;
     if (!t) return;
-    const options = pullOptionsPayload({ proxyUrl: proxyUrl(), registryIds: registryIds() });
+    const options = { ...pull.payload(), ...(t.verb === "up" ? { pull_policy: pullPolicy() } : {}) };
     void startComposeAction(t, Object.keys(options).length > 0 ? options : undefined);
     close();
   };
@@ -45,13 +45,25 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
       {(t) => (
         <Modal open onClose={close} title={`${VERB_LABEL[t().verb]} — ${t().name}`}>
           <p class="mb-3 text-xs text-zinc-500">代理和仓库凭据仅对本次 Compose 操作生效，不会写入项目文件或容器环境。</p>
-          <PullOptions
-            proxyUrl={proxyUrl()}
-            registryIds={registryIds()}
-            multipleRegistries
-            onProxyUrlChange={setProxyUrl}
-            onRegistryIdsChange={setRegistryIds}
-          />
+          <Show when={t().verb === "up"}>
+            <label class="mb-3 block">
+              <span class="mb-1 block text-xs text-zinc-500">镜像拉取策略</span>
+              <div class="relative">
+                <select
+                  class="w-full appearance-none border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 pr-8 text-sm outline-none focus:border-indigo-500"
+                  aria-label="镜像拉取策略"
+                  value={pullPolicy()}
+                  onChange={(e) => setPullPolicy(e.currentTarget.value)}
+                >
+                  <option value="missing">缺失时拉取（默认）</option>
+                  <option value="never">不拉取，使用本地已有镜像</option>
+                  <option value="always">总是拉取</option>
+                </select>
+                <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-zinc-500">▾</span>
+              </div>
+            </label>
+          </Show>
+          <PullOptions options={pull} multipleRegistries />
           <div class="mt-4 flex justify-end gap-2">
             <Button onClick={close}>取消</Button>
             <Button variant="primary" onClick={start}>{VERB_LABEL[t().verb]}</Button>

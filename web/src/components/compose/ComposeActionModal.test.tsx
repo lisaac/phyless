@@ -1,0 +1,27 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { ComposeActionModal } from "./ComposeActionModal";
+
+vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn().mockResolvedValue([]) }));
+vi.mock("../../stores/taskQueue", () => ({
+  enqueue: vi.fn(() => ({ done: Promise.resolve() })),
+  isPending: () => false,
+}));
+
+afterEach(() => cleanup());
+
+describe("ComposeActionModal", () => {
+  it("sends pull_policy for up only", async () => {
+    const { enqueue } = await import("../../stores/taskQueue");
+    render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "up" }} onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("镜像拉取策略"), { target: { value: "never" } });
+    fireEvent.click(screen.getByRole("button", { name: "Up" }));
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ body: { pull_policy: "never" } }));
+    cleanup();
+
+    render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "pull" }} onClose={() => {}} />);
+    expect(screen.queryByLabelText("镜像拉取策略")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pull" }));
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ body: undefined }));
+  });
+});

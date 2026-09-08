@@ -4,7 +4,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { get, imageInspectUrl } from "../../api/client";
-import { queued } from "../../stores/taskQueue";
+import { queued, isPending } from "../../stores/taskQueue";
 import { inspectToRunCmd } from "../../api/inspect";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
@@ -67,6 +67,19 @@ export const ComposeListPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
 
+  // Discovered projects carry the raw compose labels (working_dir /
+  // config_files / environment_file) — the create handler stores them
+  // verbatim and splitComposePaths handles the comma-separated file list.
+  const register = async (p: ComposeProject) => {
+    const name = p.project_name || p.name;
+    try {
+      await queued(`注册 Compose ${name}`, "POST", "/api/compose",
+        { name, base_dir: p.base_dir, compose_file: p.compose_file, env_file: p.env_file ?? "" }, { key: `compose:${p.id}` });
+      await store.refresh();
+      toast.success("已注册");
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
   return (
     <div>
       <div class="mb-4 flex items-center justify-between">
@@ -125,8 +138,10 @@ export const ComposeListPage: Component = () => {
                     <div class="mt-0.5 text-[11px] text-zinc-400">{p.compose_file}</div>
                   </div>
                   <div class="flex shrink-0 flex-wrap items-center gap-0.5 sm:ml-auto sm:justify-end" onClick={(e) => e.stopPropagation()}>
-                    <Show when={hasRole("operator") && !p.discovered}>
-                      <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>
+                    <Show when={hasRole("operator")}>
+                      <Show when={p.discovered} fallback={<ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>}>
+                        <ActBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕ 注册</ActBtn>
+                      </Show>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <Show when={hasRole("operator")}>

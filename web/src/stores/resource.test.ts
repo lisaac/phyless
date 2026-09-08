@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createResourceStore } from "./resource";
 import * as client from "../api/client";
+import { setAutoRefresh, setRefreshSeconds, refreshAll } from "./refresh";
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
 describe("createResourceStore", () => {
   it("loads items from the endpoint on refresh", async () => {
@@ -69,5 +70,43 @@ describe("createResourceStore + task queue", () => {
     store.stopPolling();
     window.dispatchEvent(new CustomEvent("phyless:task-settled", { detail: { status: "done" } }));
     expect(get.mock.calls.length).toBe(before + 1);
+  });
+});
+
+describe("createResourceStore + refresh settings", () => {
+  it("stops polling when auto-refresh is off and refreshes on refreshAll", async () => {
+    vi.useFakeTimers();
+    const get = vi.spyOn(client, "get").mockResolvedValue([]);
+    const store = createResourceStore("/api/things");
+    store.startPolling();
+    await Promise.resolve();
+    setAutoRefresh(false);
+    await Promise.resolve();
+    const before = get.mock.calls.length;
+    vi.advanceTimersByTime(60_000);
+    expect(get.mock.calls.length).toBe(before);
+    refreshAll();
+    expect(get.mock.calls.length).toBe(before + 1);
+    store.stopPolling();
+    setAutoRefresh(true);
+    vi.useRealTimers();
+  });
+
+  it("changing the interval restarts the timer with the new cadence", async () => {
+    vi.useFakeTimers();
+    const get = vi.spyOn(client, "get").mockResolvedValue([]);
+    const store = createResourceStore("/api/things");
+    store.startPolling();
+    await Promise.resolve();
+    setRefreshSeconds(2);
+    await Promise.resolve();
+    const before = get.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(get.mock.calls.length).toBe(before + 1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(get.mock.calls.length).toBe(before + 2);
+    store.stopPolling();
+    setRefreshSeconds(5);
+    vi.useRealTimers();
   });
 });

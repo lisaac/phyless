@@ -1,6 +1,7 @@
 import { createSignal, type Accessor } from "solid-js";
 import { get } from "../api/client";
 import { SETTLED_EVENT } from "./taskQueue";
+import { REFRESH_EVENT, autoRefresh, refreshSeconds } from "./refresh";
 
 export interface ResourceStore<T> {
   items: Accessor<T[]>;
@@ -31,12 +32,17 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
       schedule();
     }
   };
-  // Any queued write finishing (stores/taskQueue.ts) refreshes every polling
-  // store, instead of each page wiring its own onDone → refresh.
-  const onSettled = () => { if (!document.hidden) void refresh(); };
+  // Any queued write finishing (stores/taskQueue.ts), a manual refreshAll()
+  // or an auto-refresh setting change (stores/refresh.ts) refreshes every
+  // polling store and restarts its timer with the current settings.
+  const onSettled = () => {
+    if (timer) clearInterval(timer);
+    timer = undefined;
+    if (!document.hidden) { void refresh(); schedule(); }
+  };
   const schedule = () => {
-    if (!polling || document.hidden || timer) return;
-    timer = setInterval(() => { if (!document.hidden) void refresh(); }, 5000); // ponytail: one fallback poll per store
+    if (!polling || document.hidden || timer || !autoRefresh()) return;
+    timer = setInterval(() => { if (!document.hidden) void refresh(); }, refreshSeconds() * 1000); // ponytail: one fallback poll per store
   };
 
   const refresh = () => {
@@ -77,6 +83,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
     polling = true;
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener(SETTLED_EVENT, onSettled);
+    window.addEventListener(REFRESH_EVENT, onSettled);
     if (!document.hidden) {
       void refresh();
       schedule();
@@ -90,6 +97,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
     setLoading(false);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener(SETTLED_EVENT, onSettled);
+    window.removeEventListener(REFRESH_EVENT, onSettled);
   };
 
   return { items, loading, error, refresh, startPolling, stopPolling };

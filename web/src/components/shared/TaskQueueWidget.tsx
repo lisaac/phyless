@@ -1,4 +1,4 @@
-import { Component, createSignal, createMemo, Show, For } from "solid-js";
+import { Component, createSignal, createMemo, createEffect, onCleanup, Show, For } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { useFloatingSlot } from "../../stores/floatingStack";
 import {
@@ -6,6 +6,7 @@ import {
 } from "../../stores/taskQueue";
 
 const DEFAULT_VISIBLE = 5;
+const AUTO_HIDE_MS = 10_000;
 
 const STATUS_STYLE: Record<string, string> = {
   "Pull complete": "text-emerald-400",
@@ -48,8 +49,19 @@ export const TaskQueueWidget: Component = () => {
   const [collapsed, setCollapsed] = createSignal(false);
   const [showAll, setShowAll] = createSignal(false);
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
-  const visible = () => tasks.list.length > 0 && !panelHidden();
+  const visible = () => !panelHidden();
   const { setRef, offset } = useFloatingSlot(visible);
+
+  // Auto-hide 10 s after the last task settles, but only when everything
+  // ended well — an error/interrupted row stays until the user dismisses it.
+  createEffect(() => {
+    const list = tasks.list;
+    if (list.length === 0) { setPanelHidden(true); return; } // 清除已完成 emptied it — nothing left to show
+    const allOk = list.every((t) => !isActive(t.status) && t.status !== "error" && t.status !== "interrupted");
+    if (!allOk) return;
+    const timer = setTimeout(() => setPanelHidden(true), AUTO_HIDE_MS);
+    onCleanup(() => clearTimeout(timer));
+  });
 
   const sorted = createMemo(() => [...tasks.list].sort((a, b) => b.createdAt - a.createdAt));
   const shown = () => (showAll() ? sorted() : sorted().slice(0, DEFAULT_VISIBLE));
@@ -75,20 +87,23 @@ export const TaskQueueWidget: Component = () => {
               <Show when={queuedCount() > 0}> · {queuedCount()} 排队</Show>
             </span>
           </div>
-          <div class="flex shrink-0 items-center gap-0.5 text-xs">
+          <div class="flex shrink-0 items-center gap-1 text-xs">
             <Show when={tasks.list.some((t) => !isActive(t.status))}>
-              <button class="px-1 py-0.5 text-zinc-500 hover:text-zinc-200" onClick={clearFinished}>清除已完成</button>
+              <button class="rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" onClick={clearFinished}>清除已完成</button>
             </Show>
             <button
-              class="w-4 p-1 text-center leading-none text-zinc-500 hover:text-zinc-200"
+              class="w-5 rounded py-0.5 text-center leading-none text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
               title={collapsed() ? "展开" : "收起"}
               onClick={() => setCollapsed((c) => !c)}
             >{collapsed() ? "+" : "−"}</button>
-            <button class="p-1 text-zinc-500 hover:text-zinc-200" title="隐藏" onClick={() => setPanelHidden(true)}>✕</button>
+            <button class="rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" title="隐藏" onClick={() => setPanelHidden(true)}>隐藏</button>
           </div>
         </div>
         <Show when={!collapsed()}>
           <div class="max-h-[50vh] overflow-auto text-xs">
+            <Show when={tasks.list.length === 0}>
+              <p class="px-3 py-3 text-center text-zinc-500">暂无任务</p>
+            </Show>
             <For each={shown()}>
               {(t) => (
                 <div class="border-b border-zinc-800/60 last:border-b-0">

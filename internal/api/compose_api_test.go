@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,7 +15,10 @@ import (
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
+	"phyless/internal/audit"
 	"phyless/internal/docker"
 	dockercompose "phyless/internal/docker/compose"
 	"phyless/internal/models"
@@ -305,5 +309,95 @@ func TestComposeFileLookupStoreFailureIsInternalServerError(t *testing.T) {
 	server.handleComposeListFiles(res, req)
 	if res.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, body = %s; want 500 for store failure", res.Code, res.Body.String())
+	}
+}
+
+// composePullClient lets the real Compose v2 Pull path run against a fake
+// daemon and records whether the request-scoped proxy reached ImagePull.
+type composePullClient struct {
+	*composeDiscoveryClient
+	pulled  bool
+	proxied bool
+}
+
+func (c *composePullClient) ServerVersion(context.Context) (dockertypes.Version, error) {
+	return dockertypes.Version{APIVersion: "1.49"}, nil
+}
+
+func (c *composePullClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
+	if !c.pulled {
+		return image.InspectResponse{}, errdefs.NotFound(errors.New("no such image"))
+	}
+	return image.InspectResponse{ID: "sha256:pulled", Created: "2026-01-01T00:00:00Z"}, nil
+}
+
+func (c *composePullClient) ImagePull(ctx context.Context, _ string, _ image.PullOptions) (io.ReadCloser, error) {
+	c.pulled = true
+	c.proxied = docker.HasPullProxy(ctx)
+	return io.NopCloser(strings.NewReader(`{"status":"done"}` + "\n")), nil
+}
+
+func newComposePullServer(t *testing.T) (*Server, *composePullClient) {
+	t.Helper()
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	dir := t.TempDir()
+	composeFile := filepath.Join(dir, "compose.yaml")
+	if err := os.WriteFile(composeFile, []byte("name: pull-test\nservices:\n  app:\n    image: registry.example/app:latest\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := newComposeDiscoveryServer(t, models.ComposeProject{ID: "1", Name: "display", BaseDir: dir, ComposeFile: composeFile}, nil)
+	fake := &composePullClient{composeDiscoveryClient: server.docker.(*composeDiscoveryClient)}
+	server.docker = fake
+	server.audit = audit.New(filepath.Join(dir, "audit.log"))
+	runtime, err := dockercompose.NewRuntime(fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.composeRuntime = runtime
+	return server, fake
+}
+
+func TestComposePullForwardsProxyContextToImagePull(t *testing.T) {
+	server, fake := newComposePullServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/compose/pull?id=1", strings.NewReader(`{"proxy_url":"http://proxy.example:8080"}`))
+	res := httptest.NewRecorder()
+	server.handleComposePull(res, req)
+	if res.Code != http.StatusOK || strings.Contains(res.Body.String(), `"error"`) {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if !fake.pulled || !fake.proxied {
+		t.Fatalf("pulled=%v proxied=%v: proxy context did not reach ImagePull", fake.pulled, fake.proxied)
+	}
+}
+
+func TestComposeUpPullPolicyOption(t *testing.T) {
+	for _, tc := range []struct {
+		policy   string
+		wantCode int
+		want     string
+	}{
+		{"", http.StatusOK, ""},
+		{"missing", http.StatusOK, "missing"},
+		{"always", http.StatusOK, "always"},
+		{"never", http.StatusOK, "never"},
+		{"bogus", http.StatusBadRequest, "bogus"}, // helper is blind; composeRequest rejects it
+	} {
+		t.Run("policy="+tc.policy, func(t *testing.T) {
+			project := &composetypes.Project{Services: composetypes.Services{"app": {Name: "app", Image: "busybox"}}}
+			applyComposePullPolicy(project, tc.policy)
+			if got := project.Services["app"].PullPolicy; got != tc.want {
+				t.Fatalf("PullPolicy = %q, want %q", got, tc.want)
+			}
+			if tc.wantCode != http.StatusBadRequest {
+				return // a full Up needs a daemon; the helper above is the whole override
+			}
+			server, _ := newComposePullServer(t)
+			req := httptest.NewRequest(http.MethodPost, "/api/compose/up?id=1", strings.NewReader(`{"pull_policy":"`+tc.policy+`"}`))
+			res := httptest.NewRecorder()
+			server.handleComposeUp(res, req)
+			if res.Code != tc.wantCode || !strings.Contains(res.Body.String(), "pull_policy") {
+				t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+			}
+		})
 	}
 }
