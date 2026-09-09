@@ -119,14 +119,23 @@ export interface BrowserPullComposeDeps {
 
 const rejectReasonText: Record<string, string> = { build: "含 build", digest: "digest 引用" };
 
-async function composeUpNever(id: string, token: string, onProgress: ((line: string) => void) | undefined, signal: AbortSignal): Promise<void> {
-  const resp = await fetch(`/api/compose/up?id=${encodeURIComponent(id)}`, {
+// Generic compose command streamer: POST /api/compose/<verb>, parse NDJSON,
+// throw on an error event or non-ok status. Body/Content-Type only when a body
+// is given (matches the XHR path — a bodyless verb sends no Content-Type).
+export async function streamCompose(
+  verb: string,
+  id: string,
+  opts: { body?: unknown; token: string; onProgress?: (line: string) => void; signal: AbortSignal },
+): Promise<void> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${opts.token}` };
+  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  const resp = await fetch(`/api/compose/${verb}?id=${encodeURIComponent(id)}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ pull_policy: "never" }),
-    signal,
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    signal: opts.signal,
   });
-  if (!resp.ok || !resp.body) throw new Error(`Compose up 失败（${resp.status}）`);
+  if (!resp.ok || !resp.body) throw new Error(`Compose ${verb} 失败（${resp.status}）`);
   const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   for (;;) {
@@ -138,10 +147,10 @@ async function composeUpNever(id: string, token: string, onProgress: ((line: str
     for (const line of lines) {
       const s = line.trim();
       if (!s) continue;
-      onProgress?.(s);
+      opts.onProgress?.(s);
       try {
         const evt = JSON.parse(s) as { error?: string; errorDetail?: { message?: string } };
-        if (evt.error || evt.errorDetail) throw new Error(evt.error || evt.errorDetail?.message || "Compose up 失败");
+        if (evt.error || evt.errorDetail) throw new Error(evt.error || evt.errorDetail?.message || `Compose ${verb} 失败`);
       } catch (e) {
         if (e instanceof SyntaxError) continue; // non-JSON progress line
         throw e;
@@ -150,10 +159,27 @@ async function composeUpNever(id: string, token: string, onProgress: ((line: str
   }
 }
 
+// Browser-preload a list of already-resolved service images (loops runBrowserPull).
+// Reject policy stays with the caller — this only pulls what it is handed.
+export async function preloadComposeImages(
+  images: { service: string; ref: string; platform?: string }[],
+  opts: { workerUrl: string; token: string; creds?: Creds },
+  cb: BrowserPullCallbacks,
+  runPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>,
+): Promise<void> {
+  for (const img of images) {
+    cb.note(`拉取 ${img.service}：${img.ref}`);
+    await runPull(
+      { ref: img.ref, platform: img.platform ?? "", workerUrl: opts.workerUrl, token: opts.token, creds: opts.creds },
+      { note: cb.note, progress: cb.progress, signal: cb.signal },
+    );
+  }
+}
+
 export const defaultComposeDeps: BrowserPullComposeDeps = {
   fetchPlan: (id) => get<ComposePullPlan>(`/api/compose/pull-plan?id=${encodeURIComponent(id)}`),
   runBrowserPull: (params, cb) => runBrowserPull(params, cb),
-  composeUp: composeUpNever,
+  composeUp: (id, token, onProgress, signal) => streamCompose("up", id, { body: { pull_policy: "never" }, token, onProgress, signal }),
 };
 
 export async function runBrowserPullCompose(
@@ -167,13 +193,7 @@ export async function runBrowserPullCompose(
     const detail = plan.rejected.map((r) => `${r.service}（${rejectReasonText[r.reason] ?? r.reason}）`).join("，");
     throw new Error(`以下服务无法用浏览器下载：${detail}。请改用服务端代理。`);
   }
-  for (const img of plan.images) {
-    cb.note(`拉取 ${img.service}：${img.ref}`);
-    await deps.runBrowserPull(
-      { ref: img.ref, platform: img.platform ?? "", workerUrl: params.workerUrl, token: params.token, creds: params.creds },
-      { note: cb.note, progress: cb.progress, signal: cb.signal },
-    );
-  }
+  await preloadComposeImages(plan.images, { workerUrl: params.workerUrl, token: params.token, creds: params.creds }, cb, deps.runBrowserPull);
   if (params.mode === "up") {
     cb.note("启动 Compose（使用本地镜像）…");
     await deps.composeUp(params.id, params.token, cb.progress, cb.signal);
