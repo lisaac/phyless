@@ -160,4 +160,19 @@ describe("taskQueue persistence", () => {
     expect(byId[finished.id]).toBe("done");
     await flush();
   });
+
+  it("keeps detailed targets while stripping request bodies and secrets", async () => {
+    const q = await load();
+    q.enqueue({
+      title: "delete images", url: "/api/images/delete",
+      body: { ids: ["sha256:a", "sha256:b"], force: true, password: "never-store-this" },
+      meta: { type: "image-delete", images: ["nginx:latest", "redis:7"] },
+    });
+    const detail = q.tasks.list[0].details;
+    expect(detail).toContainEqual({ label: "镜像", value: ["nginx:latest", "redis:7"] });
+    expect(detail).toContainEqual({ label: "镜像 ID", value: ["sha256:a", "sha256:b"] });
+    expect(detail).toContainEqual({ label: "强制", value: "是" });
+    expect(JSON.stringify(detail)).not.toContain("never-store-this");
+    expect(JSON.stringify(localStorage.getItem("phyless_tasks"))).not.toContain("never-store-this");
+  });
 });

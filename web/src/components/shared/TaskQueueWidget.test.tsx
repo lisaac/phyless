@@ -37,6 +37,25 @@ describe("TaskQueueWidget", () => {
     expect(view.getByText("Downloading")).toBeTruthy();
   });
 
+  it("shows complete request and per-image targets in expanded detail", async () => {
+    const q = await import("../../stores/taskQueue");
+    const { TaskQueueWidget } = await import("./TaskQueueWidget");
+    q.enqueue({
+      title: "删除 2 个镜像", url: "/api/images/delete", body: { ids: ["sha256:a", "sha256:b"] },
+      meta: { type: "image-delete", images: ["nginx:latest · a", "redis:7 · b"], ids: ["sha256:a", "sha256:b"] },
+    });
+    q.enqueue({ title: "拉取 ghcr.io/acme/app:v2", url: "/api/images/pull", body: { image: "ghcr.io/acme/app:v2" }, meta: { type: "pull" } });
+    const view = render(() => <TaskQueueWidget />);
+    fireEvent.click(view.getByText("删除 2 个镜像"));
+    expect(view.getByText("POST /api/images/delete")).toBeTruthy();
+    expect(view.getByText("nginx:latest · a")).toBeTruthy();
+    expect(view.getByText("redis:7 · b")).toBeTruthy();
+    expect(view.getByText("sha256:a")).toBeTruthy();
+    expect(view.getByText("sha256:b")).toBeTruthy();
+    fireEvent.click(view.getByText("拉取 ghcr.io/acme/app:v2"));
+    expect(view.getByText("ghcr.io/acme/app:v2")).toBeTruthy();
+  });
+
   it("auto-hides 10 s after every task settled successfully, not after an error", async () => {
     vi.useFakeTimers();
     const q = await import("../../stores/taskQueue");

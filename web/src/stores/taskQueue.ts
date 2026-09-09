@@ -22,6 +22,7 @@ import { runBrowserPull, runBrowserPullCompose, runBrowserCreate, runBrowserUpgr
 export interface LayerProgress { id: string; status: string; current?: number; total?: number; }
 export type TaskStatus = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 export type TaskMeta = Record<string, string | string[] | boolean | undefined>;
+export interface TaskDetail { label: string; value: string | string[]; }
 
 export interface TaskSpec {
   title: string;
@@ -42,6 +43,7 @@ export interface Task extends TaskSpec {
   status: TaskStatus;
   createdAt: number;
   finishedAt?: number;
+  details: TaskDetail[];
   layers: LayerProgress[];
   notes: string[];
   uploadPct: number | null;
@@ -99,10 +101,64 @@ const browserAborts = new Map<string, AbortController>();
 const waiters = new Map<string, (t: Task) => void>();
 let nextId = Date.now();
 
+const DETAIL_LABELS: Record<string, string> = {
+  image: "镜像", images: "镜像", ids: "镜像 ID", ref: "镜像引用", source: "来源",
+  name: "名称", tag: "标签", platform: "平台", mode: "模式", force: "强制",
+  username: "用户名", role: "角色", driver: "驱动", subnet: "子网", gateway: "网关", parent: "父接口",
+  old_path: "原路径", new_path: "新路径", target_id: "目标容器", target_path: "目标路径", container: "容器",
+  base_dir: "项目目录", compose_file: "Compose 文件", env_file: "环境文件", pull_policy: "拉取策略",
+  proxy_url: "拉取代理", registry_id: "镜像仓库", registry_ids: "镜像仓库",
+  workerUrl: "下载代理", canBuild: "包含构建",
+};
+const HIDDEN_KEYS = /^(password|passwd|secret|token|authorization|auth|credentials?|registry_auth)$/i;
+const ENV_KEYS = /^(env|environment)$/i;
+const CONTENT_KEYS = /^(cmd|command|content|data)$/i;
+
+const safeJSON = (value: unknown) => JSON.stringify(value, (key, nested) => {
+  if (HIDDEN_KEYS.test(key)) return "已隐藏";
+  if (ENV_KEYS.test(key)) return `${Array.isArray(nested) ? nested.length : 1} 项（值已隐藏）`;
+  return nested;
+});
+
+function safeDetailValue(key: string, value: unknown): string | string[] | undefined {
+  if (value == null || value === "") return;
+  if (HIDDEN_KEYS.test(key)) return "已隐藏";
+  if (ENV_KEYS.test(key)) return `${Array.isArray(value) ? value.length : 1} 项（值已隐藏）`;
+  if (CONTENT_KEYS.test(key)) return `${typeof value === "string" ? value.length : safeJSON(value).length} 字符（内容已隐藏）`;
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (Array.isArray(value)) {
+    const values = value.map((v) => typeof v === "object" ? safeJSON(v) : String(v));
+    return values.length ? values : undefined;
+  }
+  if (typeof value === "object") return safeJSON(value);
+  return String(value);
+}
+
+// Capture display-safe request facts before body/file are stripped from task
+// history. Unknown fields keep their API name so every operation still has a
+// useful audit trail without teaching the queue about every feature page.
+function taskDetails(spec: TaskSpec): TaskDetail[] {
+  const details: TaskDetail[] = [];
+  if (spec.file) {
+    details.push({ label: "文件", value: spec.file.name });
+    details.push({ label: "文件大小", value: `${spec.file.size} B` });
+  }
+  if (typeof spec.body === "string") details.push({ label: "内容大小", value: `${spec.body.length} 字符` });
+  const body = spec.body && typeof spec.body === "object" && !Array.isArray(spec.body)
+    ? spec.body as Record<string, unknown> : {};
+  const facts: Record<string, unknown> = { ...body, ...spec.meta };
+  for (const [key, raw] of Object.entries(facts)) {
+    if (key === "type" || key === "verb" || key === "action" || key === "containerId" || key === "composeId") continue;
+    const value = safeDetailValue(key, raw);
+    if (value !== undefined) details.push({ label: DETAIL_LABELS[key] ?? key, value });
+  }
+  return details;
+}
+
 export function enqueue(spec: TaskSpec): { id: string; done: Promise<Task> } {
   const id = `t${nextId++}`;
   const task: Task = {
-    ...spec, id, status: "queued", createdAt: Date.now(), layers: [], notes: [], uploadPct: null, error: "",
+    ...spec, id, status: "queued", createdAt: Date.now(), details: taskDetails(spec), layers: [], notes: [], uploadPct: null, error: "",
   };
   const done = new Promise<Task>((resolve) => waiters.set(id, resolve));
   setTasks("list", (l) => {

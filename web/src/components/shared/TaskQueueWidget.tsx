@@ -18,6 +18,16 @@ const STATUS_STYLE: Record<string, string> = {
   Verifying: "text-zinc-400",
 };
 
+const OP_LABEL: Record<string, string> = {
+  pull: "拉取镜像", "browser-pull": "拉取镜像（浏览器）", load: "加载镜像", import: "导入镜像",
+  "image-delete": "删除镜像", prune: "清理镜像", create: "创建容器", upgrade: "升级容器",
+  "browser-pull-action": "容器镜像操作（浏览器）", "browser-pull-compose": "Compose 镜像操作（浏览器）",
+  "compose-update": "更新 Compose",
+  start: "启动", stop: "停止", restart: "重启", pause: "暂停", unpause: "恢复", kill: "强制关闭",
+  delete: "删除", up: "启动 Compose", down: "停止 Compose", build: "构建 Compose", update: "更新 Compose",
+  POST: "提交", PUT: "更新", DELETE: "删除",
+};
+
 const dotClass = (t: Task) =>
   isActive(t.status)
     ? (t.status === "queued" ? "bg-zinc-500" : "animate-pulse bg-indigo-500")
@@ -50,18 +60,16 @@ const fmtDur = (ms: number) => {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 };
 
-// Short id / hash — Docker-style 12-char truncation.
-const shortId = (v: string) => (v.length > 12 ? v.slice(0, 12) : v);
-
-// A few structured facts for the expanded detail: time, duration, the
-// operation and its target name/hash pulled from meta (stores/taskQueue.ts).
+// Structured facts for the expanded detail: status, timing, operation,
+// complete target and request endpoint.
 const metaRows = (t: Task): [string, string][] => {
-  const rows: [string, string][] = [["时间", fmtTime(t.createdAt)]];
+  const rows: [string, string][] = [["时间", fmtTime(t.createdAt)], ["状态", brief(t)]];
   if (t.finishedAt) rows.push(["耗时", fmtDur(t.finishedAt - t.createdAt)]);
-  const op = (t.meta?.verb ?? t.meta?.type) as string | undefined;
-  if (op) rows.push(["操作", op]);
+  const op = (t.meta?.verb ?? t.meta?.action ?? t.meta?.type ?? (t.url ? t.method ?? "POST" : undefined)) as string | undefined;
+  if (op) rows.push(["操作", OP_LABEL[op] ?? op]);
   const target = (t.containerId ?? t.meta?.containerId ?? t.meta?.composeId ?? t.key) as string | undefined;
-  if (target) rows.push(["目标", shortId(target)]);
+  if (target) rows.push(["目标", target]);
+  if (t.url) rows.push(["请求", `${t.method ?? "POST"} ${t.url}`]);
   const ids = t.meta?.ids as string[] | undefined;
   if (ids?.length) rows.push(["数量", `${ids.length}`]);
   return rows;
@@ -120,7 +128,7 @@ export const TaskQueueWidget: Component = () => {
       />
       {/* Drawer — pinned to the right edge, full height, slides in from the right. */}
       <div
-        class="fixed right-0 top-0 z-50 flex h-full w-[min(24rem,calc(100vw-3rem))] flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-200 ease-out"
+        class="fixed right-0 top-0 z-50 flex h-full w-[min(22rem,calc(100vw-3rem))] flex-col border-l border-zinc-800 bg-zinc-900 shadow-2xl transition-transform duration-200 ease-out"
         classList={{ "translate-x-0": slid(), "translate-x-full": !slid() }}
       >
         <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
@@ -169,10 +177,26 @@ export const TaskQueueWidget: Component = () => {
                       <For each={metaRows(t)}>
                         {([k, v]) => (<>
                           <dt class="text-[10px] uppercase tracking-widest text-zinc-500">{k}</dt>
-                          <dd class="truncate text-zinc-300" title={v}>{v}</dd>
+                          <dd class="break-all whitespace-pre-wrap text-zinc-300" title={v}>{v}</dd>
                         </>)}
                       </For>
                     </dl>
+                    <Show when={t.details?.length > 0}>
+                      <dl class="mb-2 grid grid-cols-[3rem_1fr] gap-x-3 gap-y-1 border-t border-zinc-800 pt-2">
+                        <For each={t.details}>
+                          {(detail) => (<>
+                            <dt class="text-[10px] uppercase tracking-widest text-zinc-500">{detail.label}</dt>
+                            <dd class="min-w-0 text-zinc-300">
+                              <Show when={Array.isArray(detail.value)} fallback={<span class="break-all whitespace-pre-wrap">{detail.value as string}</span>}>
+                                <ul class="space-y-0.5">
+                                  <For each={detail.value as string[]}>{(value) => <li class="break-all"><span class="mr-1 text-zinc-600">•</span>{value}</li>}</For>
+                                </ul>
+                              </Show>
+                            </dd>
+                          </>)}
+                        </For>
+                      </dl>
+                    </Show>
                     <Show when={t.uploadPct !== null}>
                       <div class="mb-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
                         <div class="h-full rounded-full bg-indigo-600 transition-all duration-150" style={{ width: `${Math.min(100, t.uploadPct!)}%` }} />
