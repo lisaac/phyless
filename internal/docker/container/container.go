@@ -456,6 +456,16 @@ func shortID(s string) string {
 // and recreates the container only when a newer image is available.
 // Returns the new container ID, or "" if already up to date.
 func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions) (string, error) {
+	return upgrade(ctx, cli, containerID, w, opts, false)
+}
+
+// UpgradeWithoutPull performs the same guarded upgrade using an image that a
+// caller has already loaded into the daemon (for example browser-pull).
+func UpgradeWithoutPull(ctx context.Context, cli client.APIClient, containerID string, w io.Writer) (string, error) {
+	return upgrade(ctx, cli, containerID, w, image.PullOptions{}, true)
+}
+
+func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, skipPull bool) (string, error) {
 	info, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return "", err
@@ -503,21 +513,24 @@ func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 		return "", fmt.Errorf("原镜像平台信息缺失")
 	}
 	platform := platforms.Normalize(ocispec.Platform{OS: oldImage.Os, Architecture: oldImage.Architecture, Variant: oldImage.Variant})
-	opts.Platform = oldImage.Os + "/" + oldImage.Architecture
-	if oldImage.Variant != "" {
-		opts.Platform += "/" + oldImage.Variant
-	}
-	EmitStream(w, "正在拉取镜像 %s …", imageRef)
-
-	rc, err := cli.ImagePull(ctx, imageRef, opts)
-	if err != nil {
-		return "", fmt.Errorf("pull 失败: %w", err)
-	}
-	if rc == nil {
-		return "", fmt.Errorf("pull 失败: Docker returned an empty progress stream")
-	}
-	if err := docker.ConsumeProgress(ctx, w, rc); err != nil {
-		return "", fmt.Errorf("pull 失败: %w", err)
+	if skipPull {
+		EmitStream(w, "使用已下载镜像 %s …", imageRef)
+	} else {
+		opts.Platform = oldImage.Os + "/" + oldImage.Architecture
+		if oldImage.Variant != "" {
+			opts.Platform += "/" + oldImage.Variant
+		}
+		EmitStream(w, "正在拉取镜像 %s …", imageRef)
+		rc, err := cli.ImagePull(ctx, imageRef, opts)
+		if err != nil {
+			return "", fmt.Errorf("pull 失败: %w", err)
+		}
+		if rc == nil {
+			return "", fmt.Errorf("pull 失败: Docker returned an empty progress stream")
+		}
+		if err := docker.ConsumeProgress(ctx, w, rc); err != nil {
+			return "", fmt.Errorf("pull 失败: %w", err)
+		}
 	}
 
 	newImg, _, err := cli.ImageInspectWithRaw(ctx, imageRef)

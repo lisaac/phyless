@@ -43,11 +43,12 @@ Docker daemon 自身解包/存镜像是其正常行为，不在「不落盘」�
 | 前端 | `web/src/api/registryPull.ts` | ref 解析、token dance、manifest 平台选择、config 下载、约束校验 |
 | 前端 | `web/src/api/dockerTar.ts` | USTAR 流式写入器，产出 `docker load` 归档的 `ReadableStream` |
 | 前端 | `web/src/api/imageLoadStream.ts` | WS 上传，`bufferedAmount` 背压，进度/错误/取消 |
-| 前端 | `web/src/stores/browserPull.ts` | 单镜像 runner（含 up-to-date 预检）+ compose 编排 |
+| 前端 | `web/src/stores/browserPull.ts` | 单镜像 runner（含 up-to-date 预检）+ Compose Build/Update + Create/Upgrade 本地动作 |
 | 前端 | `web/src/stores/browserPullSettings.ts` | worker URL / 下载方式 / 凭据的 localStorage 持久化 |
 | 共享 UI | `web/src/components/shared/PullOptions.tsx` | 「下载方式」开关（`allowBrowser` 门控）+ worker/凭据输入 |
-| 后端 | `internal/api/compose.go` | `GET /api/compose/pull-plan`：列出需预拉的镜像与被拒服务 |
-| 任务队列 | `web/src/stores/taskQueue.ts` | 新增 `browser-pull` / `browser-pull-compose` 执行分支 |
+| 后端 | `internal/api/compose.go` | `GET /api/compose/pull-plan`：列出需预拉的镜像、Build `FROM` 基础镜像与被拒服务 |
+| 后端 | `internal/docker/container/container.go` | `UpgradeWithoutPull`：复用平台校验、锁、回滚的本地镜像升级 |
+| 任务队列 | `web/src/stores/taskQueue.ts` | 新增 `browser-pull` / `browser-pull-compose` / `browser-pull-action` 执行分支 |
 
 ## 4. CF Worker 部署
 
@@ -78,6 +79,8 @@ npx wrangler deploy cloudflare-worker/registry-proxy.js \
 4. Compose：在 Up/拉取弹窗切到浏览器下载。
    - 「拉取」= 仅把项目所需镜像预加载进 daemon。
    - 「Up」= 预加载全部后调用 `compose up` 并强制 `pull_policy=never`，daemon 用本地镜像、绝不回连 registry。
+   - 「Build」= 顺序预拉可静态解析的 Dockerfile `FROM` 基础镜像后构建；Update 浏览器模式复用该步骤。
+5. 容器 Create/Upgrade：浏览器先完成镜像预拉，再以 `pull_policy=never` 调用后端本地动作；预拉失败或取消不会创建/替换容器。Upgrade 的目标 tag 来自原容器稳定引用，平台来自原镜像 inspect。
 
 ## 6. 关键设计决策
 
@@ -103,9 +106,8 @@ npx wrangler deploy cloudflare-worker/registry-proxy.js \
 
 ## 8. v1 范围与后续
 
-- 已交付：镜像页拉取、Compose（预加载 + 本地编排）。
-- 后续（当前仅服务端代理）：容器创建/升级入口的浏览器下载（沿用「预加载 + 本地动作」模式）、
-  digest 引用、含 `build` 的 compose 服务、浏览器侧解压/预览、TLS/H2 的 `fetch` 流式方案。
+- 已交付：镜像页拉取、容器 Create/Upgrade、Compose（预加载 + 本地编排/Build）。
+- 后续：digest 引用、无法静态解析的 `FROM`/外部构建上下文、浏览器侧解压/预览、TLS/H2 的 `fetch` 流式方案。
 
 ## 9. 验收证据
 
@@ -119,4 +121,4 @@ npx wrangler deploy cloudflare-worker/registry-proxy.js \
 
 真实环境验收（隔离 daemon + 真实 Worker）尚待在目标环境执行，建议覆盖：
 单镜像浏览器拉取、大不可压镜像无 OOM/落盘、二次命中 up-to-date、Compose 预加载 + `up(never)` 不回连 registry、
-取消/认证失败/中途错误不误报成功、含 build/digest 的 compose 被明确拒绝。
+取消/认证失败/中途错误不误报成功；Compose Build 预拉基础镜像，digest/动态 `FROM` 边界明确。

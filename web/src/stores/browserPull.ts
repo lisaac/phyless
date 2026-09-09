@@ -5,7 +5,7 @@
 import { buildDockerLoadTar } from "../api/dockerTar";
 import { resolveImage, layerBlobUrl, authHeaderFromChallenge, type Creds, type ResolvedImage } from "../api/registryPull";
 import { streamTarToDaemon } from "../api/imageLoadStream";
-import { get } from "../api/client";
+import { get, imageInspectUrl } from "../api/client";
 
 export interface BrowserPullParams {
   ref: string;
@@ -71,11 +71,14 @@ export const defaultDeps: BrowserPullDeps = {
 };
 
 export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullCallbacks, deps: BrowserPullDeps = defaultDeps): Promise<void> {
+  if (cb.signal.aborted) throw new Error("已取消");
   cb.note("解析镜像信息…");
   const platform = params.platform?.trim() || (await deps.daemonPlatform());
   const img = await deps.resolveImage(params.ref, platform, params.workerUrl, params.creds);
+  if (cb.signal.aborted) throw new Error("已取消");
 
   const localId = await deps.inspectLocalId(img.repoTag);
+  if (cb.signal.aborted) throw new Error("已取消");
   if (localId && localId === `sha256:${img.config.hex}`) {
     cb.note("镜像已是最新，无需下载");
     return;
@@ -98,12 +101,13 @@ export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullC
 
 export interface ComposePullPlan {
   images: { service: string; ref: string; platform?: string }[];
+  build_bases?: { service: string; ref: string; platform?: string }[];
   rejected: { service: string; ref: string; reason: string }[];
 }
 
 export interface BrowserPullComposeParams {
   id: string;
-  mode: "pull" | "up";
+  mode: "pull" | "up" | "build";
   workerUrl: string;
   token: string;
   creds?: Creds;
@@ -115,9 +119,60 @@ export interface BrowserPullComposeDeps {
   // Runs `compose up` with pull_policy=never so the daemon uses the just-loaded
   // local images and never reaches out to the registry.
   composeUp: (id: string, token: string, onProgress: ((line: string) => void) | undefined, signal: AbortSignal) => Promise<void>;
+  composeBuild: (id: string, token: string, onProgress: ((line: string) => void) | undefined, signal: AbortSignal) => Promise<void>;
 }
 
 const rejectReasonText: Record<string, string> = { build: "含 build", digest: "digest 引用" };
+
+const MAX_STREAM_LINE = 256 * 1024;
+
+// Shared streamed mutation path for browser-preload follow-up actions. It
+// keeps body/progress parsing in one place for Compose, create and upgrade.
+export async function streamPost(
+  path: string,
+  opts: { body?: unknown; token: string; onProgress?: (line: string) => void; signal: AbortSignal },
+): Promise<void> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${opts.token}` };
+  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  const resp = await fetch(path, {
+    method: "POST",
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    signal: opts.signal,
+  });
+  if (!resp.ok || !resp.body) throw new Error(`请求失败（${resp.status}）`);
+  const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  const consume = (line: string) => {
+    const s = line.trim();
+    if (!s) return;
+    opts.onProgress?.(s);
+    try {
+      const evt = JSON.parse(s) as { error?: string; errorDetail?: { message?: string } };
+      if (evt.error || evt.errorDetail) throw new Error(evt.error || evt.errorDetail?.message || "请求失败");
+    } catch (e) {
+      if (e instanceof SyntaxError) return; // plain compose/build progress
+      throw e;
+    }
+  };
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      if (buf.length > MAX_STREAM_LINE) throw new Error("进度行过大");
+      lines.forEach(consume);
+    }
+    if (buf) consume(buf);
+  } catch (err) {
+    await reader.cancel().catch(() => {});
+    throw err;
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 // Generic compose command streamer: POST /api/compose/<verb>, parse NDJSON,
 // throw on an error event or non-ok status. Body/Content-Type only when a body
@@ -127,36 +182,7 @@ export async function streamCompose(
   id: string,
   opts: { body?: unknown; token: string; onProgress?: (line: string) => void; signal: AbortSignal },
 ): Promise<void> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${opts.token}` };
-  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
-  const resp = await fetch(`/api/compose/${verb}?id=${encodeURIComponent(id)}`, {
-    method: "POST",
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    signal: opts.signal,
-  });
-  if (!resp.ok || !resp.body) throw new Error(`Compose ${verb} 失败（${resp.status}）`);
-  const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += value;
-    const lines = buf.split("\n");
-    buf = lines.pop() ?? "";
-    for (const line of lines) {
-      const s = line.trim();
-      if (!s) continue;
-      opts.onProgress?.(s);
-      try {
-        const evt = JSON.parse(s) as { error?: string; errorDetail?: { message?: string } };
-        if (evt.error || evt.errorDetail) throw new Error(evt.error || evt.errorDetail?.message || `Compose ${verb} 失败`);
-      } catch (e) {
-        if (e instanceof SyntaxError) continue; // non-JSON progress line
-        throw e;
-      }
-    }
-  }
+  return streamPost(`/api/compose/${verb}?id=${encodeURIComponent(id)}`, opts);
 }
 
 // Browser-preload a list of already-resolved service images (loops runBrowserPull).
@@ -180,6 +206,7 @@ export const defaultComposeDeps: BrowserPullComposeDeps = {
   fetchPlan: (id) => get<ComposePullPlan>(`/api/compose/pull-plan?id=${encodeURIComponent(id)}`),
   runBrowserPull: (params, cb) => runBrowserPull(params, cb),
   composeUp: (id, token, onProgress, signal) => streamCompose("up", id, { body: { pull_policy: "never" }, token, onProgress, signal }),
+  composeBuild: (id, token, onProgress, signal) => streamCompose("build", id, { token, onProgress, signal }),
 };
 
 export async function runBrowserPullCompose(
@@ -189,6 +216,13 @@ export async function runBrowserPullCompose(
 ): Promise<void> {
   cb.note("解析 Compose 项目镜像…");
   const plan = await deps.fetchPlan(params.id);
+  if (cb.signal.aborted) throw new Error("已取消");
+  if (params.mode === "build") {
+    await preloadComposeImages(plan.build_bases ?? [], { workerUrl: params.workerUrl, token: params.token, creds: params.creds }, cb, deps.runBrowserPull);
+    cb.note("构建 Compose 镜像…");
+    await deps.composeBuild(params.id, params.token, cb.progress, cb.signal);
+    return;
+  }
   if (plan.rejected.length) {
     const detail = plan.rejected.map((r) => `${r.service}（${rejectReasonText[r.reason] ?? r.reason}）`).join("，");
     throw new Error(`以下服务无法用浏览器下载：${detail}。请改用服务端代理。`);
@@ -202,14 +236,119 @@ export async function runBrowserPullCompose(
   }
 }
 
+// Browser container create/upgrade keep the same serial preload → local mutation
+// shape. The follow-up request always forces the server to use local images.
+export interface BrowserActionParams {
+  pull: BrowserPullParams;
+  path: string;
+  body: Record<string, unknown>;
+  note?: string;
+}
+
+export interface BrowserActionDeps {
+  runBrowserPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>;
+  streamPost: typeof streamPost;
+}
+
+export const defaultActionDeps: BrowserActionDeps = { runBrowserPull, streamPost };
+
+export async function runBrowserAction(
+  params: BrowserActionParams,
+  cb: BrowserPullCallbacks,
+  deps: BrowserActionDeps = defaultActionDeps,
+): Promise<void> {
+  await deps.runBrowserPull(params.pull, cb);
+  if (cb.signal.aborted) throw new Error("已取消");
+  if (params.note) cb.note(params.note);
+  await deps.streamPost(params.path, {
+    body: params.body,
+    token: params.pull.token,
+    onProgress: cb.progress,
+    signal: cb.signal,
+  });
+}
+
+export interface BrowserCreateParams {
+  ref: string;
+  platform: string;
+  workerUrl: string;
+  token: string;
+  creds?: Creds;
+  body: Record<string, unknown>;
+}
+
+export async function runBrowserCreate(
+  params: BrowserCreateParams,
+  cb: BrowserPullCallbacks,
+  deps: BrowserActionDeps = defaultActionDeps,
+): Promise<void> {
+  await runBrowserAction({
+    pull: { ref: params.ref, platform: params.platform, workerUrl: params.workerUrl, token: params.token, creds: params.creds },
+    path: "/api/containers",
+    body: { ...params.body, pull_policy: "never" },
+    note: "创建容器（使用本地镜像）…",
+  }, cb, deps);
+}
+
+type UpgradeInspect = {
+  Image?: string;
+  Config?: { Image?: string; Labels?: Record<string, string> };
+};
+type ImageInspect = { Os?: string; Architecture?: string; Variant?: string };
+
+function upgradeTarget(info: UpgradeInspect, image: ImageInspect): { ref: string; platform: string } {
+  const ref = info.Config?.Labels?.["io.phyless.upgrade-image-ref"] || info.Config?.Image || "";
+  const os = image.Os || "";
+  const arch = image.Architecture || "";
+  if (!ref.trim()) throw new Error("容器缺少可升级的镜像引用");
+  if (!os || !arch) throw new Error("原镜像平台信息缺失");
+  return { ref, platform: `${os}/${arch}${image.Variant ? `/${image.Variant}` : ""}` };
+}
+
+export interface BrowserUpgradeParams {
+  id: string;
+  workerUrl: string;
+  token: string;
+  creds?: Creds;
+}
+
+export interface BrowserUpgradeDeps {
+  inspectContainer: (id: string) => Promise<UpgradeInspect>;
+  inspectImage: (id: string) => Promise<ImageInspect>;
+  runBrowserPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>;
+  streamPost: typeof streamPost;
+}
+
+export const defaultUpgradeDeps: BrowserUpgradeDeps = {
+  inspectContainer: (id) => get<UpgradeInspect>(`/api/containers/${encodeURIComponent(id)}/inspect`),
+  inspectImage: (id) => get<ImageInspect>(imageInspectUrl(id)),
+  ...defaultActionDeps,
+};
+
+export async function runBrowserUpgrade(
+  params: BrowserUpgradeParams,
+  cb: BrowserPullCallbacks,
+  deps: BrowserUpgradeDeps = defaultUpgradeDeps,
+): Promise<void> {
+  cb.note("读取容器镜像信息…");
+  const info = await deps.inspectContainer(params.id);
+  if (cb.signal.aborted) throw new Error("已取消");
+  const imageID = info.Image?.trim();
+  if (!imageID) throw new Error("容器缺少可升级的镜像引用");
+  const image = await deps.inspectImage(imageID);
+  if (cb.signal.aborted) throw new Error("已取消");
+  const target = upgradeTarget(info, image);
+  await runBrowserAction({
+    pull: { ref: target.ref, platform: target.platform, workerUrl: params.workerUrl, token: params.token, creds: params.creds },
+    path: `/api/containers/${encodeURIComponent(params.id)}/upgrade`,
+    body: { pull_policy: "never" },
+    note: "升级容器（使用本地镜像）…",
+  }, cb, deps);
+}
+
 // --- Compose update: build → pull/preload → down → up(never) ---
-// One task, sequential, stop-on-failure. Covers both proxy modes: server pull
-// (proxy opts in body) or browser preload (CF worker). build services in browser
-// mode are handled server-side by the build step, so only non-"build" rejections
-// (e.g. digest-pinned) abort the browser path.
-// ponytail: browser mode + a build service whose FROM base is not local and the
-// daemon can't reach the registry will fail at `compose build`. Pre-existing limit
-// (today's Build button too). Upgrade path: browser-preload the FROM base first.
+// One task, sequential, stop-on-failure. Browser mode preloads FROM bases before
+// build, then preloads ordinary service images before the local-only Up.
 
 export interface ComposeUpdateParams {
   id: string;
@@ -242,22 +381,37 @@ export async function runComposeUpdate(
   const signal = cb.signal;
 
   if (params.canBuild) {
+    let plan: ComposePullPlan | undefined;
+    if (params.mode === "browser") {
+      cb.note("解析 Compose 项目镜像…");
+      plan = await deps.fetchPlan(id);
+      if (signal.aborted) throw new Error("已取消");
+      const blocked = plan.rejected.filter((r) => r.reason !== "build");
+      if (blocked.length) {
+        const detail = blocked.map((r) => `${r.service}（${rejectReasonText[r.reason] ?? r.reason}）`).join("，");
+        throw new Error(`以下服务无法用浏览器下载：${detail}。请改用服务端代理。`);
+      }
+      await preloadComposeImages(plan.build_bases ?? [], { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
+    }
     cb.note("构建镜像…");
-    // Server mode carries the proxy payload (build honors it via composeRequest);
-    // browser mode has no server proxy_url, so pullOptions is undefined → no body.
-    await deps.streamCompose("build", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
-  }
-
-  if (params.mode === "browser") {
+    // Server mode carries the proxy payload; browser mode has no server proxy.
+    await deps.streamCompose("build", id, { body: params.mode === "server" ? params.pullOptions : undefined, token, onProgress: cb.progress, signal });
+    if (params.mode === "browser") {
+      await preloadComposeImages(plan?.images ?? [], { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
+    }
+  } else if (params.mode === "browser") {
     cb.note("解析 Compose 项目镜像…");
     const plan = await deps.fetchPlan(id);
+    if (signal.aborted) throw new Error("已取消");
     const blocked = plan.rejected.filter((r) => r.reason !== "build");
     if (blocked.length) {
       const detail = blocked.map((r) => `${r.service}（${rejectReasonText[r.reason] ?? r.reason}）`).join("，");
       throw new Error(`以下服务无法用浏览器下载：${detail}。请改用服务端代理。`);
     }
     await preloadComposeImages(plan.images, { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
-  } else {
+  }
+
+  if (params.mode === "server") {
     cb.note("拉取镜像…");
     await deps.streamCompose("pull", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
   }

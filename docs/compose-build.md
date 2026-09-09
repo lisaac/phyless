@@ -5,8 +5,13 @@
 ## 功能概述
 
 Compose 列表每行的操作区中，「删除」按钮**前面**会出现一个 `🔨 Build` 按钮。
-点击后对该项目执行 `docker compose build`，构建过程以流式日志的形式经全局任务
-队列（`web/src/stores/taskQueue.ts`）返回，与 Up / Pull 等操作一致。
+点击后对该项目执行 Compose Build，构建过程以流式日志的形式经全局任务队列
+（`web/src/stores/taskQueue.ts`）返回，与 Up / Pull 等操作一致。
+
+弹窗支持两种下载方式。服务端代理模式沿用后端代理；浏览器下载模式先按
+`GET /api/compose/pull-plan` 返回的 `build_bases` 顺序预拉 Dockerfile 的 `FROM`
+基础镜像，再调用 Build。预拉失败会短路，不会继续构建。
+相同 ref/平台会去重，已有同一镜像 ID 时跳过 layer 下载；各镜像保持串行流式传输，避免并行放大 CPU、内存和网络峰值。
 
 Build 按钮**仅在满足以下全部条件时显示**：
 
@@ -54,7 +59,8 @@ func (s *Server) projectHasBuild(ctx, p) bool // 加载 compose 文件，任一 
 - 类型 `ComposeProject` 新增可选字段 `can_build`（`web/src/types.ts`），仅出现在
   列表响应中。
 - 按钮渲染在 `ComposeListPage.tsx` 的操作区，位于「删除」之前，`<Show when={p.can_build}>`
-  控制显隐。Build 不需要拉取选项，点击后直接入队执行。
+  控制显隐。Build 可选择服务端代理或浏览器下载；浏览器模式仅支持 Linux/tag 镜像及可静态解析的
+  `FROM`，digest、foreign layer、动态 `FROM` 和外部构建上下文仍不支持。
 
 ## 已知范围
 

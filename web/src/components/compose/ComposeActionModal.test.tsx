@@ -34,4 +34,15 @@ describe("ComposeActionModal", () => {
       meta: expect.objectContaining({ type: "compose-update", composeId: "p1", mode: "server", canBuild: true }),
     }));
   });
+
+  it("build supports browser preload mode", async () => {
+    const { enqueue } = await import("../../stores/taskQueue");
+    render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "build" }} onClose={() => {}} />);
+    fireEvent.click(screen.getByLabelText("浏览器下载"));
+    fireEvent.input(screen.getByPlaceholderText("https://your-worker.workers.dev"), { target: { value: "https://worker" } });
+    fireEvent.click(screen.getByRole("button", { name: "Build" }));
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
+      meta: expect.objectContaining({ type: "browser-pull-compose", mode: "build" }),
+    }));
+  });
 });

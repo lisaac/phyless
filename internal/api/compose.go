@@ -504,10 +504,10 @@ func (s *Server) handleGetCompose(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleComposePullPlan lists the images a browser-download client must
-// pre-pull before running Up/Pull with pull_policy=never. The loader still owns
+// pre-pull before running Compose with pull_policy=never. The loader still owns
 // "what to pull" (profiles, active services); the client only pulls each ref.
-// Services with a build, or images pinned by digest, are rejected because
-// browser-pull v1 handles neither.
+// Build services remain rejected in the ordinary images list, while their
+// statically-resolved FROM bases are exposed separately for browser builds.
 func (s *Server) handleComposePullPlan(w http.ResponseWriter, r *http.Request) {
 	resolved, err := s.resolveCompose(r.Context(), r.URL.Query().Get("id"))
 	if err != nil {
@@ -529,7 +529,14 @@ func (s *Server) handleComposePullPlan(w http.ResponseWriter, r *http.Request) {
 		Ref     string `json:"ref"`
 		Reason  string `json:"reason"`
 	}
+	type planBase struct {
+		Service  string `json:"service"`
+		Ref      string `json:"ref"`
+		Platform string `json:"platform,omitempty"`
+	}
 	images := make([]planImage, 0)
+	buildBases := make([]planBase, 0)
+	seenBases := make(map[string]struct{})
 	rejected := make([]planReject, 0)
 	names := make([]string, 0, len(project.Services))
 	for name := range project.Services {
@@ -540,6 +547,21 @@ func (s *Server) handleComposePullPlan(w http.ResponseWriter, r *http.Request) {
 		svc := project.Services[name]
 		if svc.Build != nil {
 			rejected = append(rejected, planReject{Service: name, Ref: svc.Image, Reason: "build"})
+			bases, baseErr := dockercompose.BuildBaseImages(svc, project.WorkingDir)
+			if baseErr != nil {
+				// The build endpoint will report the parser/build error; don't turn a
+				// best-effort plan failure into a false browser pull target.
+				log.Printf("compose: cannot resolve base images for service %q: %v", name, baseErr)
+				continue
+			}
+			for _, ref := range bases {
+				key := ref + "\x00" + svc.Platform
+				if _, seen := seenBases[key]; seen {
+					continue
+				}
+				seenBases[key] = struct{}{}
+				buildBases = append(buildBases, planBase{Service: name, Ref: ref, Platform: svc.Platform})
+			}
 			continue
 		}
 		if svc.Image == "" {
@@ -551,7 +573,7 @@ func (s *Server) handleComposePullPlan(w http.ResponseWriter, r *http.Request) {
 		}
 		images = append(images, planImage{Service: name, Ref: svc.Image, Platform: svc.Platform})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"images": images, "rejected": rejected})
+	writeJSON(w, http.StatusOK, map[string]any{"images": images, "build_bases": buildBases, "rejected": rejected})
 }
 
 func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {

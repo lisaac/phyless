@@ -1,6 +1,6 @@
 # 浏览器侧流式拉取镜像（browser-pull）设计
 
-状态：设计已批准，待实现（2026-09-08）。
+状态：已实现，并扩展到容器 Create/Upgrade 与 Compose Build（2026-09-09）。
 
 关联文档：
 
@@ -40,13 +40,14 @@ phyless 已有 WS 基建（logs/stats/terminal/compose-logs），复用鉴权与
 ## 3. 适用范围（v1）
 
 - 单镜像拉取：镜像页「拉取」。
-- Compose：**预加载 + 本地编排**（见 §7）。
+- 容器 Create/Upgrade：**预加载 + 本地动作**（失败时不继续）。
+- Compose：预加载 + 本地编排，以及 Build 前预拉 `FROM` 基础镜像（见 §7）。
 - 仅 tag 引用、仅 Linux 单平台。
 - layer 压缩格式 gzip / zstd / 未压缩一律**原样透传**（不在浏览器解压），拒 foreign/non-distributable 层。
 
 「下载方式」开关由 `PullOptions` 的 `allowBrowser` 显式开启，只有真正接管 browser-pull 任务的入口才亮出它。
 
-**明确不做（v1）**：容器创建/升级入口的浏览器下载（沿用「预加载 + 本地动作」模式，作为后续；当前这些入口只有服务端代理）、digest（`@sha256:`）引用、all-tags、含 `build` 的 compose 服务、浏览器侧解压/预览层内容、并行 layer 下载、TLS/H2 的 `fetch` 流式方案。
+**明确不做（v1）**：digest（`@sha256:`）引用、all-tags、无法静态解析的 `FROM`/外部构建上下文、浏览器侧解压/预览层内容、并行 layer 下载、TLS/H2 的 `fetch` 流式方案。
 
 ## 4. CF Worker（`cloudflare-worker/registry-proxy.js`）
 
@@ -100,7 +101,7 @@ USTAR 头处理长路径（name/prefix 拆分）、八进制字段、checksum。
 
 ### 5.4 任务队列集成 `web/src/stores/taskQueue.ts`
 
-- 新增任务类型 `browser-pull`（单镜像）与 `browser-pull-compose`（父任务）。
+- 新增任务类型 `browser-pull`（单镜像）、`browser-pull-compose`（Compose 预加载/Build）与统一的 `browser-pull-action`（Create/Upgrade）。
 - runner 串联 5.1 → 5.2 → 5.3，用现有 `upd()/settle()/notes` 上报，使其在抽屉里与其它任务**外观一致**。
 - 现有 XHR 分支不变；WS 分支是并列的执行路径，任务项数据结构不变。
 - 取消：`xhrs` 之外维护一个可取消句柄（AbortController + socket），`cancel(id)` 统一触发。
@@ -111,7 +112,7 @@ USTAR 头处理长路径（name/prefix 拆分）、八进制字段、checksum。
 
 - worker URL 输入框：`localStorage`（origin 级），仅存合法 `https://` 且无凭据/path/query 的 URL。
 - 可选私有凭据：按 registry host 存 `localStorage`（opt-in 勾选「记住」），存 `{username, secret}`。**spec 注明 XSS 可读取 localStorage 的风险**，默认不勾选、可一键清除。
-- 复用到镜像拉取、容器创建/升级、Compose 入口（单一组件，非每页副本）。
+- 复用到镜像拉取、容器创建/升级、Compose 入口（单一组件，非每页副本）。Create/Upgrade 预拉成功后都强制 `pull_policy=never`。
 
 ## 6. 后端 WebSocket handler
 
@@ -137,7 +138,7 @@ r.Get("/ws/images/load", wsAuthWithUser(jwtSecret, models.RoleOperator, s.lookup
 浏览器不在后端 compose 的 `ImagePull` 调用栈里，无法在编排触发拉取的那一刻去浏览器下载。
 因此 compose 浏览器模式 = **先把项目所需镜像逐个 browser-pull 进 daemon，再让后端本地编排**。
 
-1. 新增 `GET /api/compose/pull-plan?id=…`（沿用现有 project loader，尊重 profiles/多配置文件）：返回将被拉取的镜像清单 `[{service, ref, platform}]` 与 `rejected:[{service, ref, reason}]`。**「拉什么」仍由后端决定**，前端不重实现 profile/build 逻辑。
+1. `GET /api/compose/pull-plan?id=…`（沿用现有 project loader，尊重 profiles/多配置文件）返回普通镜像清单 `images`、被拒服务 `rejected`，以及 Build 服务可静态解析的 `build_bases:[{service, ref, platform}]`。**「拉什么」仍由后端决定**，前端不重实现 profile/build 逻辑。
 2. 前端：有 `rejected` 先明确提示；对可拉的逐个 browser-pull（复用 §5 单镜像链路），作为父任务下的子任务。
 3. 触发编排：
    - Compose **「拉取」**（浏览器模式）= 仅预加载，不 up。
@@ -146,7 +147,8 @@ r.Get("/ws/images/load", wsAuthWithUser(jwtSecret, models.RoleOperator, s.lookup
 
 **边界（v1）**：
 
-- 活动服务含 `build`：`pull-plan` 标记为 `rejected`（reason=build），前端拒绝该项目浏览器拉取（与服务端 §4 一致）。
+- Compose **Build**：仅顺序预拉 `build_bases` 后调用现有 Build API；Update 浏览器模式复用同一顺序，Build 失败不会继续 Down/Up。
+- 活动服务含 `build`：普通 Pull/Up 仍标记为 `rejected`（reason=build）；Build/Update 使用其 `build_bases`。
 - image 用 digest 引用：`rejected`（reason=digest）。
 - 强制 `pull=never` 会**覆盖** compose 文件中的 `always/missing` —— 这是浏览器模式的刻意行为，spec 明示。
 
@@ -170,8 +172,8 @@ npm --prefix web test -- --run
 npm --prefix web run build
 ```
 
-- Go：`ws.ImageLoad` handler —— 二进制帧→ImageLoad、结束帧=EOF、中途 daemon error 脱敏、客户端断开/取消不泄漏 goroutine、RoleOperator 鉴权（用假 `ImageLoad`）。
-- 前端（vitest）：`dockerTar` 往返（用 tar 解析校验头/size/顺序/padding）、字节数校验中止；`registryPull` token-dance 与媒体类型/大小/digest 拒绝；`imageLoadStream` 背压与取消；`pull-plan` 前端处理 rejected；worker URL 与凭据的 localStorage 持久化与脱敏。
+- Go：`ws.ImageLoad` handler —— 二进制帧→ImageLoad、结束帧=EOF、中途 daemon error 脱敏、客户端断开/取消不泄漏 goroutine、RoleOperator 鉴权（用假 `ImageLoad`）；Upgrade 的 `pull_policy=never` 不调用 ImagePull。
+- 前端（vitest）：`dockerTar` 往返（用 tar 解析校验头/size/顺序/padding）、字节数校验中止；`registryPull` token-dance 与媒体类型/大小/digest 拒绝；`imageLoadStream` 背压与取消；pull-plan build bases；Build/Update 预拉、Create/Upgrade 成功/失败短路；worker URL 与凭据的 localStorage 持久化与脱敏。
 - worker：纯函数单测（origin/upstream 白名单、`*.suffix`、头转发/暴露、缺 Origin 拒绝）。
 
 ### 真实环境
@@ -183,12 +185,12 @@ npm --prefix web run build
 3. 二次同 tag 命中 up-to-date 预检，不重复下载 layer。
 4. Compose 预加载 + `up(pull=never)` 全部本地命中，daemon 不回连 registry。
 5. 取消、认证失败、中途错误不误报成功、不清理用户资源。
-6. 含 build 或 digest 的 compose 被明确拒绝并提示。
+6. Compose Build 的 `FROM` 预加载与 digest/动态 `FROM` 边界按操作类型明确提示。
 
 ## 10. 完成定义
 
 - 浏览器经 CF worker 顺序流式把镜像导入 daemon，浏览器与服务端全程不落盘、内存有界。
-- 单镜像与 compose（预加载 + 本地编排）两条路径可用；build/digest 边界明确拒绝。
+- 单镜像、容器 Create/Upgrade 与 compose（预加载 + 本地编排/Build）路径可用；digest/动态 FROM 边界明确拒绝或由 Build API 报错。
 - 凭据只经浏览器/worker，不进服务端；worker 白名单默认拒绝。
 - 「下载方式」共享 UI 复用到镜像/容器/compose；任务进全局队列与抽屉，外观统一。
 - 自动化与真实环境验收通过并记录。

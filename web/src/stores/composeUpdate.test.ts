@@ -39,13 +39,18 @@ describe("runComposeUpdate", () => {
   });
 
   it("browser mode: build server-side, preload pull images, then down→up(never)", async () => {
-    const d = deps({ images: [{ service: "web", ref: "nginx:1" }], rejected: [{ service: "api", ref: "", reason: "build" }] });
+    const d = deps({
+      images: [{ service: "web", ref: "nginx:1" }],
+      build_bases: [{ service: "api", ref: "alpine:3.20" }],
+      rejected: [{ service: "api", ref: "", reason: "build" }],
+    });
     await runComposeUpdate({ id: "1", mode: "browser", canBuild: true, workerUrl: "https://w", token: "tok" }, cb(), d);
     const sc = d.streamCompose as ReturnType<typeof vi.fn>;
     expect(verbs(sc)).toEqual(["build", "down", "up"]); // no server pull in browser mode
     expect(sc.mock.calls[0][2].body).toBeUndefined(); // browser mode build has no server proxy payload
-    expect(d.runBrowserPull).toHaveBeenCalledTimes(1); // preloaded the one pullable image
-    expect((d.runBrowserPull as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ ref: "nginx:1", workerUrl: "https://w" });
+    expect(d.runBrowserPull).toHaveBeenCalledTimes(2); // base before build + service image
+    expect((d.runBrowserPull as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ ref: "alpine:3.20", workerUrl: "https://w" });
+    expect((d.runBrowserPull as ReturnType<typeof vi.fn>).mock.calls[1][0]).toMatchObject({ ref: "nginx:1", workerUrl: "https://w" });
   });
 
   it("browser mode: digest-rejected service aborts before any pull", async () => {

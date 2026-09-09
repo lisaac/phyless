@@ -39,6 +39,7 @@ type upgradeClient struct {
 	createdNetworkConfig *network.NetworkingConfig
 	createdName          string
 	pullHook             func()
+	pullCalls            int
 	createHook           func()
 	networks             map[string]network.Inspect
 }
@@ -74,6 +75,7 @@ func (c *upgradeClient) ImageInspectWithRaw(context.Context, string) (image.Insp
 }
 
 func (c *upgradeClient) ImagePull(_ context.Context, _ string, _ image.PullOptions) (io.ReadCloser, error) {
+	c.pullCalls++
 	if c.pullHook != nil {
 		c.pullHook()
 	}
@@ -192,6 +194,20 @@ func TestUpgradeAlreadyStoppedKeepsStoppedState(t *testing.T) {
 	}
 	if newID != "new-container" || len(c.stopCalls) != 0 || len(c.startCalls) != 0 || len(c.removeCalls) != 1 || len(c.renameCalls) != 2 {
 		t.Fatalf("new=%q stop=%v start=%v remove=%v rename=%v", newID, c.stopCalls, c.startCalls, c.removeCalls, c.renameCalls)
+	}
+}
+
+func TestUpgradeWithoutPullUsesLoadedImage(t *testing.T) {
+	c := newUpgradeClient()
+	newID, err := UpgradeWithoutPull(context.Background(), c, "old-container", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newID != "new-container" || c.createdConfig == nil || c.createdConfig.Image != "new" {
+		t.Fatalf("new=%q config=%#v", newID, c.createdConfig)
+	}
+	if c.pullCalls != 0 {
+		t.Fatalf("ImagePull calls = %d, want 0", c.pullCalls)
 	}
 }
 

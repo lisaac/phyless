@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, setToken } from "../api/client";
-import { runBrowserPull, runBrowserPullCompose, runComposeUpdate } from "./browserPull";
+import { runBrowserPull, runBrowserPullCompose, runBrowserCreate, runBrowserUpgrade, runComposeUpdate, type BrowserPullCallbacks } from "./browserPull";
 
 // Global queue for every server-mutating request (pull/upgrade/compose/
 // start/stop/delete/upload/rename/…). Lives at module scope, not inside a
@@ -203,48 +203,61 @@ function httpError(status: number, text: string): string {
 // — one transport covers uploads, streamed progress and plain JSON writes.
 // startBrowserPull drives a browser-download → WebSocket import task, reporting
 // progress through the same task-note channel the XHR path uses.
-function startBrowserPull(id: string) {
-  const t = find(id)!;
+function startBrowserTask(id: string, run: (cb: BrowserPullCallbacks) => Promise<void>) {
   const ac = new AbortController();
   browserAborts.set(id, ac);
   const note = (m: string) =>
     setTasks("list", (x) => x.id === id, "notes", (n) => [...n, m.slice(0, MAX_ERROR)].slice(-MAX_NOTES));
-  runBrowserPull(
+  run({ note, progress: note, signal: ac.signal }).then(
+    () => settle(id, "done"),
+    (err) => settle(id, ac.signal.aborted ? "cancelled" : "error", err instanceof Error ? err.message : String(err)),
+  );
+}
+
+function startBrowserPull(id: string) {
+  const t = find(id)!;
+  startBrowserTask(id, (cb) => runBrowserPull(
     {
       ref: String(t.meta?.ref ?? ""),
       platform: String(t.meta?.platform ?? ""),
       workerUrl: String(t.meta?.workerUrl ?? ""),
       token: getToken() ?? "",
       creds: t.secret?.creds,
-    },
-    { note, progress: note, signal: ac.signal },
-  ).then(
-    () => settle(id, "done"),
-    (err) => settle(id, ac.signal.aborted ? "cancelled" : "error", err instanceof Error ? err.message : String(err)),
-  );
+    }, cb));
 }
 
 // startBrowserPullCompose preloads every project image in the browser, then
 // (for "up") runs compose up with pull_policy=never so the daemon stays offline.
 function startBrowserPullCompose(id: string) {
   const t = find(id)!;
-  const ac = new AbortController();
-  browserAborts.set(id, ac);
-  const note = (m: string) =>
-    setTasks("list", (x) => x.id === id, "notes", (n) => [...n, m.slice(0, MAX_ERROR)].slice(-MAX_NOTES));
-  runBrowserPullCompose(
+  startBrowserTask(id, (cb) => runBrowserPullCompose(
     {
       id: String(t.meta?.composeId ?? ""),
-      mode: t.meta?.mode === "up" ? "up" : "pull",
+      mode: t.meta?.mode === "up" ? "up" : t.meta?.mode === "build" ? "build" : "pull",
       workerUrl: String(t.meta?.workerUrl ?? ""),
       token: getToken() ?? "",
       creds: t.secret?.creds,
     },
-    { note, progress: note, signal: ac.signal },
-  ).then(
-    () => settle(id, "done"),
-    (err) => settle(id, ac.signal.aborted ? "cancelled" : "error", err instanceof Error ? err.message : String(err)),
-  );
+    cb));
+}
+
+function startBrowserAction(id: string) {
+  const t = find(id)!;
+  startBrowserTask(id, (cb) => t.meta?.action === "create"
+    ? runBrowserCreate({
+      ref: String(t.meta?.ref ?? ""),
+      platform: String(t.meta?.platform ?? ""),
+      workerUrl: String(t.meta?.workerUrl ?? ""),
+      token: getToken() ?? "",
+      creds: t.secret?.creds,
+      body: (t.body as Record<string, unknown> | undefined) ?? {},
+    }, cb)
+    : runBrowserUpgrade({
+      id: String(t.meta?.containerId ?? ""),
+      workerUrl: String(t.meta?.workerUrl ?? ""),
+      token: getToken() ?? "",
+      creds: t.secret?.creds,
+    }, cb));
 }
 
 // startComposeUpdate orchestrates build → pull/preload → down → up(never) as one
@@ -278,6 +291,7 @@ function start(id: string) {
   persist();
   if (t.meta?.type === "browser-pull") { startBrowserPull(id); return; }
   if (t.meta?.type === "browser-pull-compose") { startBrowserPullCompose(id); return; }
+  if (t.meta?.type === "browser-pull-action") { startBrowserAction(id); return; }
   if (t.meta?.type === "compose-update") { startComposeUpdate(id); return; }
   const { url, body, file, method } = t;
   const layerMap = new Map<string, LayerProgress>();

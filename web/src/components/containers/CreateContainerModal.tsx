@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
@@ -171,13 +171,26 @@ export const CreateContainerModal: Component<{
   // form immediately and hand off to the task panel.
   const submit = () => {
     if (!form().image.trim()) { toast.error("请填写镜像名称"); return; }
-    enqueue({
-      title: `创建 ${form().name || form().image}`,
-      url: "/api/containers",
-      body: { ...formToPayload(form()), ...pull.payload() },
-      key: form().name ? `container:${form().name}` : undefined,
-      meta: { type: "create" },
-    });
+    const image = form().image.trim();
+    const title = `创建 ${form().name || image}`;
+    const body = formToPayload(form());
+    if (isBrowserDownload(pull.value)) {
+      if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+      const spec = browserPullSpec(title, image, form().name ? `container:${form().name}` : `container:${image}`, pull.value);
+      enqueue({
+        ...spec,
+        body: { ...body, ...(pull.value.platform.trim() ? { platform: pull.value.platform.trim() } : {}) },
+        meta: { ...spec.meta, type: "browser-pull-action", action: "create" },
+      });
+    } else {
+      enqueue({
+        title,
+        url: "/api/containers",
+        body: { ...body, ...pull.payload() },
+        key: form().name ? `container:${form().name}` : undefined,
+        meta: { type: "create" },
+      });
+    }
     setForm(emptyForm());
     setSelectedTplId("");
     setSelectedContainerId("");
@@ -407,7 +420,7 @@ export const CreateContainerModal: Component<{
       </div>
 
       <Show when={!isMulti()}>
-        <PullOptions options={pull} showPlatform />
+        <PullOptions options={pull} showPlatform allowBrowser />
       </Show>
 
       {/* ── Save template bar ─────────────────────────────────────────────── */}

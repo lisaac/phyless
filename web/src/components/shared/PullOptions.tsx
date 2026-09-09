@@ -202,6 +202,7 @@ export const PullOptions: Component<{
             记住凭据（仅此浏览器，明文存于 localStorage，XSS 可读取）
           </label>
           <p class="text-[11px] text-zinc-600">凭据只经浏览器与你的 worker 发往 registry，不会发送给 phyless 服务端。</p>
+          <p class="text-[11px] text-zinc-600">限制：仅支持 Linux 的 tag 镜像；digest、foreign layer 不支持。Compose Build 仅预拉可静态解析的 Dockerfile FROM。</p>
         </div>
       </Show>
 

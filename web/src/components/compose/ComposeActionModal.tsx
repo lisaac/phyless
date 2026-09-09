@@ -25,7 +25,7 @@ export const isComposeRunning = (id: string, verb: ComposeVerb) =>
   isPending((t) => t.meta?.composeId === id && t.meta?.verb === verb);
 
 // up/pull/build take proxy/registry options → open the modal; the rest run
-// directly. build needs the proxy to pre-pull its FROM base images.
+// directly. Browser build preloads its FROM bases before the build request.
 export const requestComposeAction = (a: ComposeAction, openOptions: (a: ComposeAction) => void) => {
   if (a.verb === "up" || a.verb === "pull" || a.verb === "build" || a.verb === "update") openOptions(a);
   else void startComposeAction(a);
@@ -53,7 +53,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
           title: `${VERB_LABEL[t.verb]} — ${t.name}`,
           url: "",
           key: `compose:${t.id}`,
-          meta: { type: "browser-pull-compose", composeId: t.id, verb: t.verb, mode: t.verb === "up" ? "up" : "pull", workerUrl: pull.value.workerUrl ?? "" },
+          meta: { type: "browser-pull-compose", composeId: t.id, verb: t.verb, mode: t.verb === "up" ? "up" : t.verb === "build" ? "build" : "pull", workerUrl: pull.value.workerUrl ?? "" },
           secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
         });
       }
@@ -99,9 +99,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
               </div>
             </label>
           </Show>
-          {/* build pre-pulls base images server-side through the proxy; the
-              browser-download path has no build mode, so hide it for build. */}
-          <PullOptions options={pull} multipleRegistries allowBrowser={t().verb !== "build"} />
+          <PullOptions options={pull} multipleRegistries allowBrowser />
           <div class="mt-4 flex justify-end gap-2">
             <Button onClick={close}>取消</Button>
             <Button variant="primary" onClick={start}>{VERB_LABEL[t().verb]}</Button>
