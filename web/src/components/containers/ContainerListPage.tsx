@@ -8,6 +8,7 @@ import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { ViewCmdModal } from "./ViewCmdModal";
 import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
+import { UpgradeContainerModal } from "./UpgradeContainerModal";
 import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
@@ -26,6 +27,7 @@ export const ContainerListPage: Component = () => {
   const [showImport, setShowImport] = createSignal(false);
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
+  const [upgradeTarget, setUpgradeTarget] = createSignal<{ id: string; name: string } | null>(null);
   // Bulk Run/Compose no longer opens a separate read-only viewer — it feeds
   // the same CreateContainerModal used for "+新建容器", which detects (from
   // the compose.yaml content itself) whether this is one service or many
@@ -128,6 +130,7 @@ export const ContainerListPage: Component = () => {
                 act={act}
                 onViewCmd={setRunTarget}
                 onConsole={setConsoleTarget}
+                onUpgrade={setUpgradeTarget}
               />
             )}
           </For>
@@ -144,6 +147,7 @@ export const ContainerListPage: Component = () => {
       {/* ── Run/Compose modal (per-row "⧉" button — single container only) ── */}
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
+      <UpgradeContainerModal target={upgradeTarget()} onClose={() => setUpgradeTarget(null)} />
 
       {/* ── Create container modal ───────────────────────────────────────────── */}
       <CreateContainerModal

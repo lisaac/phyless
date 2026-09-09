@@ -376,6 +376,14 @@ export const ImageListPage: Component = () => {
                         <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
                           <Ico path="M12 5v14M5 12h14" />
                         </IBtn>
+                        <Show when={(img.RepoTags ?? []).length > 0}>
+                          <IBtn
+                            title="升级：重新拉取该镜像标签"
+                            onClick={() => { setPullRef(img.RepoTags![0]); setShowPullInput(true); }}
+                          >
+                            <Ico path="M12 19V5M5 12l7-7 7 7" />
+                          </IBtn>
+                        </Show>
                       </Show>
                       <a
                         title="save"

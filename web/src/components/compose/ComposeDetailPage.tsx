@@ -260,6 +260,11 @@ export const ComposeDetailPage: Component = () => {
           <Show when={servicesHaveBuild(detail()?.services)}>
             <ActBtn title="docker compose build" loading={isRunning("build")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "build" })}>🔨 Build</ActBtn>
           </Show>
+          <ActBtn
+            title="更新：build（若有）→ pull → down → up"
+            loading={isRunning("update")}
+            onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "update", canBuild: servicesHaveBuild(detail()?.services) })}
+          >⬆ Update</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>⧉ Run/Compose</ActBtn>
         </div>

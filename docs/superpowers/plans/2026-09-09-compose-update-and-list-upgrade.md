@@ -14,7 +14,7 @@
 - 分支 `feat/compose-update-list-upgrade`（已创建）。
 - UI 文案中文；沿用现有 `Btn`/`IBtn`/`ActBtn`/`Modal`/`PullOptions` 组件，不新造样式。
 - 共享 UI 只能有一份实现（模态放页面级，行只发回调，禁止每行 `createPullOptions`）。
-- Update 末步 `up` 强制 `pull_policy=never`；build 步不带代理载荷（与现有 Build 一致）。
+- Update 末步 `up` 强制 `pull_policy=never`；服务端模式下 `build` 与 `pull` 均携带代理载荷（`build` 端点已支持代理）。浏览器模式 build 无 server 代理载荷。
 - 提交信息结尾加：`Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
 - 每个任务末尾 `npm run typecheck` 必须通过。
 
@@ -221,6 +221,7 @@ describe("runComposeUpdate", () => {
     await runComposeUpdate({ id: "1", mode: "server", canBuild: true, token: "t", pullOptions: { proxy_url: "http://p" } }, cb(), d);
     const sc = d.streamCompose as ReturnType<typeof vi.fn>;
     expect(verbs(sc)).toEqual(["build", "pull", "down", "up"]);
+    expect(sc.mock.calls[0][2]).toMatchObject({ body: { proxy_url: "http://p" } }); // build carries proxy opts
     expect(sc.mock.calls[1][2]).toMatchObject({ body: { proxy_url: "http://p" } }); // pull carries proxy opts
     expect(sc.mock.calls[3][2]).toMatchObject({ body: { pull_policy: "never" } }); // up forces never
     expect(d.runBrowserPull).not.toHaveBeenCalled();
@@ -243,7 +244,9 @@ describe("runComposeUpdate", () => {
   it("browser mode: build server-side, preload pull images, then down→up(never)", async () => {
     const d = deps({ images: [{ service: "web", ref: "nginx:1" }], rejected: [{ service: "api", ref: "", reason: "build" }] });
     await runComposeUpdate({ id: "1", mode: "browser", canBuild: true, workerUrl: "https://w", token: "tok" }, cb(), d);
-    expect(verbs(d.streamCompose as ReturnType<typeof vi.fn>)).toEqual(["build", "down", "up"]); // no server pull in browser mode
+    const sc = d.streamCompose as ReturnType<typeof vi.fn>;
+    expect(verbs(sc)).toEqual(["build", "down", "up"]); // no server pull in browser mode
+    expect(sc.mock.calls[0][2].body).toBeUndefined(); // browser mode build has no server proxy payload
     expect(d.runBrowserPull).toHaveBeenCalledTimes(1); // preloaded the one pullable image
     expect((d.runBrowserPull as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ ref: "nginx:1", workerUrl: "https://w" });
   });
@@ -307,7 +310,9 @@ export async function runComposeUpdate(
 
   if (params.canBuild) {
     cb.note("构建镜像…");
-    await deps.streamCompose("build", id, { token, onProgress: cb.progress, signal });
+    // Server mode carries the proxy payload (build honors it via composeRequest);
+    // browser mode has no server proxy_url, so pullOptions is undefined → no body.
+    await deps.streamCompose("build", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
   }
 
   if (params.mode === "browser") {
@@ -859,7 +864,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Spec coverage:**
 - Compose Update（build→pull→down→up，双代理）→ Task 1（helper）+ Task 2（编排）+ Task 3（分发）+ Task 4（弹窗）+ Task 5（按钮）。✅
-- `up` 强制 never → Task 2 实现 + 测试；build 不带代理 → Task 2（build 步无 body）。✅
+- `up` 强制 never → Task 2 实现 + 测试；服务端 build/pull 携带代理载荷 → Task 2（build 步 `body: pullOptions`）+ 测试。✅
 - 浏览器+build 混合（build 服务端、其余预载、digest 报错）→ Task 2 实现 + 两条测试。✅
 - 容器列表升级复用详情 → Task 6（抽共享组件）+ Task 7（行按钮+列表接入）。✅
 - 镜像列表升级复用 pull + 代理弹窗 → Task 8。✅

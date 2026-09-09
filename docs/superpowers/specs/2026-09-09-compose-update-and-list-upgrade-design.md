@@ -40,6 +40,8 @@
 
 - Update 末步 `up` 使用 `pull_policy=never`：build/pull 刚产出本地镜像，避免多一次 registry 往返，
   也让浏览器代理模式下 daemon 不再访问 registry。
+- 服务端模式下 `build` 与 `pull` 均携带代理载荷（build 端点已经 `runComposeOperation` →
+  `composeRequest` 解析同一套代理选项）。浏览器模式无服务端 `proxy_url`，build 仍走 daemon，见下方限制。
 - 浏览器代理 + build 服务：采用**混合**。`pull-plan` 已把项目拆成 `images`（可预载）/ `rejected:build`
   （交给服务端 build）/ `rejected:digest`（报错）。因此：build 服务端 build，`images` 浏览器预载，
   遇到 `digest` 拒绝则报错。
@@ -55,7 +57,7 @@
 
 ```
 服务端模式:                            浏览器模式:
-  1. build（若 canBuild）               1. build（若 canBuild）      ← 服务端
+  1. build  [代理选项]（若 canBuild）   1. build（若 canBuild）      ← 服务端，无 server 代理
   2. pull        [代理选项]             2. 预载 plan.images         ← 浏览器 CF worker
   3. down                               3. rejected 中含非 build（digest）→ 报错
   4. up  pull_policy=never              4. down

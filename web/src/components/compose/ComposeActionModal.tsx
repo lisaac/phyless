@@ -6,7 +6,7 @@ import { enqueue, isPending } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
 import { VERB_LABEL, type ComposeVerb } from "./composeShared";
 
-export interface ComposeAction { id: string; name: string; verb: ComposeVerb; }
+export interface ComposeAction { id: string; name: string; verb: ComposeVerb; canBuild?: boolean; }
 
 // compose up/stop/down/restart/pull through the global task queue. One
 // implementation shared by ComposeListPage and ComposeDetailPage (they used
@@ -27,7 +27,7 @@ export const isComposeRunning = (id: string, verb: ComposeVerb) =>
 // up/pull/build take proxy/registry options → open the modal; the rest run
 // directly. build needs the proxy to pre-pull its FROM base images.
 export const requestComposeAction = (a: ComposeAction, openOptions: (a: ComposeAction) => void) => {
-  if (a.verb === "up" || a.verb === "pull" || a.verb === "build") openOptions(a);
+  if (a.verb === "up" || a.verb === "pull" || a.verb === "build" || a.verb === "update") openOptions(a);
   else void startComposeAction(a);
 };
 
@@ -40,12 +40,34 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
     if (!t) return;
     if (isBrowserDownload(pull.value)) {
       if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+      if (t.verb === "update") {
+        enqueue({
+          title: `${VERB_LABEL.update} — ${t.name}`,
+          url: "",
+          key: `compose:${t.id}`,
+          meta: { type: "compose-update", composeId: t.id, mode: "browser", canBuild: t.canBuild === true, workerUrl: pull.value.workerUrl ?? "" },
+          secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+        });
+      } else {
+        enqueue({
+          title: `${VERB_LABEL[t.verb]} — ${t.name}`,
+          url: "",
+          key: `compose:${t.id}`,
+          meta: { type: "browser-pull-compose", composeId: t.id, verb: t.verb, mode: t.verb === "up" ? "up" : "pull", workerUrl: pull.value.workerUrl ?? "" },
+          secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+        });
+      }
+      close();
+      return;
+    }
+    if (t.verb === "update") {
+      const opts = pull.payload();
       enqueue({
-        title: `${VERB_LABEL[t.verb]} — ${t.name}`,
+        title: `${VERB_LABEL.update} — ${t.name}`,
         url: "",
+        body: Object.keys(opts).length > 0 ? opts : undefined,
         key: `compose:${t.id}`,
-        meta: { type: "browser-pull-compose", composeId: t.id, verb: t.verb, mode: t.verb === "up" ? "up" : "pull", workerUrl: pull.value.workerUrl ?? "" },
-        secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+        meta: { type: "compose-update", composeId: t.id, mode: "server", canBuild: t.canBuild === true },
       });
       close();
       return;

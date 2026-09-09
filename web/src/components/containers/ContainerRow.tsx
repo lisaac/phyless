@@ -28,6 +28,7 @@ export const ContainerRow: Component<{
   act: (id: string, verb: string, name?: string) => void | Promise<unknown>;
   onViewCmd: (target: { id: string; name: string }) => void;
   onConsole?: (target: { id: string; name: string }) => void;
+  onUpgrade?: (target: { id: string; name: string }) => void;
 }> = (p) => {
   const navigate = useNavigate();
   const c = () => p.c;
@@ -129,6 +130,10 @@ export const ContainerRow: Component<{
             <span class="mx-0.5 text-zinc-400">│</span>
 
             {viewBtns()}
+
+            <Show when={p.onUpgrade}>
+              <IBtn title="升级（拉取镜像并替换容器）" onClick={() => p.onUpgrade?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>↑</IBtn>
+            </Show>
 
             <Show when={!running()}>
               <span class="mx-0.5 text-zinc-400">│</span>

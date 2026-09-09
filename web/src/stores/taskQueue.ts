@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, setToken } from "../api/client";
-import { runBrowserPull, runBrowserPullCompose } from "./browserPull";
+import { runBrowserPull, runBrowserPullCompose, runComposeUpdate } from "./browserPull";
 
 // Global queue for every server-mutating request (pull/upgrade/compose/
 // start/stop/delete/upload/rename/…). Lives at module scope, not inside a
@@ -247,12 +247,38 @@ function startBrowserPullCompose(id: string) {
   );
 }
 
+// startComposeUpdate orchestrates build → pull/preload → down → up(never) as one
+// task. body holds the server-mode proxy payload; secret.creds the browser creds.
+function startComposeUpdate(id: string) {
+  const t = find(id)!;
+  const ac = new AbortController();
+  browserAborts.set(id, ac);
+  const note = (m: string) =>
+    setTasks("list", (x) => x.id === id, "notes", (n) => [...n, m.slice(0, MAX_ERROR)].slice(-MAX_NOTES));
+  runComposeUpdate(
+    {
+      id: String(t.meta?.composeId ?? ""),
+      mode: t.meta?.mode === "browser" ? "browser" : "server",
+      canBuild: t.meta?.canBuild === true,
+      workerUrl: String(t.meta?.workerUrl ?? ""),
+      token: getToken() ?? "",
+      creds: t.secret?.creds,
+      pullOptions: (t.body as Record<string, unknown> | undefined) ?? undefined,
+    },
+    { note, progress: note, signal: ac.signal },
+  ).then(
+    () => settle(id, "done"),
+    (err) => settle(id, ac.signal.aborted ? "cancelled" : "error", err instanceof Error ? err.message : String(err)),
+  );
+}
+
 function start(id: string) {
   const t = find(id)!;
   upd(id, { status: "running", uploadPct: t.file ? 0 : null });
   persist();
   if (t.meta?.type === "browser-pull") { startBrowserPull(id); return; }
   if (t.meta?.type === "browser-pull-compose") { startBrowserPullCompose(id); return; }
+  if (t.meta?.type === "compose-update") { startComposeUpdate(id); return; }
   const { url, body, file, method } = t;
   const layerMap = new Map<string, LayerProgress>();
   let buf = "";
