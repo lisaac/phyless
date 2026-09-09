@@ -24,4 +24,14 @@ describe("ComposeActionModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pull" }));
     expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ body: undefined }));
   });
+
+  it("update (server proxy) enqueues a compose-update task and hides pull_policy", async () => {
+    const { enqueue } = await import("../../stores/taskQueue");
+    render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "update", canBuild: true }} onClose={() => {}} />);
+    expect(screen.queryByLabelText("镜像拉取策略")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
+      meta: expect.objectContaining({ type: "compose-update", composeId: "p1", mode: "server", canBuild: true }),
+    }));
+  });
 });
