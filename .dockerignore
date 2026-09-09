@@ -1,3 +1,7 @@
-.git
+.git/*
+!.git/HEAD
+!.git/refs/
+!.git/refs/heads/
+!.git/refs/heads/**
 web/node_modules
 web/dist

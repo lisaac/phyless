@@ -3,6 +3,7 @@ import solid from "vite-plugin-solid";
 import { execSync } from "node:child_process";
 
 function gitHash(): string {
+  if (process.env.GIT_COMMIT) return process.env.GIT_COMMIT.slice(0, 7);
   try {
     return execSync("git rev-parse --short HEAD", { cwd: __dirname }).toString().trim();
   } catch {

@@ -3,7 +3,11 @@ WORKDIR /web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ .
-RUN npm run build
+COPY .git/HEAD /tmp/git/HEAD
+COPY .git/refs/heads /tmp/git/refs/heads
+ARG GIT_COMMIT
+RUN ref="$(sed -n 's/^ref: //p' /tmp/git/HEAD)"; \
+    GIT_COMMIT="${GIT_COMMIT:-$(if [ -n "$ref" ]; then cat "/tmp/git/$ref"; else cat /tmp/git/HEAD; fi)}" npm run build
 
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
