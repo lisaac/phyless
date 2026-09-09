@@ -6,9 +6,7 @@ import { get, getToken, imageInspectUrl } from "../../api/client";
 import { enqueue, queued, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { createContainerActions } from "./containerActions";
 import { toast } from "../shared/Toast";
-import { Modal } from "../shared/Modal";
-import { Button } from "../shared/Button";
-import { PullOptions, createPullOptions } from "../shared/PullOptions";
+import { UpgradeContainerModal } from "./UpgradeContainerModal";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { CreateContainerModal } from "./CreateContainerModal";
@@ -151,8 +149,7 @@ export const ContainerDetailPage: Component = () => {
   const [showCmdModal, setShowCmdModal] = createSignal(false);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
-  const [showUpgradeOptions, setShowUpgradeOptions] = createSignal(false);
-  const upgradePull = createPullOptions();
+  const [upgradeTarget, setUpgradeTarget] = createSignal<{ id: string; name: string } | null>(null);
 
   // React to queued tasks on this container finishing (while mounted): refetch
   // after any of them; after a successful upgrade or delete, move to the new
@@ -218,20 +215,6 @@ export const ContainerDetailPage: Component = () => {
       setRunCmd(inspectToRunCmd(inspect(), imgInspect));
       setShowCmdModal(true);
     } catch (e) { toast.error((e as Error).message); }
-  };
-
-  const closeUpgradeOptions = () => { setShowUpgradeOptions(false); upgradePull.reset(); };
-  const doUpgrade = () => { upgradePull.reset(); setShowUpgradeOptions(true); };
-  const startUpgrade = () => {
-    const options = upgradePull.payload();
-    enqueue({
-      title: `升级 — ${name()}`,
-      url: `/api/containers/${id()}/upgrade`,
-      body: Object.keys(options).length > 0 ? options : undefined,
-      key: id(),
-      meta: { type: "upgrade", containerId: id() },
-    });
-    closeUpgradeOptions();
   };
 
   // ── Inline resource save ──────────────────────────────────────────────────────
@@ -370,7 +353,7 @@ export const ContainerDetailPage: Component = () => {
             <Btn onClick={() => {
               window.open(`/api/containers/${id()}/export?token=${encodeURIComponent(getToken() ?? "")}`, "_blank");
             }}>↓ 导出 tar</Btn>
-            <Btn onClick={() => void doUpgrade()}>↑ 升级</Btn>
+            <Btn onClick={() => setUpgradeTarget({ id: id(), name: name() })}>↑ 升级</Btn>
             <Btn onClick={() => void openCmdModal()}>⧉ Run/Compose</Btn>
             <Show when={running()}>
               <Btn onClick={() => setConsoleTarget({ id: id(), name: name() })}>&gt;_ 控制台</Btn>
@@ -738,14 +721,7 @@ export const ContainerDetailPage: Component = () => {
       {/* ── Copy a file/dir to another container ─────────────────────────── */}
       <CopyToContainerModal source={copySource()} onClose={() => setCopySource(null)} />
 
-      <Modal open={showUpgradeOptions()} onClose={closeUpgradeOptions} title={`升级 — ${name()}`}>
-        <p class="mb-3 text-xs text-zinc-500">先按本次选项拉取镜像，成功后再替换容器；留空则沿用 Docker 默认行为。</p>
-        <PullOptions options={upgradePull} />
-        <div class="mt-4 flex justify-end gap-2">
-          <Button onClick={closeUpgradeOptions}>取消</Button>
-          <Button variant="primary" onClick={startUpgrade}>升级</Button>
-        </div>
-      </Modal>
+      <UpgradeContainerModal target={upgradeTarget()} onClose={() => setUpgradeTarget(null)} />
 
       {/* ── Download progress — non-blocking floating card ───────────────── */}
       <DownloadStatusWidget task={download} />
