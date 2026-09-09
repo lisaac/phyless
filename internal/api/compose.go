@@ -40,6 +40,7 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Delete("/api/compose", s.handleDeleteCompose)
 	r.Post("/api/compose/up", s.handleComposeUp)
 	r.Post("/api/compose/stop", s.handleComposeStop)
+	r.Post("/api/compose/pause", s.handleComposePause)
 	r.Post("/api/compose/down", s.handleComposeDown)
 	r.Post("/api/compose/pull", s.handleComposePull)
 	r.Post("/api/compose/build", s.handleComposeBuild)
@@ -721,6 +722,10 @@ func (s *Server) handleComposeStop(w http.ResponseWriter, r *http.Request) {
 	s.runComposeOperation(w, r, "stop")
 }
 
+func (s *Server) handleComposePause(w http.ResponseWriter, r *http.Request) {
+	s.runComposeOperation(w, r, "pause")
+}
+
 func (s *Server) handleComposeDown(w http.ResponseWriter, r *http.Request) {
 	s.runComposeOperation(w, r, "down")
 }
@@ -820,6 +825,8 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 					})
 				case "stop":
 					err = service.Compose().Stop(ctx, projectName, composeapi.StopOptions{Project: project})
+				case "pause":
+					err = service.Compose().Pause(ctx, projectName, composeapi.PauseOptions{Project: project})
 				case "down":
 					err = service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project})
 				case "build":
@@ -920,7 +927,7 @@ func composeCanUseRunningFallback(operation string, resolved composeResolution, 
 		return false
 	}
 	switch operation {
-	case "stop", "down", "restart", "logs":
+	case "stop", "pause", "down", "restart", "logs":
 		return true
 	default:
 		return false

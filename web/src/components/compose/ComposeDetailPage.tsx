@@ -250,6 +250,7 @@ export const ComposeDetailPage: Component = () => {
           <ActBtn title="docker compose up -d" loading={isRunning("up")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "up" })}>▶ Up</ActBtn>
           <ActBtn title="docker compose restart" loading={isRunning("restart")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "restart" })}>↺ Restart</ActBtn>
           <ActBtn title="docker compose stop" loading={isRunning("stop")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "stop" })}>■ Stop</ActBtn>
+          <ActBtn title="docker compose pause" loading={isRunning("pause")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "pause" })}>⏸ Pause</ActBtn>
           <ActBtn
             danger
             title="docker compose down（停止并移除容器、网络）"

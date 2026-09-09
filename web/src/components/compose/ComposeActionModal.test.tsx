@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
-import { ComposeActionModal } from "./ComposeActionModal";
+import { ComposeActionModal, startComposeAction } from "./ComposeActionModal";
 
 vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn().mockResolvedValue([]) }));
 vi.mock("../../stores/taskQueue", () => ({
@@ -11,6 +11,15 @@ vi.mock("../../stores/taskQueue", () => ({
 afterEach(() => cleanup());
 
 describe("ComposeActionModal", () => {
+  it("queues pause directly", async () => {
+    const { enqueue } = await import("../../stores/taskQueue");
+    void startComposeAction({ id: "p1", name: "app", verb: "pause" });
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
+      url: "/api/compose/pause?id=p1",
+      meta: { composeId: "p1", verb: "pause" },
+    }));
+  });
+
   it("sends pull_policy for up only", async () => {
     const { enqueue } = await import("../../stores/taskQueue");
     render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "up" }} onClose={() => {}} />);

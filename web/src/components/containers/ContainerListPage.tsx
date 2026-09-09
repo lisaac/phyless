@@ -42,7 +42,7 @@ export const ContainerListPage: Component = () => {
   const toggleAll = (v: boolean) =>
     setSelected(v ? new Set<string>(view.filtered().map((c) => c.Id)) : new Set<string>());
 
-  const bulk = (verb: "start" | "stop" | "delete") => {
+  const bulk = (verb: "start" | "stop" | "pause" | "delete") => {
     const byId = new Map(store.items().map((c) => [c.Id, containerName(c)]));
     for (const id of selected()) void act(id, verb, byId.get(id));
     setSelected(new Set<string>());
@@ -97,6 +97,7 @@ export const ContainerListPage: Component = () => {
           <span class="text-zinc-400">│</span>
           <Btn title="启动选中容器" disabled={n() === 0} onClick={() => void bulk("start")}>▶ 启动</Btn>
           <Btn title="停止选中容器" disabled={n() === 0} onClick={() => void bulk("stop")}>■ 停止</Btn>
+          <Btn title="暂停选中容器" disabled={n() === 0} onClick={() => void bulk("pause")}>⏸ 暂停</Btn>
           <Btn title="删除选中容器" danger disabled={n() === 0} onClick={() => { if (confirm(`删除选中的 ${n()} 个容器？`)) void bulk("delete"); }}>⊖ 删除</Btn>
         </Show>
 

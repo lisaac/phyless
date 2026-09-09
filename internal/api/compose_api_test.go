@@ -333,6 +333,9 @@ func TestComposeFileMissingFallbackRequiresRunningLabel(t *testing.T) {
 	if !composeCanUseRunningFallback("stop", resolved, os.ErrNotExist) {
 		t.Fatal("stop did not allow trusted running-label fallback")
 	}
+	if !composeCanUseRunningFallback("pause", resolved, os.ErrNotExist) {
+		t.Fatal("pause did not allow trusted running-label fallback")
+	}
 	if composeCanUseRunningFallback("up", resolved, os.ErrNotExist) {
 		t.Fatal("up allowed missing-file fallback")
 	}
