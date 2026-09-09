@@ -75,6 +75,15 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const [drawerOpen, setDrawerOpen] = createSignal(false);
   const location = useLocation();
   const navigate = useNavigate();
+  let refreshMenu!: HTMLDetailsElement;
+
+  onMount(() => {
+    const closeRefreshMenu = (e: PointerEvent) => {
+      if (!refreshMenu.contains(e.target as Node)) refreshMenu.open = false;
+    };
+    document.addEventListener("pointerdown", closeRefreshMenu);
+    onCleanup(() => document.removeEventListener("pointerdown", closeRefreshMenu));
+  });
 
   createEffect(() => {
     if (!drawerOpen()) return;
@@ -164,10 +173,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             onClick={() => setDrawerOpen(true)}
             aria-label="打开菜单"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" width="20" height="20">
-              <path d="M3 12h18M3 6h18M3 18h18" />
-            </svg>
+            <span aria-hidden="true" class="text-xl leading-none">☰</span>
           </button>
           <span class="font-bold text-zinc-100 lg:hidden">phyless</span>
 
@@ -190,11 +196,10 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             class={`ml-auto flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
             onClick={() => setPanelHidden(!panelHidden())}
             title={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
+            aria-label={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
           >
             <span class="relative flex">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" class={running() ? "text-indigo-400" : ""}>
-                <path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
-              </svg>
+              <span aria-hidden="true" class={`text-[15px] leading-none ${running() ? "text-indigo-400" : ""}`}>☑</span>
               <Show when={running()}>
                 <span class="absolute -right-1 -top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />
               </Show>
@@ -208,17 +213,14 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             class={`shrink-0 rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
             onClick={refreshAll}
             title="立即刷新"
+            aria-label="立即刷新"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
-            </svg>
+            <span aria-hidden="true" class="text-[15px] leading-none">↻</span>
           </button>
           {/* Refresh settings — gear, replaces the old ▾ arrow. */}
-          <details class="group relative shrink-0">
-            <summary class="flex cursor-pointer list-none items-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100" title="刷新设置">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
-                <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
+          <details ref={refreshMenu} class="group relative shrink-0">
+            <summary class="flex cursor-pointer list-none items-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100" title="刷新设置" aria-label="刷新设置">
+              <span aria-hidden="true" class="text-[15px] leading-none">⚙︎</span>
             </summary>
             <div class="absolute right-0 z-50 mt-2 flex w-48 flex-col gap-2 rounded-lg border border-zinc-700/50 bg-zinc-900 p-3 text-sm text-zinc-200 shadow-2xl">
               <label class="flex items-center gap-2">
@@ -239,6 +241,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             class="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             onClick={toggleTheme}
             title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
+            aria-label={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
           >
             <ThemeIcon dark={theme() === "dark"} />
           </button>

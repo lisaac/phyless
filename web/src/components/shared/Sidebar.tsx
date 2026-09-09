@@ -52,6 +52,7 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
         <div class="flex items-center gap-1">
           <button
             title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
+            aria-label={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
             class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
             onClick={toggleTheme}
           >

@@ -3,7 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { IBtn, Ico } from "../shared/ActionButton";
+import { IBtn } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
@@ -94,11 +94,11 @@ export const NetworkListPage: Component = () => {
                   >{n.Id.slice(0, 12)}</button>
                   <div class="mt-1 flex items-center gap-0.5">
                     <IBtn title="inspect" onClick={() => setInspectFor(n)}>
-                      <Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" />
+                      ⌕
                     </IBtn>
                     <Show when={hasRole("operator")}>
                       <IBtn title="删除" danger onClick={() => remove(n.Id, n.Name)}>
-                        <Ico path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                        ⊖
                       </IBtn>
                     </Show>
                   </div>

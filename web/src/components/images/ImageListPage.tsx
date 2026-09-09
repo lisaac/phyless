@@ -6,7 +6,7 @@ import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
-import { Btn, IBtn, Ico } from "../shared/ActionButton";
+import { Btn, IBtn } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
@@ -188,6 +188,10 @@ export const ImageListPage: Component = () => {
 
   const startImageDelete = (ids: string[], force = false) => {
     if (!ids.length) return;
+    const images = ids.map((id) => {
+      const image = store.items().find((item) => item.Id === id);
+      return image ? `${image.RepoTags?.join(", ") || imgLabel(image)} · ${image.Id.replace("sha256:", "").slice(0, 12)}` : id;
+    });
     setConfirmDelete(null);
     setForceDelete(null);
     setSelected(new Set<string>());
@@ -196,7 +200,7 @@ export const ImageListPage: Component = () => {
       url: "/api/images/delete",
       body: { ids, force },
       key: "images:delete",
-      meta: { type: "image-delete", ids, force },
+      meta: { type: "image-delete", images, ids, force },
     });
   };
 
@@ -370,18 +374,18 @@ export const ImageListPage: Component = () => {
                     {/* Inline actions */}
                     <div class="mt-1 flex items-center gap-0.5">
                       <IBtn title="inspect" onClick={() => setInspectFor(img)}>
-                        <Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" />
+                        ⌕
                       </IBtn>
                       <Show when={hasRole("operator")}>
                         <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
-                          <Ico path="M12 5v14M5 12h14" />
+                          ⊕
                         </IBtn>
                         <Show when={(img.RepoTags ?? []).length > 0}>
                           <IBtn
                             title="升级：重新拉取该镜像标签"
                             onClick={() => { setPullRef(img.RepoTags![0]); setShowPullInput(true); }}
                           >
-                            <Ico path="M12 19V5M5 12l7-7 7 7" />
+                            ↑
                           </IBtn>
                         </Show>
                       </Show>
@@ -393,14 +397,14 @@ export const ImageListPage: Component = () => {
                         class="inline-flex h-6 w-6 items-center justify-center text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <Ico path="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                        ↓
                       </a>
                       <IBtn title="文件" onClick={() => setFilesFor(img)}>
-                        <Ico path="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z" />
+                        ▤
                       </IBtn>
                       <Show when={hasRole("operator")}>
                         <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
-                          <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
+                          ◇
                         </IBtn>
                         <IBtn
                           title="删除"
@@ -408,7 +412,7 @@ export const ImageListPage: Component = () => {
                           loading={deleting(img.Id)}
                           onClick={() => setConfirmDelete(img)}
                         >
-                          <Ico path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                          ⊖
                         </IBtn>
                       </Show>
                     </div>

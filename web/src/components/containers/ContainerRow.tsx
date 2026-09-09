@@ -2,7 +2,7 @@ import { Component, Show, For, createSignal, createResource, onCleanup } from "s
 import { displayImage } from "../../api/inspect";
 import { useNavigate } from "@solidjs/router";
 import { hasRole } from "../../stores/auth";
-import { IBtn, Ico } from "../shared/ActionButton";
+import { IBtn } from "../shared/ActionButton";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
@@ -11,13 +11,10 @@ import { get, getToken } from "../../api/client";
 import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary, FileEntry } from "../../types";
 
-// SVG glyph matching the image list's inspect button.
-const SEARCH = "M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35";
-
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
 // be dropped anywhere — including inside ComposeListPage's expanded project
 // section, which is itself a <div>, not a <table> that could host a <tr>.
-// Column widths (w-44 / w-36 / flex-1 / w-48) mirror the table this
+// Column widths (w-52 / w-36 / flex-1 / w-48) mirror the table this
 // replaced, so both call sites still line up the same four "columns".
 export const ContainerRow: Component<{
   c: ContainerSummary;
@@ -75,7 +72,7 @@ export const ContainerRow: Component<{
   const viewBtns = () => (
     <>
       <IBtn title="查看 Run/Compose 命令" onClick={() => p.onViewCmd({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>⧉</IBtn>
-      <IBtn title="inspect" onClick={() => setShowInspect(true)}><Ico path={SEARCH} /></IBtn>
+      <IBtn title="inspect" onClick={() => setShowInspect(true)}>⌕</IBtn>
       <Show when={running() && p.onConsole}>
         <IBtn title="控制台" onClick={() => p.onConsole?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>&gt;_</IBtn>
       </Show>
@@ -88,7 +85,7 @@ export const ContainerRow: Component<{
       onClick={() => p.onToggleSelect?.()}
     >
       {/* Container info + actions */}
-      <div class="w-full px-3 py-2 sm:w-44 sm:shrink-0">
+      <div class="w-full px-3 py-2 sm:w-52 sm:shrink-0">
         <div class="flex items-center gap-1.5">
           <span class={`h-2 w-2 shrink-0 ${STATE_DOT[c().State] ?? "bg-zinc-600"}`} />
           <a
@@ -274,7 +271,7 @@ export const ContainerRow: Component<{
 // full-width block below that breakpoint, where the labels add nothing.
 export const ContainerRowHeader: Component = () => (
   <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-    <div class="w-44 shrink-0 px-3 py-2">容器</div>
+    <div class="w-52 shrink-0 px-3 py-2">容器</div>
     <div class="w-36 shrink-0 px-3 py-2 text-center">网络 / 端口</div>
     <div class="min-w-0 flex-1 px-3 py-2">挂载</div>
     <div class="w-48 shrink-0 px-3 py-2">命令</div>
