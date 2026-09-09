@@ -1,10 +1,19 @@
-import { Component, Show, For } from "solid-js";
+import { Component, Show, For, createSignal, createResource, onCleanup } from "solid-js";
 import { displayImage } from "../../api/inspect";
 import { useNavigate } from "@solidjs/router";
 import { hasRole } from "../../stores/auth";
-import { IBtn } from "../shared/ActionButton";
+import { IBtn, Ico } from "../shared/ActionButton";
+import { Modal } from "../shared/Modal";
+import { FileBrowser } from "../shared/FileBrowser";
+import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
+import { createDownloadTask } from "../../api/download";
+import { get, getToken } from "../../api/client";
 import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
-import type { ContainerSummary } from "../../types";
+import type { ContainerSummary, FileEntry } from "../../types";
+
+// SVG glyphs matching the image list's file/inspect buttons.
+const FOLDER = "M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z";
+const SEARCH = "M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35";
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
 // be dropped anywhere — including inside ComposeListPage's expanded project
@@ -49,6 +58,30 @@ export const ContainerRow: Component<{
     e.preventDefault();
     navigate(path, { replace: true });
   };
+
+  // inspect / file browsing are self-contained here (local modals) so every
+  // ContainerRow call site — the container list, the compose list's expanded
+  // section, and the compose detail page — gets them without each wiring up
+  // its own modal + callback.
+  const [showInspect, setShowInspect] = createSignal(false);
+  const [showFiles, setShowFiles] = createSignal(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [inspectData] = createResource(() => (showInspect() ? c().Id : null), (id) => get<any>(`/api/containers/${id}/inspect`));
+  const download = createDownloadTask();
+  onCleanup(() => download.cancel());
+
+  // Shared "view" buttons — visible to every role (read-only). Lifecycle and
+  // delete stay operator-only in the branches below.
+  const viewBtns = () => (
+    <>
+      <IBtn title="查看 Run/Compose 命令" onClick={() => p.onViewCmd({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>⧉</IBtn>
+      <IBtn title={running() ? "浏览文件" : "仅运行中的容器可浏览文件"} disabled={!running()} onClick={() => setShowFiles(true)}><Ico path={FOLDER} /></IBtn>
+      <IBtn title="inspect" onClick={() => setShowInspect(true)}><Ico path={SEARCH} /></IBtn>
+      <Show when={running() && p.onConsole}>
+        <IBtn title="控制台" onClick={() => p.onConsole?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>&gt;_</IBtn>
+      </Show>
+    </>
+  );
 
   return (
     <div
@@ -95,11 +128,7 @@ export const ContainerRow: Component<{
 
             <span class="mx-0.5 text-zinc-400">│</span>
 
-            <IBtn title="查看 Run/Compose 命令" onClick={() => p.onViewCmd({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>⧉</IBtn>
-
-            <Show when={running() && p.onConsole}>
-              <IBtn title="控制台" onClick={() => p.onConsole?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>&gt;_</IBtn>
-            </Show>
+            {viewBtns()}
 
             <Show when={!running()}>
               <span class="mx-0.5 text-zinc-400">│</span>
@@ -109,7 +138,7 @@ export const ContainerRow: Component<{
         </Show>
         <Show when={!hasRole("operator")}>
           <div class="mt-1 flex gap-0.5">
-            <IBtn title="查看 Run/Compose 命令" onClick={() => p.onViewCmd({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>⧉</IBtn>
+            {viewBtns()}
           </div>
         </Show>
       </div>
@@ -202,6 +231,26 @@ export const ContainerRow: Component<{
           {c().Command || "—"}
         </span>
       </div>
+
+      <Modal open={showInspect()} onClose={() => setShowInspect(false)} title={`Inspect · ${name() || c().Id.slice(0, 12)}`} wide>
+        <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
+            {JSON.stringify(inspectData(), null, 2)}
+          </pre>
+        </Show>
+      </Modal>
+
+      <Modal open={showFiles()} onClose={() => setShowFiles(false)} title={`文件 · ${name() || c().Id.slice(0, 12)}`} wide>
+        <FileBrowser
+          instanceKey={c().Id}
+          listPath={(sub) => get<FileEntry[]>(`/api/containers/${c().Id}/files?path=${encodeURIComponent(sub)}`)}
+          onDownload={(sub, fname) => download.start(
+            `/api/containers/${c().Id}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
+            `${fname}.tar`,
+          )}
+        />
+      </Modal>
+      <DownloadStatusWidget task={download} />
     </div>
   );
 };

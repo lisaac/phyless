@@ -1,7 +1,9 @@
-import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
+import { Component, createSignal, createResource, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
+import { Modal } from "../shared/Modal";
+import { IBtn, Ico } from "../shared/ActionButton";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { get, imageInspectUrl } from "../../api/client";
 import { queued, isPending } from "../../stores/taskQueue";
@@ -15,7 +17,7 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import { containersOf, representative, ActBtn, ComposeIcon } from "./composeShared";
+import { containersOf, representative, ComposeIcon } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
@@ -40,6 +42,9 @@ export const ComposeListPage: Component = () => {
   // Compose", instead of a separate read-only viewer.
   const [runText, setRunText] = createSignal<string | null>(null);
   const [show, setShow] = createSignal(false);
+  const [inspectFor, setInspectFor] = createSignal<ComposeProject | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [inspectData] = createResource(inspectFor, (p) => get<any>(`/api/compose/detail?id=${encodeURIComponent(p.id)}`));
 
   onMount(() => { store.startPolling(); containers.startPolling(); });
   onCleanup(() => { store.stopPolling(); containers.stopPolling(); });
@@ -144,32 +149,33 @@ export const ComposeListPage: Component = () => {
                       <Show when={p.discovered} fallback={
                         <>
                           <Show when={p.can_build}>
-                            <ActBtn title="docker compose build" loading={isRunning(p.id, "build")} onClick={() => request({ id: p.id, name: p.name, verb: "build" })}>🔨 Build</ActBtn>
+                            <IBtn title="docker compose build" loading={isRunning(p.id, "build")} onClick={() => request({ id: p.id, name: p.name, verb: "build" })}>{"⚒︎"}</IBtn>
                           </Show>
-                          <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>
+                          <IBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖</IBtn>
                         </>
                       }>
-                        <ActBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕ 注册</ActBtn>
+                        <IBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕</IBtn>
                       </Show>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
                     <Show when={hasRole("operator")}>
-                      <ActBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
-                      <ActBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
-                      <ActBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
-                      <ActBtn
+                      <IBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶</IBtn>
+                      <IBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺</IBtn>
+                      <IBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■</IBtn>
+                      <IBtn
                         danger
                         title="docker compose down（停止并移除容器、网络）"
                         loading={isRunning(p.id, "down")}
                         onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) request({ id: p.id, name: p.name, verb: "down" }); }}
-                      >⊘ Down</ActBtn>
-                      <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
+                      >⊘</IBtn>
+                      <IBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull" })}>↓</IBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
-                    <ActBtn
+                    <IBtn title="inspect" onClick={() => setInspectFor(p)}><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /></IBtn>
+                    <IBtn
                       title="基于项目下所有容器创建容器 / 注册 Compose"
                       onClick={() => void runProject(cs().map((c) => c.Id))}
-                    >⧉ Run/Compose</ActBtn>
+                    >⧉</IBtn>
                     </div>
                   </div>
                 </div>
@@ -239,6 +245,14 @@ export const ComposeListPage: Component = () => {
       />
 
       <ComposeActionModal target={composeTarget()} onClose={() => setComposeTarget(null)} />
+
+      <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor()?.name ?? ""}`} wide>
+        <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
+            {JSON.stringify(inspectData(), null, 2)}
+          </pre>
+        </Show>
+      </Modal>
     </div>
   );
 };
