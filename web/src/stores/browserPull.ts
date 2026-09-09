@@ -201,3 +201,70 @@ export async function runBrowserPullCompose(
     cb.note("镜像预加载完成");
   }
 }
+
+// --- Compose update: build → pull/preload → down → up(never) ---
+// One task, sequential, stop-on-failure. Covers both proxy modes: server pull
+// (proxy opts in body) or browser preload (CF worker). build services in browser
+// mode are handled server-side by the build step, so only non-"build" rejections
+// (e.g. digest-pinned) abort the browser path.
+// ponytail: browser mode + a build service whose FROM base is not local and the
+// daemon can't reach the registry will fail at `compose build`. Pre-existing limit
+// (today's Build button too). Upgrade path: browser-preload the FROM base first.
+
+export interface ComposeUpdateParams {
+  id: string;
+  mode: "server" | "browser";
+  canBuild: boolean;
+  workerUrl?: string;
+  token: string;
+  creds?: Creds;
+  pullOptions?: Record<string, unknown>;
+}
+
+export interface ComposeUpdateDeps {
+  fetchPlan: (id: string) => Promise<ComposePullPlan>;
+  runBrowserPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>;
+  streamCompose: typeof streamCompose;
+}
+
+export const defaultUpdateDeps: ComposeUpdateDeps = {
+  fetchPlan: (id) => get<ComposePullPlan>(`/api/compose/pull-plan?id=${encodeURIComponent(id)}`),
+  runBrowserPull: (params, cb) => runBrowserPull(params, cb),
+  streamCompose,
+};
+
+export async function runComposeUpdate(
+  params: ComposeUpdateParams,
+  cb: BrowserPullCallbacks,
+  deps: ComposeUpdateDeps = defaultUpdateDeps,
+): Promise<void> {
+  const { id, token } = params;
+  const signal = cb.signal;
+
+  if (params.canBuild) {
+    cb.note("构建镜像…");
+    // Server mode carries the proxy payload (build honors it via composeRequest);
+    // browser mode has no server proxy_url, so pullOptions is undefined → no body.
+    await deps.streamCompose("build", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
+  }
+
+  if (params.mode === "browser") {
+    cb.note("解析 Compose 项目镜像…");
+    const plan = await deps.fetchPlan(id);
+    const blocked = plan.rejected.filter((r) => r.reason !== "build");
+    if (blocked.length) {
+      const detail = blocked.map((r) => `${r.service}（${rejectReasonText[r.reason] ?? r.reason}）`).join("，");
+      throw new Error(`以下服务无法用浏览器下载：${detail}。请改用服务端代理。`);
+    }
+    await preloadComposeImages(plan.images, { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
+  } else {
+    cb.note("拉取镜像…");
+    await deps.streamCompose("pull", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
+  }
+
+  cb.note("停止并移除旧容器…");
+  await deps.streamCompose("down", id, { token, onProgress: cb.progress, signal });
+
+  cb.note("启动 Compose（使用本地镜像）…");
+  await deps.streamCompose("up", id, { body: { pull_policy: "never" }, token, onProgress: cb.progress, signal });
+}
