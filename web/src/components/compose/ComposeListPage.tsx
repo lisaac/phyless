@@ -3,7 +3,6 @@ import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { Ico } from "../shared/ActionButton";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { get, imageInspectUrl } from "../../api/client";
 import { queued, isPending } from "../../stores/taskQueue";
@@ -176,7 +175,7 @@ export const ComposeListPage: Component = () => {
                       >⬆</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
-                    <ActBtn title="inspect" onClick={() => setInspectFor(p)}><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /></ActBtn>
+                    <ActBtn title="inspect" onClick={() => setInspectFor(p)}>⌕</ActBtn>
                     <ActBtn
                       title="基于项目下所有容器创建容器 / 注册 Compose"
                       onClick={() => void runProject(cs().map((c) => c.Id))}

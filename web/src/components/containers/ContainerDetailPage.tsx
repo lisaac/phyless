@@ -181,6 +181,7 @@ export const ContainerDetailPage: Component = () => {
   const name = () => (inspect()?.Name ?? id()).replace(/^\//, "");
   const state = () => inspect()?.State?.Status ?? "unknown";
   const running = () => state() === "running";
+  const paused = () => state() === "paused";
 
   // Upgrade the tab strip's placeholder ("容器 abc12345") to the real name once known.
   // This page isn't remounted when switching between two containers (same
@@ -341,11 +342,15 @@ export const ContainerDetailPage: Component = () => {
             (border + bg-zinc-900/60), for a consistent look across both. */}
         <Show when={hasRole("operator")}>
           <div class="flex flex-wrap items-center gap-0.5 border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
-            <Show when={!running()}>
+            <Show when={!running() && !paused()}>
               <Btn loading={isP("start")} onClick={() => void act("start")}>▶ 启动</Btn>
+            </Show>
+            <Show when={paused()}>
+              <Btn loading={isP("unpause")} onClick={() => void act("unpause")}>▶ 恢复运行</Btn>
             </Show>
             <Show when={running()}>
               <Btn loading={isP("stop")} onClick={() => void act("stop")}>■ 停止</Btn>
+              <Btn loading={isP("pause")} onClick={() => void act("pause")}>⏸ 暂停</Btn>
             </Show>
             <Btn loading={isP("restart")} onClick={() => void act("restart")}>↺ 重启</Btn>
             <Btn loading={isP("kill")} danger onClick={() => void act("kill")}>✕ 强制关闭</Btn>

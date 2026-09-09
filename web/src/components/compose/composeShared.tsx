@@ -36,15 +36,9 @@ export function servicesHaveBuild(services: Record<string, Record<string, unknow
   return !!services && Object.values(services).some((s) => s?.build != null);
 }
 
-// Stack/layers icon used everywhere a compose project needs a visual marker:
-// the tab strip, the list row, and the detail page heading.
+// Text glyph used everywhere a compose project needs a visual marker.
 export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" stroke-width="2" width={p.size ?? 16} height={p.size ?? 16} class={p.class ?? "shrink-0 text-zinc-400"}>
-    <polygon points="12 2 2 7 12 12 22 7 12 2" />
-    <polyline points="2 17 12 22 22 17" />
-    <polyline points="2 12 12 17 22 12" />
-  </svg>
+  <span aria-hidden="true" class={p.class ?? "shrink-0 text-zinc-400"} style={{ "font-size": `${p.size ?? 16}px`, "line-height": "1" }}>⧉</span>
 );
 
 // Thin wrapper around the shared Btn (same style used by the container list

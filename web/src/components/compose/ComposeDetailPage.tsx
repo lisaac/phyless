@@ -258,7 +258,7 @@ export const ComposeDetailPage: Component = () => {
           >⊘ Down</ActBtn>
           <ActBtn title="docker compose pull" loading={isRunning("pull")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "pull" })}>↓ Pull</ActBtn>
           <Show when={servicesHaveBuild(detail()?.services)}>
-            <ActBtn title="docker compose build" loading={isRunning("build")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "build" })}>🔨 Build</ActBtn>
+            <ActBtn title="docker compose build" loading={isRunning("build")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "build" })}>⚒︎ Build</ActBtn>
           </Show>
           <ActBtn
             title="更新：build（若有）→ pull → down → up"

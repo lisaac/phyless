@@ -11,8 +11,7 @@ import { get, getToken } from "../../api/client";
 import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary, FileEntry } from "../../types";
 
-// SVG glyphs matching the image list's file/inspect buttons.
-const FOLDER = "M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z";
+// SVG glyph matching the image list's inspect button.
 const SEARCH = "M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35";
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
@@ -65,7 +64,7 @@ export const ContainerRow: Component<{
   // section, and the compose detail page — gets them without each wiring up
   // its own modal + callback.
   const [showInspect, setShowInspect] = createSignal(false);
-  const [showFiles, setShowFiles] = createSignal(false);
+  const [browsePath, setBrowsePath] = createSignal<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [inspectData] = createResource(() => (showInspect() ? c().Id : null), (id) => get<any>(`/api/containers/${id}/inspect`));
   const download = createDownloadTask();
@@ -76,7 +75,6 @@ export const ContainerRow: Component<{
   const viewBtns = () => (
     <>
       <IBtn title="查看 Run/Compose 命令" onClick={() => p.onViewCmd({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>⧉</IBtn>
-      <IBtn title={running() ? "浏览文件" : "仅运行中的容器可浏览文件"} disabled={!running()} onClick={() => setShowFiles(true)}><Ico path={FOLDER} /></IBtn>
       <IBtn title="inspect" onClick={() => setShowInspect(true)}><Ico path={SEARCH} /></IBtn>
       <Show when={running() && p.onConsole}>
         <IBtn title="控制台" onClick={() => p.onConsole?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>&gt;_</IBtn>
@@ -124,16 +122,15 @@ export const ContainerRow: Component<{
               <IBtn title="停止" loading={p.isP(c().Id, "stop")} onClick={() => void p.act(c().Id, "stop", name())}>■</IBtn>
               <IBtn title="暂停" loading={p.isP(c().Id, "pause")} onClick={() => void p.act(c().Id, "pause", name())}>⏸</IBtn>
               <IBtn title="重启" loading={p.isP(c().Id, "restart")} onClick={() => void p.act(c().Id, "restart", name())}>↺</IBtn>
-              <IBtn title="强制关闭 (SIGKILL)" loading={p.isP(c().Id, "kill")} onClick={() => void p.act(c().Id, "kill", name())} danger>✕</IBtn>
+            </Show>
+
+            <Show when={p.onUpgrade}>
+              <IBtn title="升级（拉取镜像并替换容器）" onClick={() => p.onUpgrade?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>↑</IBtn>
             </Show>
 
             <span class="mx-0.5 text-zinc-400">│</span>
 
             {viewBtns()}
-
-            <Show when={p.onUpgrade}>
-              <IBtn title="升级（拉取镜像并替换容器）" onClick={() => p.onUpgrade?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>↑</IBtn>
-            </Show>
 
             <Show when={!running()}>
               <span class="mx-0.5 text-zinc-400">│</span>
@@ -176,13 +173,22 @@ export const ContainerRow: Component<{
         </Show>
       </div>
 
-      {/* Mounts — only linked to the file browser while the container is
-          running, since browsing its filesystem is exec-based and has
-          nothing to attach to once it's stopped. */}
+      {/* Mount paths open the file browser at that path. With no mounts, the
+          dash opens the container root. Browsing remains running-only because
+          the backend uses exec inside the container. */}
       <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 sm:flex-1 sm:border-t-0">
         <Show
           when={c().Mounts.length > 0}
-          fallback={<span class="text-xs text-zinc-500">—</span>}
+          fallback={
+            <Show when={running()} fallback={<span class="text-xs text-zinc-500">—</span>}>
+              <a
+                href="#"
+                class="text-xs text-zinc-500 hover:text-emerald-400 hover:underline transition-colors"
+                title="从根目录浏览文件"
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); setBrowsePath("/"); }}
+              >—</a>
+            </Show>
+          }
         >
           {/* self-start below: this container is flex-col, whose default
               align-items:stretch would otherwise stretch each row's
@@ -208,10 +214,10 @@ export const ContainerRow: Component<{
                   }
                 >
                   <a
-                    href={`/containers/${c().Id}?tab=files&path=${encodeURIComponent(m.Destination)}`}
+                    href="#"
                     class="flex w-fit shrink-0 items-center gap-0.5 self-start font-mono text-[11px] text-zinc-400 hover:text-emerald-400 hover:underline transition-colors"
                     title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
-                    onClick={goto(`/containers/${c().Id}?tab=files&path=${encodeURIComponent(m.Destination)}`)}
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); setBrowsePath(m.Destination || "/"); }}
                   >
                     <span class="shrink-0">{midPath(m.Source || m.Name || "")}</span>
                     <span class="shrink-0 text-zinc-600">→</span>
@@ -245,9 +251,10 @@ export const ContainerRow: Component<{
         </Show>
       </Modal>
 
-      <Modal open={showFiles()} onClose={() => setShowFiles(false)} title={`文件 · ${name() || c().Id.slice(0, 12)}`} wide>
+      <Modal open={browsePath() !== null} onClose={() => setBrowsePath(null)} title={`文件 · ${name() || c().Id.slice(0, 12)}`} wide>
         <FileBrowser
           instanceKey={c().Id}
+          initialPath={browsePath() ?? "/"}
           listPath={(sub) => get<FileEntry[]>(`/api/containers/${c().Id}/files?path=${encodeURIComponent(sub)}`)}
           onDownload={(sub, fname) => download.start(
             `/api/containers/${c().Id}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
