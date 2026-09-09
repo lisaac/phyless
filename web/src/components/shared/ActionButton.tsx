@@ -19,3 +19,34 @@ export const Btn: Component<{
         {p.loading ? <span class="inline-block animate-spin">↺</span> : p.children}
       </button>;
 };
+
+// Square 24px icon button used in the "actions under the name" rows of every
+// list (images, containers, networks, volumes). Stops click propagation so it
+// works inside rows whose own onClick selects/expands. Pair with <Ico> for SVG
+// glyphs or pass a text glyph (▶ ■ ⊖ …) as children.
+export const IBtn: Component<{
+  title: string; onClick: () => void;
+  loading?: boolean; disabled?: boolean; danger?: boolean; children: JSX.Element;
+}> = (p) => (
+  <button
+    title={p.title}
+    disabled={p.loading || p.disabled}
+    onClick={(e) => { e.stopPropagation(); p.onClick(); }}
+    class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${
+      p.danger
+        ? "text-zinc-500 hover:bg-red-900/40 hover:text-red-400"
+        : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"
+    }`}
+  >
+    {p.loading ? <span class="inline-block animate-spin text-xs">↺</span> : p.children}
+  </button>
+);
+
+// Tiny 14px stroked SVG icon — feed it an SVG path `d`.
+export const Ico = (p: { path: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round"
+       stroke-linejoin="round" width="14" height="14">
+    <path d={p.path} />
+  </svg>
+);

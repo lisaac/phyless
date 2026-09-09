@@ -136,8 +136,10 @@ export const ComposeListPage: Component = () => {
                       </Show>
                     </div>
                     <div class="mt-0.5 text-[11px] text-zinc-400">{p.compose_file}</div>
-                  </div>
-                  <div class="flex shrink-0 flex-wrap items-center gap-0.5 sm:ml-auto sm:justify-end" onClick={(e) => e.stopPropagation()}>
+                    <Show when={p.base_dir}>
+                      <div class="text-[11px] text-zinc-500" title={p.base_dir}>目录：{p.base_dir}</div>
+                    </Show>
+                    <div class="mt-1 flex flex-wrap items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                     <Show when={hasRole("operator")}>
                       <Show when={p.discovered} fallback={
                         <>
@@ -168,6 +170,7 @@ export const ComposeListPage: Component = () => {
                       title="基于项目下所有容器创建容器 / 注册 Compose"
                       onClick={() => void runProject(cs().map((c) => c.Id))}
                     >⧉ Run/Compose</ActBtn>
+                    </div>
                   </div>
                 </div>
                 {/* CSS grid-rows 0fr→1fr animates height without knowing the

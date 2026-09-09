@@ -1,4 +1,4 @@
-import { Component, createSignal, createResource, onMount, onCleanup, Show, For, JSX } from "solid-js";
+import { Component, createSignal, createResource, onMount, onCleanup, Show, For } from "solid-js";
 import { enqueue, queued, isPending, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
@@ -6,7 +6,7 @@ import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
-import { Btn } from "../shared/ActionButton";
+import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
@@ -15,29 +15,6 @@ import { get, getToken } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import type { ImageSummary, FileEntry } from "../../types";
-
-// Tiny icon SVG
-const Ico = (p: { path: string }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" stroke-width="2" stroke-linecap="round"
-       stroke-linejoin="round" width="14" height="14">
-    <path d={p.path} />
-  </svg>
-);
-const IBtn = (p: { title: string; onClick: () => void; loading?: boolean; danger?: boolean; children: JSX.Element }) => (
-  <button
-    title={p.title}
-    disabled={p.loading}
-    onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${
-      p.danger
-        ? "text-zinc-500 hover:bg-red-900/40 hover:text-red-400"
-        : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"
-    }`}
-  >
-    {p.loading ? <span class="inline-block animate-spin text-xs">↺</span> : p.children}
-  </button>
-);
 
 // "<none> | repo@1234567890ab" — the digest names where an untagged image came from.
 const digestHint = (img: ImageSummary) => {

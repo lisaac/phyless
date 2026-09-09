@@ -27,9 +27,10 @@ import { ComposeActionModal, isComposeRunning, requestComposeAction, type Compos
 import { enqueue, queued } from "../../stores/taskQueue";
 import type { ComposeProject, ContainerSummary, FileEntry } from "../../types";
 
-type Tab = "info" | "files" | "logs";
+type Tab = "info" | "inspect" | "files" | "logs";
 const TABS: { key: Tab; label: string }[] = [
   { key: "info", label: "基本信息" },
+  { key: "inspect", label: "Inspect" },
   { key: "files", label: "文件" },
   { key: "logs", label: "日志" },
 ];
@@ -329,6 +330,14 @@ export const ComposeDetailPage: Component = () => {
             </div>
           </div>
         </div>
+      </Show>
+
+      <Show when={tab() === "inspect"}>
+        <Show when={!detail.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+          <pre class="max-h-[calc(100vh-16rem)] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
+            {JSON.stringify(detail(), null, 2)}
+          </pre>
+        </Show>
       </Show>
 
       <Show when={tab() === "files"}>

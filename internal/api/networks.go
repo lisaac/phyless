@@ -6,9 +6,19 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-chi/chi/v5"
 )
+
+// networkWithUsage adds which containers are attached to a network — mirrors
+// imageWithUsage/volumeWithUsage (see images.go, volumes.go). NetworkList
+// leaves Containers empty (only NetworkInspect fills it), so compute it here
+// by scanning each container's own network endpoints.
+type networkWithUsage struct {
+	network.Summary
+	UsedBy []containerRef `json:"UsedBy"`
+}
 
 func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 	nets, err := s.docker.NetworkList(r.Context(), network.ListOptions{})
@@ -20,7 +30,34 @@ func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 	// instability class as Mounts/Ports/RepoTags. Sort by creation time so
 	// polling doesn't reshuffle the list.
 	sort.Slice(nets, func(i, j int) bool { return nets[i].Created.Before(nets[j].Created) })
-	writeJSON(w, http.StatusOK, nets)
+
+	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	usedBy := make(map[string][]containerRef)
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		if c.NetworkSettings == nil {
+			continue
+		}
+		for _, ep := range c.NetworkSettings.Networks {
+			if ep == nil || ep.NetworkID == "" {
+				continue
+			}
+			usedBy[ep.NetworkID] = append(usedBy[ep.NetworkID], containerRef{ID: c.ID, Name: name})
+		}
+	}
+
+	out := make([]networkWithUsage, len(nets))
+	for i, n := range nets {
+		out[i] = networkWithUsage{Summary: n, UsedBy: usedBy[n.ID]}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {

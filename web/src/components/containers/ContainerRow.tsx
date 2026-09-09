@@ -1,27 +1,10 @@
-import { Component, JSX, Show, For } from "solid-js";
+import { Component, Show, For } from "solid-js";
 import { displayImage } from "../../api/inspect";
 import { useNavigate } from "@solidjs/router";
 import { hasRole } from "../../stores/auth";
+import { IBtn } from "../shared/ActionButton";
 import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary } from "../../types";
-
-const IBtn = (p: {
-  title: string; onClick: () => void;
-  loading?: boolean; disabled?: boolean; danger?: boolean; children: JSX.Element;
-}) => (
-  <button
-    title={p.title}
-    disabled={p.loading || p.disabled}
-    onClick={(e) => { e.stopPropagation(); p.onClick(); }}
-    class={`inline-flex h-6 w-6 items-center justify-center transition-colors disabled:opacity-30 ${
-      p.danger
-        ? "text-zinc-500 hover:bg-red-900/40 hover:text-red-400"
-        : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"
-    }`}
-  >
-    {p.loading ? <span class="inline-block animate-spin text-xs">↺</span> : p.children}
-  </button>
-);
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
 // be dropped anywhere — including inside ComposeListPage's expanded project

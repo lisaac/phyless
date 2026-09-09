@@ -1,9 +1,10 @@
-import { Component, createSignal, onMount, onCleanup, For, Show } from "solid-js";
+import { Component, createSignal, createResource, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
+import { IBtn, Ico } from "../shared/ActionButton";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
@@ -11,6 +12,15 @@ import { hasRole } from "../../stores/auth";
 import { midPath } from "../containers/containerActions";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import type { VolumeSummary, FileEntry } from "../../types";
+
+const fmtDate = (s?: string): string => {
+  if (!s) return "—";
+  const t = new Date(s);
+  if (isNaN(t.getTime())) return "—";
+  return t.toLocaleString("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
+};
 
 export const VolumeListPage: Component = () => {
   const navigate = useNavigate();
@@ -20,6 +30,9 @@ export const VolumeListPage: Component = () => {
   const [show, setShow] = createSignal(false);
   const [name, setName] = createSignal("");
   const [browse, setBrowse] = createSignal<VolumeSummary | null>(null);
+  const [inspectFor, setInspectFor] = createSignal<VolumeSummary | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [inspectData] = createResource(inspectFor, (v) => get<any>(`/api/volumes/${encodeURIComponent(v.Name)}/inspect`));
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
@@ -54,20 +67,36 @@ export const VolumeListPage: Component = () => {
           whenever a name happened to be long. */}
       <div class="overflow-x-auto border border-zinc-800">
         <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-          <div class="w-48 shrink-0 px-3 py-2">名称</div>
-          <div class="w-20 shrink-0 px-3 py-2">驱动</div>
+          <div class="w-64 shrink-0 px-3 py-2">名称</div>
+          <div class="w-24 shrink-0 px-3 py-2">驱动 / 范围</div>
           <div class="min-w-0 flex-1 px-3 py-2">挂载点</div>
           <div class="w-48 shrink-0 px-3 py-2">使用容器</div>
-          <div class="w-36 shrink-0 px-3 py-2">操作</div>
+          <div class="w-40 shrink-0 px-3 py-2 text-center">创建时间</div>
         </div>
         <div class="divide-y divide-zinc-800">
           <For each={view.visible()}>
             {(v) => (
-              <div class="flex flex-col text-sm transition-colors sm:flex-row hover:bg-white/[0.03]">
-                <div class="w-full px-3 py-2 sm:w-48 sm:shrink-0">
-                  <span class="font-medium" title={v.Name}>{midPath(v.Name)}</span>
+              <div class="flex flex-col text-sm transition-colors sm:flex-row sm:items-start hover:bg-white/[0.03]">
+                <div class="w-full px-3 py-2 sm:w-64 sm:shrink-0">
+                  <div class="min-w-0 break-all font-medium" title={v.Name}>{midPath(v.Name)}</div>
+                  <div class="mt-1 flex items-center gap-0.5">
+                    <IBtn title="浏览文件" onClick={() => setBrowse(v)}>
+                      <Ico path="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z" />
+                    </IBtn>
+                    <IBtn title="inspect" onClick={() => setInspectFor(v)}>
+                      <Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" />
+                    </IBtn>
+                    <Show when={hasRole("operator")}>
+                      <IBtn title="删除" danger onClick={() => remove(v.Name)}>
+                        <Ico path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                      </IBtn>
+                    </Show>
+                  </div>
                 </div>
-                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:w-20 sm:shrink-0 sm:border-t-0">{v.Driver}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:w-24 sm:shrink-0 sm:border-t-0">
+                  <div>{v.Driver}</div>
+                  <Show when={v.Scope}><div class="text-zinc-500">{v.Scope}</div></Show>
+                </div>
                 <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:flex-1 sm:border-t-0" title={v.Mountpoint}>{midPath(v.Mountpoint)}</div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-48 sm:shrink-0 sm:border-t-0">
                   <Show when={(v.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
@@ -86,14 +115,7 @@ export const VolumeListPage: Component = () => {
                     </div>
                   </Show>
                 </div>
-                <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-36 sm:shrink-0 sm:border-t-0">
-                  <div class="flex gap-1">
-                    <Button onClick={() => setBrowse(v)}>浏览</Button>
-                    <Show when={hasRole("operator")}>
-                      <Button variant="danger" onClick={() => remove(v.Name)}>删除</Button>
-                    </Show>
-                  </div>
-                </div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-40 sm:shrink-0 sm:border-t-0 sm:text-center">{fmtDate(v.CreatedAt)}</div>
               </div>
             )}
           </For>
@@ -117,6 +139,14 @@ export const VolumeListPage: Component = () => {
       <Modal open={!!browse()} onClose={() => setBrowse(null)} title={`浏览 ${browse()?.Name ?? ""}`} wide>
         <Show when={browse()}>
           <FileBrowser listPath={listFiles} />
+        </Show>
+      </Modal>
+
+      <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor()?.Name ?? ""}`} wide>
+        <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
+            {JSON.stringify(inspectData(), null, 2)}
+          </pre>
         </Show>
       </Modal>
     </div>

@@ -36,12 +36,22 @@ export interface NetworkSummary {
   Name: string;
   Driver: string;
   Scope: string;
+  Created?: string;
+  Internal?: boolean;
+  Attachable?: boolean;
+  EnableIPv6?: boolean;
+  IPAM?: { Config?: { Subnet?: string; Gateway?: string }[] };
+  Labels?: Record<string, string>;
+  UsedBy?: { Id: string; Name: string }[];
 }
 
 export interface VolumeSummary {
   Name: string;
   Driver: string;
   Mountpoint: string;
+  Scope?: string;
+  CreatedAt?: string;
+  Labels?: Record<string, string>;
   UsedBy?: { Id: string; Name: string }[];
 }
 
