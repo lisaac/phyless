@@ -24,9 +24,10 @@ export const startComposeAction = (a: ComposeAction, body?: unknown) => enqueue(
 export const isComposeRunning = (id: string, verb: ComposeVerb) =>
   isPending((t) => t.meta?.composeId === id && t.meta?.verb === verb);
 
-// up/pull take proxy/registry options → open the modal; the rest run directly.
+// up/pull/build take proxy/registry options → open the modal; the rest run
+// directly. build needs the proxy to pre-pull its FROM base images.
 export const requestComposeAction = (a: ComposeAction, openOptions: (a: ComposeAction) => void) => {
-  if (a.verb === "up" || a.verb === "pull") openOptions(a);
+  if (a.verb === "up" || a.verb === "pull" || a.verb === "build") openOptions(a);
   else void startComposeAction(a);
 };
 
@@ -76,7 +77,9 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
               </div>
             </label>
           </Show>
-          <PullOptions options={pull} multipleRegistries allowBrowser />
+          {/* build pre-pulls base images server-side through the proxy; the
+              browser-download path has no build mode, so hide it for build. */}
+          <PullOptions options={pull} multipleRegistries allowBrowser={t().verb !== "build"} />
           <div class="mt-4 flex justify-end gap-2">
             <Button onClick={close}>取消</Button>
             <Button variant="primary" onClick={start}>{VERB_LABEL[t().verb]}</Button>

@@ -228,8 +228,13 @@ func TestComposeOperationValidationBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateComposeOperation(proxied, "up", project); err == nil || !strings.Contains(err.Error(), "pull proxy") {
-		t.Fatalf("proxy build validation = %v", err)
+	// up/build with a proxy are allowed: base images are pre-pulled through the
+	// proxy before an offline build. Only pull (no build step) stays rejected.
+	if err := validateComposeOperation(proxied, "up", project); err != nil {
+		t.Fatalf("proxy up validation = %v, want nil", err)
+	}
+	if err := validateComposeOperation(proxied, "pull", project); err == nil || !strings.Contains(err.Error(), "pull proxy") {
+		t.Fatalf("proxy pull validation = %v", err)
 	}
 	if err := validateComposeOperation(context.Background(), "up", &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
 		"provider": {Name: "provider", Provider: &composetypes.ServiceProviderConfig{Type: "terraform"}},
@@ -247,9 +252,10 @@ func TestComposeOperationValidationBoundaries(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("disabled build validation = %v", err)
 	}
-	// The build operation is subject to the same build-config checks as up/pull.
-	if err := validateComposeOperation(proxied, "build", project); err == nil || !strings.Contains(err.Error(), "pull proxy") {
-		t.Fatalf("proxy build op validation = %v", err)
+	// build with a proxy is allowed (pre-pull path), but remote build contexts
+	// remain unsupported regardless of proxy.
+	if err := validateComposeOperation(proxied, "build", project); err != nil {
+		t.Fatalf("proxy build validation = %v, want nil", err)
 	}
 	if err := validateComposeOperation(context.Background(), "build", &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
 		"remote": {Name: "remote", Build: &composetypes.BuildConfig{Context: "git://example/repo"}},

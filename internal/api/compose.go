@@ -16,8 +16,11 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/distribution/reference"
 	composeapi "github.com/docker/compose/v2/pkg/api"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"phyless/internal/config"
@@ -773,6 +776,11 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 						err = fmt.Errorf("compose up requires a readable project file")
 						break
 					}
+					if phyDocker.HasPullProxy(ctx) {
+						if err = s.prePullBuildBases(ctx, project, request.AuthConfigs, options.Platform, output); err != nil {
+							break
+						}
+					}
 					applyComposePullPolicy(project, options.PullPolicy)
 					err = service.Compose().Up(ctx, project, composeapi.UpOptions{
 						Create: composeapi.CreateOptions{
@@ -796,6 +804,11 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 					if project == nil {
 						err = fmt.Errorf("compose build requires a readable project file")
 						break
+					}
+					if phyDocker.HasPullProxy(ctx) {
+						if err = s.prePullBuildBases(ctx, project, request.AuthConfigs, options.Platform, output); err != nil {
+							break
+						}
 					}
 					err = service.Compose().Build(ctx, project, composeapi.BuildOptions{
 						Progress: "plain",
@@ -892,6 +905,80 @@ func composeCanUseRunningFallback(operation string, resolved composeResolution, 
 	}
 }
 
+// prePullBuildBases pulls every build service's FROM base images through the
+// request proxy so a subsequent offline build (buildkit with Pull disabled)
+// finds them in the local image store. buildkit runs its own FROM pulls inside
+// the daemon, which never pass through phyless's userspace registry proxy, so
+// without this a proxied build/up cannot reach a blocked registry.
+func (s *Server) prePullBuildBases(ctx context.Context, project *composetypes.Project, auths map[string]registry.AuthConfig, platform string, output io.Writer) error {
+	if project == nil {
+		return nil
+	}
+	names := make([]string, 0, len(project.Services))
+	for name := range project.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	pulled := make(map[string]struct{})
+	for _, name := range names {
+		service := project.Services[name]
+		if service.Build == nil {
+			continue
+		}
+		bases, err := dockercompose.BuildBaseImages(service, project.WorkingDir)
+		if err != nil {
+			// Unreadable/unparseable Dockerfile: let buildkit surface the real
+			// error rather than blocking the build here.
+			log.Printf("compose: cannot resolve base images for service %q: %v", name, err)
+			continue
+		}
+		for _, base := range bases {
+			if _, ok := pulled[base]; ok {
+				continue
+			}
+			pulled[base] = struct{}{}
+			if err := s.prePullBaseImage(ctx, base, auths, platform, output); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) prePullBaseImage(ctx context.Context, ref string, auths map[string]registry.AuthConfig, platform string, output io.Writer) error {
+	encoded, err := encodeRegistryAuthForImage(ref, auths)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "通过代理预拉取基础镜像 %s\n", safePullTarget(ref))
+	rc, err := s.docker.ImagePull(ctx, ref, image.PullOptions{RegistryAuth: encoded, Platform: platform})
+	if err != nil {
+		return fmt.Errorf("预拉取基础镜像 %s 失败: %w", safePullTarget(ref), err)
+	}
+	if err := phyDocker.ConsumeProgress(ctx, io.Discard, rc); err != nil {
+		return fmt.Errorf("预拉取基础镜像 %s 失败: %w", safePullTarget(ref), err)
+	}
+	return nil
+}
+
+// encodeRegistryAuthForImage picks the configured credential whose host matches
+// the base image's registry; unmatched hosts pull anonymously (public bases).
+func encodeRegistryAuthForImage(ref string, auths map[string]registry.AuthConfig) (string, error) {
+	named, err := reference.ParseNormalizedNamed(ref)
+	if err != nil {
+		return "", fmt.Errorf("invalid base image reference %q", ref)
+	}
+	host, err := phyDocker.RegistryHost(reference.Domain(named))
+	if err != nil {
+		return "", err
+	}
+	cfg, ok := auths[host]
+	if !ok {
+		return "", nil
+	}
+	return registry.EncodeAuthConfig(cfg)
+}
+
 func validateComposeOperation(ctx context.Context, operation string, project *composetypes.Project) error {
 	if project == nil {
 		return nil
@@ -907,8 +994,11 @@ func validateComposeOperation(ctx context.Context, operation string, project *co
 		if operation != "up" && operation != "pull" && operation != "build" || service.Build == nil {
 			continue
 		}
-		if phyDocker.HasPullProxy(ctx) {
-			return fmt.Errorf("compose %s with a pull proxy is not supported for service %q because it has a build configuration", operation, name)
+		// up/build pre-pull FROM base images through the proxy before an offline
+		// build (see prePullBuildBases). pull has no build step to feed, so a
+		// proxied pull of a build service stays unsupported.
+		if operation == "pull" && phyDocker.HasPullProxy(ctx) {
+			return fmt.Errorf("compose pull with a pull proxy is not supported for service %q because it has a build configuration", name)
 		}
 		if remote := unsupportedComposeReference(service.Build.Context); remote != "" {
 			return fmt.Errorf("compose service %q uses unsupported remote build context %q", name, remote)
