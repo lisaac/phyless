@@ -4,7 +4,7 @@
 
 ## 目标
 
-1. 为 Compose 项目新增「Update」动作：`build`（若有 build 服务）→ `pull` → `down` → `up`，
+1. 为 Compose 项目新增「Update」动作：有 build 时 `build`，否则 `pull`，再 `down` → `up`，
    兼顾服务端代理与浏览器（CF worker）代理两种拉取方式。
 2. 容器列表新增「升级」按键，复用容器详情页已有的升级流程。
 3. 镜像列表新增「升级」按键，复用现有 pull 流程（弹窗确认代理）。
@@ -40,8 +40,8 @@
 
 - Update 末步 `up` 使用 `pull_policy=never`：build/pull 刚产出本地镜像，避免多一次 registry 往返，
   也让浏览器代理模式下 daemon 不再访问 registry。
-- 服务端模式下 `build` 与 `pull` 均携带代理载荷（build 端点已经 `runComposeOperation` →
-  `composeRequest` 解析同一套代理选项）。浏览器模式无服务端 `proxy_url`，build 仍走 daemon，见下方限制。
+- 服务端模式下 `build` 或 `pull` 携带代理载荷（build 端点已经 `runComposeOperation` →
+  `composeRequest` 解析同一套代理选项）。含 build 的项目不再调用代理 pull，因为后端明确拒绝该组合。
 - 浏览器代理 + build 服务：采用**混合**。`pull-plan` 已把项目拆成 `images`（可预载）/ `rejected:build`
   （交给服务端 build）/ `rejected:digest`（报错）。因此：build 服务端 build，`images` 浏览器预载，
   遇到 `digest` 拒绝则报错。
@@ -57,10 +57,10 @@
 
 ```
 服务端模式:                            浏览器模式:
-  1. build  [代理选项]（若 canBuild）   1. build（若 canBuild）      ← 服务端，无 server 代理
-  2. pull        [代理选项]             2. 预载 plan.images         ← 浏览器 CF worker
-  3. down                               3. rejected 中含非 build（digest）→ 报错
-  4. up  pull_policy=never              4. down
+  1. canBuild ? build : pull [代理选项]  1. build（若 canBuild）      ← 服务端，无 server 代理
+  2. down                               2. 预载 plan.images         ← 浏览器 CF worker
+  3. up  pull_policy=never              3. rejected 中含非 build（digest）→ 报错
+                                        4. down
                                         5. up  pull_policy=never
 ```
 

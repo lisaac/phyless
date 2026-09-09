@@ -146,12 +146,13 @@ export async function streamPost(
   const consume = (line: string) => {
     const s = line.trim();
     if (!s) return;
-    opts.onProgress?.(s);
     try {
-      const evt = JSON.parse(s) as { error?: string; errorDetail?: { message?: string } };
+      const evt = JSON.parse(s) as { error?: string; errorDetail?: { message?: string }; status?: string; stream?: string };
       if (evt.error || evt.errorDetail) throw new Error(evt.error || evt.errorDetail?.message || "请求失败");
+      const progress = evt.stream ?? evt.status;
+      if (progress) opts.onProgress?.(progress.trim());
     } catch (e) {
-      if (e instanceof SyntaxError) return; // plain compose/build progress
+      if (e instanceof SyntaxError) { opts.onProgress?.(s); return; } // plain progress
       throw e;
     }
   };
@@ -346,9 +347,9 @@ export async function runBrowserUpgrade(
   }, cb, deps);
 }
 
-// --- Compose update: build → pull/preload → down → up(never) ---
-// One task, sequential, stop-on-failure. Browser mode preloads FROM bases before
-// build, then preloads ordinary service images before the local-only Up.
+// --- Compose update: build or pull/preload → down → up(never) ---
+// One task, sequential, stop-on-failure. Build projects do not also call the
+// compose pull endpoint, which rejects build services when a proxy is active.
 
 export interface ComposeUpdateParams {
   id: string;
@@ -411,7 +412,7 @@ export async function runComposeUpdate(
     await preloadComposeImages(plan.images, { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
   }
 
-  if (params.mode === "server") {
+  if (params.mode === "server" && !params.canBuild) {
     cb.note("拉取镜像…");
     await deps.streamCompose("pull", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
   }

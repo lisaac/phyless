@@ -13,14 +13,13 @@ const cb = () => ({ note: vi.fn(), progress: vi.fn(), signal: new AbortControlle
 const verbs = (sc: ReturnType<typeof vi.fn>) => sc.mock.calls.map((c) => c[0]);
 
 describe("runComposeUpdate", () => {
-  it("server mode runs build→pull→down→up(never) in order", async () => {
+  it("server mode runs build→down→up(never) without pulling build services", async () => {
     const d = deps({ images: [], rejected: [] });
     await runComposeUpdate({ id: "1", mode: "server", canBuild: true, token: "t", pullOptions: { proxy_url: "http://p" } }, cb(), d);
     const sc = d.streamCompose as ReturnType<typeof vi.fn>;
-    expect(verbs(sc)).toEqual(["build", "pull", "down", "up"]);
+    expect(verbs(sc)).toEqual(["build", "down", "up"]);
     expect(sc.mock.calls[0][2]).toMatchObject({ body: { proxy_url: "http://p" } }); // build carries proxy opts
-    expect(sc.mock.calls[1][2]).toMatchObject({ body: { proxy_url: "http://p" } }); // pull carries proxy opts
-    expect(sc.mock.calls[3][2]).toMatchObject({ body: { pull_policy: "never" } }); // up forces never
+    expect(sc.mock.calls[2][2]).toMatchObject({ body: { pull_policy: "never" } }); // up forces never
     expect(d.runBrowserPull).not.toHaveBeenCalled();
     expect(d.fetchPlan).not.toHaveBeenCalled();
   });

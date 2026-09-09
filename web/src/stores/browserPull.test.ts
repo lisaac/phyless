@@ -20,6 +20,6 @@ describe("streamCompose", () => {
     const onProgress = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ stream: "ok" }) + "\n", { status: 200 })));
     await expect(streamCompose("up", "1", { body: { pull_policy: "never" }, token: "t", onProgress, signal: sig() })).resolves.toBeUndefined();
-    expect(onProgress).toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith("ok");
   });
 });
