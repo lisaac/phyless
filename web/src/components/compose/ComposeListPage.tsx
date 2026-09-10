@@ -176,10 +176,10 @@ export const ComposeListPage: Component = () => {
                         >⊖ Down</ActBtn>
                         <span class="mx-0.5 text-zinc-600">│</span>
                         <ActBtn
-                          title="仅更新镜像（不执行 down/up）"
-                          loading={isRunning(p.id, "update")}
-                          onClick={() => request({ id: p.id, name: p.name, verb: "update", canBuild: p.can_build })}
-                        >↑ Update</ActBtn>
+                          title="docker compose pull（含 build 服务时同时构建；不执行 down/up）"
+                          loading={isRunning(p.id, "pull")}
+                          onClick={() => request({ id: p.id, name: p.name, verb: "pull", canBuild: p.can_build })}
+                        >↓ Pull</ActBtn>
                       </div>
                     </Show>
                   </div>

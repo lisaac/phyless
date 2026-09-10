@@ -316,8 +316,8 @@ function startBrowserAction(id: string) {
     }, cb));
 }
 
-// startComposeUpdate orchestrates pull/build or browser preload without Up as one
-// task. body holds the server-mode proxy payload; secret.creds the browser creds.
+// startComposeUpdate runs the merged Pull operation: pull/build or browser
+// preload, without Down/Up. body holds server options; secret.creds browser creds.
 function startComposeUpdate(id: string) {
   const t = find(id)!;
   const ac = new AbortController();

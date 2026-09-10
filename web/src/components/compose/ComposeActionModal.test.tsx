@@ -31,16 +31,19 @@ describe("ComposeActionModal", () => {
     render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "pull" }} onClose={() => {}} />);
     expect(screen.queryByLabelText("镜像拉取策略")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Pull" }));
-    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ body: undefined }));
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
+      body: undefined,
+      meta: expect.objectContaining({ type: "compose-update", composeId: "p1", verb: "pull", mode: "server", canBuild: false }),
+    }));
   });
 
-  it("update (server proxy) enqueues a compose-update task and hides pull_policy", async () => {
+  it("pull with build enqueues the merged compose-update task", async () => {
     const { enqueue } = await import("../../stores/taskQueue");
-    render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "update", canBuild: true }} onClose={() => {}} />);
+    render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "pull", canBuild: true }} onClose={() => {}} />);
     expect(screen.queryByLabelText("镜像拉取策略")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pull" }));
     expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
-      meta: expect.objectContaining({ type: "compose-update", composeId: "p1", verb: "update", mode: "server", canBuild: true }),
+      meta: expect.objectContaining({ type: "compose-update", composeId: "p1", verb: "pull", mode: "server", canBuild: true }),
     }));
   });
 
