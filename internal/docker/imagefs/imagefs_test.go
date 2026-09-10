@@ -33,6 +33,7 @@ type fakeClient struct {
 	existing    []container.Summary
 	removed     []string
 	copyPath    string
+	copyID      string
 	exportHook  func()
 }
 
@@ -76,10 +77,15 @@ func (c *fakeClient) ContainerRemove(_ context.Context, id string, _ container.R
 	return nil
 }
 
-func (c *fakeClient) CopyFromContainer(_ context.Context, _, path string) (io.ReadCloser, container.PathStat, error) {
+func (c *fakeClient) CopyFromContainer(_ context.Context, id, path string) (io.ReadCloser, container.PathStat, error) {
 	c.mu.Lock()
+	c.copyID = id
 	c.copyPath = path
+	data := c.tar
 	c.mu.Unlock()
+	if path == "/" {
+		return io.NopCloser(bytes.NewReader(data)), container.PathStat{}, nil
+	}
 	return io.NopCloser(strings.NewReader("payload")), container.PathStat{}, nil
 }
 
@@ -187,6 +193,24 @@ func TestListReturnsCopy(t *testing.T) {
 	second, _ := m.List(context.Background(), imgID, "/etc")
 	if second[0].Name != "hosts" {
 		t.Fatalf("index was mutated by caller: %+v", second)
+	}
+}
+
+func TestListContainerUsesArchiveWithoutCreatingAHelper(t *testing.T) {
+	c := sampleClient(t)
+	m := New(c)
+	root, err := m.ListContainer(context.Background(), "stopped", "/")
+	if err != nil || len(root) != 3 {
+		t.Fatalf("root=%+v err=%v", root, err)
+	}
+	if c.copyID != "stopped" || c.copyPath != "/" || c.creates != 0 || c.exports != 0 {
+		t.Fatalf("copy=%s:%s creates=%d exports=%d", c.copyID, c.copyPath, c.creates, c.exports)
+	}
+	now := time.Now()
+	m.now = func() time.Time { return now.Add(time.Hour) }
+	m.gc(context.Background())
+	if len(c.removed) != 0 {
+		t.Fatalf("stopped container was removed: %v", c.removed)
 	}
 }
 

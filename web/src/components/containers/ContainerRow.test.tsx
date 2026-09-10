@@ -10,8 +10,8 @@ vi.mock("../../api/client", () => ({ get, getToken: () => "token" }));
 
 afterEach(() => { cleanup(); get.mockClear(); });
 
-const container = (Mounts: ContainerSummary["Mounts"]): ContainerSummary => ({
-  Id: "abc", Names: ["/web"], Image: "nginx", State: "running", Status: "Up 1 minute",
+const container = (Mounts: ContainerSummary["Mounts"], State = "running"): ContainerSummary => ({
+  Id: "abc", Names: ["/web"], Image: "nginx", State, Status: "Up 1 minute",
   Created: 1, Ports: [], Mounts, Command: "nginx",
 });
 
@@ -28,5 +28,13 @@ describe("ContainerRow volume links", () => {
 
     expect(screen.getByRole("heading", { name: "文件 · web" })).toBeTruthy();
     await waitFor(() => expect(get).toHaveBeenCalledWith(`/api/containers/abc/files?path=${path}`));
+  });
+
+  it("opens a stopped container at root", async () => {
+    render(() => <ContainerRow
+      c={container([], "exited")} isP={() => false} act={() => {}} onViewCmd={() => {}}
+    />);
+    fireEvent.click(screen.getByTitle("从根目录浏览文件"));
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/api/containers/abc/files?path=%2F"));
   });
 });

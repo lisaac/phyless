@@ -34,6 +34,7 @@ export const ContainerRow: Component<{
   // stop/pause/restart/kill rather than "启动" (which would be a no-op/error).
   const running = () => c().State === "running" || c().State === "restarting";
   const paused = () => c().State === "paused";
+  const browsable = () => c().State !== "removing";
 
   const rowBg = () => {
     const s = c().State;
@@ -171,13 +172,12 @@ export const ContainerRow: Component<{
       </div>
 
       {/* Mount paths open the file browser at that path. With no mounts, the
-          dash opens the container root. Browsing remains running-only because
-          the backend uses exec inside the container. */}
+          dash opens the container root. Stopped containers use an API snapshot. */}
       <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 sm:flex-1 sm:border-t-0">
         <Show
           when={c().Mounts.length > 0}
           fallback={
-            <Show when={running()} fallback={<span class="text-xs text-zinc-500">—</span>}>
+            <Show when={browsable()} fallback={<span class="text-xs text-zinc-500">—</span>}>
               <a
                 href="#"
                 class="text-xs text-zinc-500 hover:text-emerald-400 hover:underline transition-colors"
@@ -195,7 +195,7 @@ export const ContainerRow: Component<{
             <For each={c().Mounts.slice(0, 4)}>
               {(m) => (
                 <Show
-                  when={running()}
+                  when={browsable()}
                   fallback={
                     <span
                       class="flex w-fit shrink-0 items-center gap-0.5 self-start font-mono text-[11px] text-zinc-500"

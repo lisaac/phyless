@@ -624,7 +624,17 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 	if dirPath == "" {
 		dirPath = "/"
 	}
-	entries, err := dockercontainer.ExecListDir(r.Context(), s.docker, id, dirPath)
+	inspect, err := s.docker.ContainerInspect(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var entries []dockercontainer.FileEntry
+	if s.imagefs == nil || (inspect.ContainerJSONBase != nil && inspect.State != nil && inspect.State.Running && !inspect.State.Paused) {
+		entries, err = dockercontainer.ExecListDir(r.Context(), s.docker, id, dirPath)
+	} else {
+		entries, err = s.imagefs.ListContainer(r.Context(), id, dirPath)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

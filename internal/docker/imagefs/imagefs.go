@@ -1,7 +1,6 @@
-// Package imagefs browses the filesystem of a Docker image without starting it:
-// a created-but-never-started helper container is exported once, its tar headers
-// become an in-memory directory index, and single files stream straight out of
-// the helper via CopyFromContainer.
+// Package imagefs indexes Docker image and stopped-container filesystems without
+// starting them. Tar headers become an in-memory directory index; file downloads
+// continue to stream through CopyFromContainer.
 package imagefs
 
 import (
@@ -34,6 +33,7 @@ func IsHelper(labels map[string]string) bool { return labels[RoleLabel] == RoleV
 type session struct {
 	containerID string
 	index       map[string][]ctr.FileEntry
+	owned       bool
 	lastUsed    time.Time
 	inflight    int
 	ready       chan struct{} // closed when the build finished
@@ -67,6 +67,22 @@ func (m *Manager) List(ctx context.Context, imageID, p string) ([]ctr.FileEntry,
 	if err != nil {
 		return nil, err
 	}
+	return m.list(s, p)
+}
+
+// ListContainer returns a cached snapshot of a container filesystem. Docker's
+// archive API works for stopped containers and includes their mounted volumes.
+// ponytail: one full archive scan buys CLI-free navigation; replace it if the
+// Engine API gains a native readdir endpoint.
+func (m *Manager) ListContainer(ctx context.Context, containerID, p string) ([]ctr.FileEntry, error) {
+	s, err := m.containerSession(ctx, containerID)
+	if err != nil {
+		return nil, err
+	}
+	return m.list(s, p)
+}
+
+func (m *Manager) list(s *session, p string) ([]ctr.FileEntry, error) {
 	dir := normPath(p)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -105,8 +121,9 @@ func (m *Manager) Release(ctx context.Context, imageID string) error {
 		id = imageID // 镜像可能已不可 inspect，仍按 label 兜底清理
 	}
 	m.mu.Lock()
-	s := m.sessions[id]
-	delete(m.sessions, id)
+	key := "image:" + id
+	s := m.sessions[key]
+	delete(m.sessions, key)
 	m.mu.Unlock()
 	if s != nil {
 		select { // 等索引建完，否则容器 ID 还没写进去
@@ -172,8 +189,10 @@ func (m *Manager) gc(ctx context.Context) {
 	}
 	m.mu.Unlock()
 	for id, s := range stale {
-		if err := m.remove(ctx, s.containerID); err != nil {
-			continue // 下一轮重试
+		if s.owned {
+			if err := m.remove(ctx, s.containerID); err != nil {
+				continue // 下一轮重试
+			}
 		}
 		m.mu.Lock()
 		delete(m.sessions, id)
@@ -193,8 +212,26 @@ func (m *Manager) session(ctx context.Context, imageID string) (*session, error)
 	if err != nil {
 		return nil, err
 	}
+	return m.cached(ctx, "image:"+id, true, func() (string, map[string][]ctr.FileEntry, error) {
+		return m.build(ctx, id)
+	})
+}
+
+func (m *Manager) containerSession(ctx context.Context, containerID string) (*session, error) {
+	return m.cached(ctx, "container:"+containerID, false, func() (string, map[string][]ctr.FileEntry, error) {
+		rc, _, err := m.cli.CopyFromContainer(ctx, containerID, "/")
+		if err != nil {
+			return "", nil, err
+		}
+		defer rc.Close()
+		index, err := buildIndex(rc)
+		return containerID, index, err
+	})
+}
+
+func (m *Manager) cached(ctx context.Context, key string, owned bool, build func() (string, map[string][]ctr.FileEntry, error)) (*session, error) {
 	m.mu.Lock()
-	if s := m.sessions[id]; s != nil {
+	if s := m.sessions[key]; s != nil {
 		m.mu.Unlock()
 		select {
 		case <-s.ready:
@@ -203,15 +240,15 @@ func (m *Manager) session(ctx context.Context, imageID string) (*session, error)
 			return nil, ctx.Err()
 		}
 	}
-	s := &session{ready: make(chan struct{}), lastUsed: m.now()}
-	m.sessions[id] = s
+	s := &session{ready: make(chan struct{}), lastUsed: m.now(), owned: owned}
+	m.sessions[key] = s
 	m.mu.Unlock()
 
-	s.containerID, s.index, s.err = m.build(ctx, id)
+	s.containerID, s.index, s.err = build()
 	if s.err != nil {
 		m.mu.Lock()
-		if m.sessions[id] == s {
-			delete(m.sessions, id)
+		if m.sessions[key] == s {
+			delete(m.sessions, key)
 		}
 		m.mu.Unlock()
 	}
