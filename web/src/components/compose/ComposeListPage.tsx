@@ -176,15 +176,15 @@ export const ComposeListPage: Component = () => {
                         >⊖ Down</ActBtn>
                         <span class="mx-0.5 text-zinc-600">│</span>
                         <ActBtn
-                          title="pull/build：拉取镜像并构建；不执行 down/up"
+                          title="Pull/Build：拉取镜像并构建；不执行 down/up"
                           loading={isRunning(p.id, "pull")}
                           onClick={() => request({ id: p.id, name: p.name, verb: "pull", canBuild: p.can_build })}
-                        >↓ pull/build</ActBtn>
+                        >↓ Pull/Build</ActBtn>
                         <ActBtn
-                          title="update：pull/build → down → up"
+                          title="Update：Pull/Build → down → up"
                           loading={isRunning(p.id, "update")}
                           onClick={() => request({ id: p.id, name: p.name, verb: "update", canBuild: p.can_build })}
-                        >↻ update</ActBtn>
+                        >↑ Update</ActBtn>
                       </div>
                     </Show>
                   </div>

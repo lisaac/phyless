@@ -26,7 +26,7 @@ export function representative(cs: ContainerSummary[]): ContainerSummary | undef
 }
 
 export type ComposeVerb = "up" | "stop" | "pause" | "down" | "restart" | "pull" | "build" | "update";
-export const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", pause: "Pause", down: "Down", restart: "Restart", pull: "pull/build", build: "Build", update: "update" };
+export const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", pause: "Pause", down: "Down", restart: "Restart", pull: "Pull/Build", build: "Build", update: "Update" };
 
 // A project supports image updates with a build step when any service declares
 // a build section. The list uses the backend's can_build flag; the detail page
