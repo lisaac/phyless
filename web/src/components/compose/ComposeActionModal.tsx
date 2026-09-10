@@ -24,10 +24,11 @@ export const startComposeAction = (a: ComposeAction, body?: unknown) => enqueue(
 export const isComposeRunning = (id: string, verb: ComposeVerb) =>
   isPending((t) => t.meta?.composeId === id && t.meta?.verb === verb);
 
-// up/pull/build take proxy/registry options → open the modal; Pull also runs
-// the merged frontend update flow when the project has build services.
+// up/pull/build/update take proxy/registry options → open the modal. Pull and
+// Update share the frontend pull/build flow; Update additionally recreates the
+// project after the images are ready.
 export const requestComposeAction = (a: ComposeAction, openOptions: (a: ComposeAction) => void) => {
-  if (a.verb === "up" || a.verb === "pull" || a.verb === "build") openOptions(a);
+  if (a.verb === "up" || a.verb === "pull" || a.verb === "build" || a.verb === "update") openOptions(a);
   else void startComposeAction(a);
 };
 
@@ -40,12 +41,12 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
     if (!t) return;
     if (isBrowserDownload(pull.value)) {
       if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
-      if (t.verb === "pull") {
+      if (t.verb === "pull" || t.verb === "update") {
         enqueue({
-          title: `${VERB_LABEL.pull} — ${t.name}`,
+          title: `${VERB_LABEL[t.verb]} — ${t.name}`,
           url: "",
           key: `compose:${t.id}`,
-          meta: { type: "compose-update", composeId: t.id, verb: "pull", mode: "browser", canBuild: t.canBuild === true, workerUrl: pull.value.workerUrl ?? "" },
+          meta: { type: "compose-update", composeId: t.id, verb: t.verb, mode: "browser", canBuild: t.canBuild === true, restart: t.verb === "update", workerUrl: pull.value.workerUrl ?? "" },
           secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
         });
       } else {
@@ -60,14 +61,14 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
       close();
       return;
     }
-    if (t.verb === "pull") {
+    if (t.verb === "pull" || t.verb === "update") {
       const opts = pull.payload();
       enqueue({
-        title: `${VERB_LABEL.pull} — ${t.name}`,
+        title: `${VERB_LABEL[t.verb]} — ${t.name}`,
         url: "",
         body: Object.keys(opts).length > 0 ? opts : undefined,
         key: `compose:${t.id}`,
-        meta: { type: "compose-update", composeId: t.id, verb: "pull", mode: "server", canBuild: t.canBuild === true },
+        meta: { type: "compose-update", composeId: t.id, verb: t.verb, mode: "server", canBuild: t.canBuild === true, restart: t.verb === "update" },
       });
       close();
       return;

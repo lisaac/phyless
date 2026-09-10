@@ -13,7 +13,7 @@ const cb = () => ({ note: vi.fn(), progress: vi.fn(), signal: new AbortControlle
 const verbs = (sc: ReturnType<typeof vi.fn>) => sc.mock.calls.map((c) => c[0]);
 
 describe("runComposeUpdate", () => {
-  it("server mode updates pull-only and build services without up", async () => {
+  it("pull/build updates pull-only and build services without down/up", async () => {
     const d = deps({ images: [{ service: "db", ref: "postgres:16" }], rejected: [] });
     await runComposeUpdate({ id: "1", mode: "server", canBuild: true, token: "t", pullOptions: { registry_ids: ["r"] } }, cb(), d);
     const sc = d.streamCompose as ReturnType<typeof vi.fn>;
@@ -39,8 +39,16 @@ describe("runComposeUpdate", () => {
   it("stops after a failed build — never reaches pull/up", async () => {
     const streamCompose = vi.fn(async (verb: string) => { if (verb === "build") throw new Error("build boom"); });
     const d = deps({ images: [], rejected: [] }, { streamCompose });
-    await expect(runComposeUpdate({ id: "1", mode: "server", canBuild: true, token: "t" }, cb(), d)).rejects.toThrow(/build boom/);
+    await expect(runComposeUpdate({ id: "1", mode: "server", canBuild: true, token: "t", restart: true }, cb(), d)).rejects.toThrow(/build boom/);
     expect(verbs(streamCompose)).toEqual(["build"]);
+  });
+
+  it("update appends down and up after pull/build", async () => {
+    const d = deps({ images: [{ service: "db", ref: "postgres:16" }], rejected: [] });
+    await runComposeUpdate({ id: "1", mode: "server", canBuild: true, token: "t", restart: true }, cb(), d);
+    const sc = d.streamCompose as ReturnType<typeof vi.fn>;
+    expect(verbs(sc)).toEqual(["pull", "build", "down", "up"]);
+    expect(sc.mock.calls[3][2]).toMatchObject({ body: { pull_policy: "never" } });
   });
 
   it("browser mode: build server-side and preload pull images without up", async () => {

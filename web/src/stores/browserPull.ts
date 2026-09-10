@@ -347,9 +347,9 @@ export async function runBrowserUpgrade(
   }, cb, deps);
 }
 
-// --- Compose update: pull/build only ---
-// One task, sequential, stop-on-failure. Pull-only services and build services
-// can coexist in one project; update both without touching containers.
+// --- Compose pull/build and update ---
+// One task, sequential, stop-on-failure. Update adds Down/Up after the image
+// work; pull/build leaves existing containers untouched.
 
 export interface ComposeUpdateParams {
   id: string;
@@ -359,6 +359,7 @@ export interface ComposeUpdateParams {
   token: string;
   creds?: Creds;
   pullOptions?: Record<string, unknown>;
+  restart?: boolean;
 }
 
 export interface ComposeUpdateDeps {
@@ -415,5 +416,13 @@ export async function runComposeUpdate(
       await deps.streamCompose("build", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
     }
   }
+
+  if (!params.restart) return;
+
+  cb.note("停止并移除旧容器…");
+  await deps.streamCompose("down", id, { token, onProgress: cb.progress, signal });
+
+  cb.note("启动 Compose（使用本地镜像）…");
+  await deps.streamCompose("up", id, { body: { pull_policy: "never" }, token, onProgress: cb.progress, signal });
 
 }

@@ -258,10 +258,15 @@ export const ComposeDetailPage: Component = () => {
             onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) request({ id: id(), name: project()?.name ?? id(), verb: "down" }); }}
           >⊖ Down</ActBtn>
           <ActBtn
-            title="docker compose pull（含 build 服务时同时构建；不执行 down/up）"
+            title="pull/build：拉取镜像并构建；不执行 down/up"
             loading={isRunning("pull")}
             onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "pull", canBuild: servicesHaveBuild(detail()?.services) })}
-          >↓ Pull</ActBtn>
+          >↓ pull/build</ActBtn>
+          <ActBtn
+            title="update：pull/build → down → up"
+            loading={isRunning("update")}
+            onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "update", canBuild: servicesHaveBuild(detail()?.services) })}
+          >↻ update</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>⧉ Run/Compose</ActBtn>
         </div>

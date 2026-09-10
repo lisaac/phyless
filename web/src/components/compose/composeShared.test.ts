@@ -36,5 +36,7 @@ describe("servicesHaveBuild", () => {
   it("labels compose verbs", () => {
     expect(VERB_LABEL.build).toBe("Build");
     expect(VERB_LABEL.pause).toBe("Pause");
+    expect(VERB_LABEL.pull).toBe("pull/build");
+    expect(VERB_LABEL.update).toBe("update");
   });
 });

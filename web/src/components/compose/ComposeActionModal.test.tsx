@@ -30,7 +30,7 @@ describe("ComposeActionModal", () => {
 
     render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "pull" }} onClose={() => {}} />);
     expect(screen.queryByLabelText("镜像拉取策略")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Pull" }));
+    fireEvent.click(screen.getByRole("button", { name: "pull/build" }));
     expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
       body: undefined,
       meta: expect.objectContaining({ type: "compose-update", composeId: "p1", verb: "pull", mode: "server", canBuild: false }),
@@ -41,9 +41,19 @@ describe("ComposeActionModal", () => {
     const { enqueue } = await import("../../stores/taskQueue");
     render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "pull", canBuild: true }} onClose={() => {}} />);
     expect(screen.queryByLabelText("镜像拉取策略")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Pull" }));
+    fireEvent.click(screen.getByRole("button", { name: "pull/build" }));
     expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
       meta: expect.objectContaining({ type: "compose-update", composeId: "p1", verb: "pull", mode: "server", canBuild: true }),
+    }));
+  });
+
+  it("update enqueues the pull/build plus down/up task", async () => {
+    const { enqueue } = await import("../../stores/taskQueue");
+    render(() => <ComposeActionModal target={{ id: "p1", name: "app", verb: "update", canBuild: true }} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "update" }));
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
+      title: "update — app",
+      meta: expect.objectContaining({ type: "compose-update", composeId: "p1", verb: "update", mode: "server", canBuild: true, restart: true }),
     }));
   });
 

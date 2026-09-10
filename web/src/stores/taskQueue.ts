@@ -316,8 +316,8 @@ function startBrowserAction(id: string) {
     }, cb));
 }
 
-// startComposeUpdate runs the merged Pull operation: pull/build or browser
-// preload, without Down/Up. body holds server options; secret.creds browser creds.
+// startComposeUpdate runs pull/build (and, for Update, Down/Up). body holds
+// server options; secret.creds holds browser credentials.
 function startComposeUpdate(id: string) {
   const t = find(id)!;
   const ac = new AbortController();
@@ -333,6 +333,7 @@ function startComposeUpdate(id: string) {
       token: getToken() ?? "",
       creds: t.secret?.creds,
       pullOptions: (t.body as Record<string, unknown> | undefined) ?? undefined,
+      restart: t.meta?.restart === true,
     },
     { note, progress: note, signal: ac.signal },
   ).then(
