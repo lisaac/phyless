@@ -20,7 +20,7 @@ import {
 
 export interface PullOptionsValue {
   proxyUrl?: string;
-  // Explicit opt-in per form open; the remembered URL alone never sends a proxy.
+  // Derived from the selected mode; the remembered URL alone never sends a proxy.
   useProxy?: boolean;
   registryId?: string;
   registryIds?: string[];
@@ -32,6 +32,8 @@ export interface PullOptionsValue {
   creds?: { username: string; secret: string };
   rememberCreds?: boolean;
 }
+
+type PullMode = "none" | "server" | "browser";
 
 const PULL_PROXY_STORAGE_KEY = "phyless_pull_proxy_url";
 const PULL_PROXY_LIST_STORAGE_KEY = "phyless_pull_proxy_urls";
@@ -138,8 +140,8 @@ export function pullOptionsPayload(value: PullOptionsValue): Record<string, unkn
 }
 
 // One state holder shared by every pull form (image pull, create container,
-// upgrade, compose up/pull). reset() is what callers run on close: useProxy
-// is opt-in per open, the URL itself comes back from this browser's memory.
+// upgrade, compose up/pull). reset() is what callers run on close: the proxy
+// mode is off per open, while saved URLs come back from this browser's memory.
 export function createPullOptions() {
   const remembered = readRememberedCreds();
   const fresh = (): Required<PullOptionsValue> => ({
@@ -254,6 +256,7 @@ export const PullOptions: Component<{
 }> = (props) => {
   const [registries] = createResource(() => get<Registry[]>("/api/registries"));
   const platformListId = createUniqueId();
+  const modeName = createUniqueId();
   const { value, set } = props.options;
   const [localWorkerUrls, setLocalWorkerUrls] = createSignal(getWorkerUrls());
   const [localProxyUrls, setLocalProxyUrls] = createSignal(readPullProxyUrls());
@@ -265,11 +268,18 @@ export const PullOptions: Component<{
     set("registryIds", ids.includes(id) ? ids.filter((v) => v !== id) : [...ids, id]);
   };
 
-  const setMode = (mode: DownloadMode) => {
-    set("downloadMode", mode);
-    setDownloadMode(mode);
+  const pullMode = (): PullMode => {
+    if (props.allowBrowser && value.downloadMode === "browser") return "browser";
+    return value.useProxy ? "server" : "none";
   };
-  const browserMode = () => !!props.allowBrowser && value.downloadMode === "browser";
+  const setPullMode = (mode: PullMode) => {
+    const browser = mode === "browser";
+    set("downloadMode", browser ? "browser" : "proxy");
+    set("useProxy", mode === "server");
+    setDownloadMode(browser ? "browser" : "proxy");
+  };
+  const browserMode = () => pullMode() === "browser";
+  const serverProxyMode = () => pullMode() === "server";
 
   const saveWorker = () => {
     const url = validWorkerUrl(value.workerUrl);
@@ -309,14 +319,18 @@ export const PullOptions: Component<{
     <div class="space-y-3 border-t border-zinc-800 pt-3">
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
         <span class="text-xs text-zinc-400">本次拉取选项</span>
+        <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="直接使用服务端现有网络连接">
+          <input type="radio" name={modeName} checked={pullMode() === "none"} onChange={() => setPullMode("none")} />
+          不使用代理
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="phyless 服务端经代理拉取镜像">
+          <input type="radio" name={modeName} checked={pullMode() === "server"} onChange={() => setPullMode("server")} />
+          服务端代理
+        </label>
         <Show when={props.allowBrowser}>
-          <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="phyless 服务端经代理拉取镜像">
-            <input type="radio" name="download-mode" checked={value.downloadMode !== "browser"} onChange={() => setMode("proxy")} />
-            服务端代理
-          </label>
-          <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="浏览器经 CF worker 下载并流式导入，适合服务端连不上 registry 的场景">
-            <input type="radio" name="download-mode" checked={value.downloadMode === "browser"} onChange={() => setMode("browser")} />
-            浏览器下载
+          <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="浏览器经 CF worker 下载并导入镜像">
+            <input type="radio" name={modeName} checked={pullMode() === "browser"} onChange={() => setPullMode("browser")} />
+            浏览器代理导入
           </label>
         </Show>
       </div>
@@ -375,24 +389,22 @@ export const PullOptions: Component<{
       </Show>
 
       <Show when={!browserMode()}>
-      <div class="space-y-3">
-        <div>
-          <label class="mb-1 flex items-center gap-1.5 text-xs text-zinc-500" title="代理只对本次请求生效；地址列表仅保存在此浏览器">
-            <input type="checkbox" checked={value.useProxy} onChange={(e) => set("useProxy", e.currentTarget.checked)} />
-            使用代理（可保存多个地址）
-          </label>
-          <SavedAddressInput
-            value={value.proxyUrl}
-            urls={proxyUrls()}
-            placeholder="http://host.docker.internal:7890"
-            disabled={!value.useProxy}
-            onInput={(url) => set("proxyUrl", url)}
-            onBlur={saveProxy}
-            onSelect={(url) => set("proxyUrl", url)}
-            onDelete={deleteProxy}
-          />
-          <p class="mt-1 text-[11px] text-zinc-600">地址需从 phyless 容器可达；无认证地址会记住在此浏览器，含用户名/密码的地址不会保存。</p>
-        </div>
+        <div class="space-y-3">
+          <Show when={serverProxyMode()}>
+            <div>
+              <span class="mb-1 block text-xs text-zinc-500">服务端代理地址</span>
+              <SavedAddressInput
+                value={value.proxyUrl}
+                urls={proxyUrls()}
+                placeholder="http://host.docker.internal:7890"
+                onInput={(url) => set("proxyUrl", url)}
+                onBlur={saveProxy}
+                onSelect={(url) => set("proxyUrl", url)}
+                onDelete={deleteProxy}
+              />
+              <p class="mt-1 text-[11px] text-zinc-600">地址需从 phyless 容器可达；无认证地址会记住在此浏览器，含用户名/密码的地址不会保存。</p>
+            </div>
+          </Show>
 
         <Show when={props.multipleRegistries} fallback={
           <label class="block">
@@ -438,7 +450,7 @@ export const PullOptions: Component<{
             </div>
           </div>
         </Show>
-      </div>
+        </div>
       </Show>
 
       <Show when={props.showPlatform}>

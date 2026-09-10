@@ -52,7 +52,7 @@ describe("pull options", () => {
   it("saves on blur, deduplicates, and deletes from the dropdown", () => {
     const pull = createPullOptions();
     render(() => <PullOptions options={pull} />);
-    fireEvent.click(screen.getByLabelText(/使用代理/));
+    fireEvent.click(screen.getByLabelText("服务端代理"));
     const input = screen.getByPlaceholderText("http://host.docker.internal:7890") as HTMLInputElement;
     fireEvent.input(input, { target: { value: "http://proxy.example:8080" } });
     fireEvent.blur(input);
@@ -66,17 +66,30 @@ describe("pull options", () => {
     expect(readPullProxyUrls()).toEqual([]);
   });
 
-  it("remembers the proxy url but only sends it after opting in", () => {
+  it("offers the three pull modes when browser import is available", () => {
+    const pull = createPullOptions();
+    render(() => <PullOptions options={pull} allowBrowser />);
+    expect(screen.getByLabelText("不使用代理")).toBeTruthy();
+    expect(screen.getByLabelText("服务端代理")).toBeTruthy();
+    expect(screen.getByLabelText("浏览器代理导入")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("服务端代理"));
+    expect(pull.value.useProxy).toBe(true);
+    fireEvent.click(screen.getByLabelText("不使用代理"));
+    expect(pull.value.useProxy).toBe(false);
+    fireEvent.click(screen.getByLabelText("浏览器代理导入"));
+    expect(pull.value.downloadMode).toBe("browser");
+  });
+
+  it("remembers the proxy url but only sends it in server proxy mode", () => {
     rememberPullProxyUrl("http://proxy.example:8080");
     const pull = createPullOptions();
     render(() => <PullOptions options={pull} />);
-    const url = screen.getByPlaceholderText("http://host.docker.internal:7890") as HTMLInputElement;
-    expect(url.value).toBe("http://proxy.example:8080");
-    expect(url.disabled).toBe(true);
     expect(pull.payload()).toEqual({});
 
-    fireEvent.click(screen.getByLabelText(/使用代理/));
-    expect(url.disabled).toBe(false);
+    fireEvent.click(screen.getByLabelText("服务端代理"));
+    const url = screen.getByPlaceholderText("http://host.docker.internal:7890") as HTMLInputElement;
+    expect(url.value).toBe("http://proxy.example:8080");
     expect(pull.payload()).toEqual({ proxy_url: "http://proxy.example:8080" });
 
     pull.reset();
