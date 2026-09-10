@@ -347,9 +347,9 @@ export async function runBrowserUpgrade(
   }, cb, deps);
 }
 
-// --- Compose update: build or pull/preload → down → up(never) ---
-// One task, sequential, stop-on-failure. Build projects do not also call the
-// compose pull endpoint, which rejects build services when a proxy is active.
+// --- Compose update: pull/build only ---
+// One task, sequential, stop-on-failure. Pull-only services and build services
+// can coexist in one project; update both without touching containers.
 
 export interface ComposeUpdateParams {
   id: string;
@@ -380,46 +380,40 @@ export async function runComposeUpdate(
 ): Promise<void> {
   const { id, token } = params;
   const signal = cb.signal;
+  let plan: ComposePullPlan | undefined;
 
-  if (params.canBuild) {
-    let plan: ComposePullPlan | undefined;
+  if (params.canBuild || params.mode === "browser") {
+    cb.note("解析 Compose 项目镜像…");
+    plan = await deps.fetchPlan(id);
+    if (signal.aborted) throw new Error("已取消");
     if (params.mode === "browser") {
-      cb.note("解析 Compose 项目镜像…");
-      plan = await deps.fetchPlan(id);
-      if (signal.aborted) throw new Error("已取消");
       const blocked = plan.rejected.filter((r) => r.reason !== "build");
       if (blocked.length) {
         const detail = blocked.map((r) => `${r.service}（${rejectReasonText[r.reason] ?? r.reason}）`).join("，");
         throw new Error(`以下服务无法用浏览器下载：${detail}。请改用服务端代理。`);
       }
-      await preloadComposeImages(plan.build_bases ?? [], { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
     }
-    cb.note("构建镜像…");
-    // Server mode carries the proxy payload; browser mode has no server proxy.
-    await deps.streamCompose("build", id, { body: params.mode === "server" ? params.pullOptions : undefined, token, onProgress: cb.progress, signal });
-    if (params.mode === "browser") {
-      await preloadComposeImages(plan?.images ?? [], { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
-    }
-  } else if (params.mode === "browser") {
-    cb.note("解析 Compose 项目镜像…");
-    const plan = await deps.fetchPlan(id);
-    if (signal.aborted) throw new Error("已取消");
-    const blocked = plan.rejected.filter((r) => r.reason !== "build");
-    if (blocked.length) {
-      const detail = blocked.map((r) => `${r.service}（${rejectReasonText[r.reason] ?? r.reason}）`).join("，");
-      throw new Error(`以下服务无法用浏览器下载：${detail}。请改用服务端代理。`);
-    }
-    await preloadComposeImages(plan.images, { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
   }
 
-  if (params.mode === "server" && !params.canBuild) {
-    cb.note("拉取镜像…");
-    await deps.streamCompose("pull", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
+  if (params.mode === "browser") {
+    if (params.canBuild) {
+      await preloadComposeImages(plan?.build_bases ?? [], { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
+      cb.note("构建镜像…");
+      await deps.streamCompose("build", id, { token, onProgress: cb.progress, signal });
+    }
+    await preloadComposeImages(plan?.images ?? [], { workerUrl: params.workerUrl ?? "", token, creds: params.creds }, cb, deps.runBrowserPull);
+  } else {
+    // The plan tells the frontend whether this project also has pull-only
+    // services. Pull first so a service declaring both image and build still
+    // ends with the locally built image.
+    if (!params.canBuild || (plan?.images.length ?? 0) > 0) {
+      cb.note("拉取镜像…");
+      await deps.streamCompose("pull", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
+    }
+    if (params.canBuild) {
+      cb.note("构建镜像…");
+      await deps.streamCompose("build", id, { body: params.pullOptions, token, onProgress: cb.progress, signal });
+    }
   }
 
-  cb.note("停止并移除旧容器…");
-  await deps.streamCompose("down", id, { token, onProgress: cb.progress, signal });
-
-  cb.note("启动 Compose（使用本地镜像）…");
-  await deps.streamCompose("up", id, { body: { pull_policy: "never" }, token, onProgress: cb.progress, signal });
 }

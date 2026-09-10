@@ -175,12 +175,8 @@ export const ComposeListPage: Component = () => {
                           onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) request({ id: p.id, name: p.name, verb: "down" }); }}
                         >⊖ Down</ActBtn>
                         <span class="mx-0.5 text-zinc-600">│</span>
-                        <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
-                        <Show when={p.can_build}>
-                          <ActBtn title="docker compose build" loading={isRunning(p.id, "build")} onClick={() => request({ id: p.id, name: p.name, verb: "build" })}>⚒︎ Build</ActBtn>
-                        </Show>
                         <ActBtn
-                          title="更新：build（若有）→ pull → down → up"
+                          title="仅更新镜像（不执行 down/up）"
                           loading={isRunning(p.id, "update")}
                           onClick={() => request({ id: p.id, name: p.name, verb: "update", canBuild: p.can_build })}
                         >↑ Update</ActBtn>

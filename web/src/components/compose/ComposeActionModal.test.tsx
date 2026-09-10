@@ -40,7 +40,7 @@ describe("ComposeActionModal", () => {
     expect(screen.queryByLabelText("镜像拉取策略")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Update" }));
     expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
-      meta: expect.objectContaining({ type: "compose-update", composeId: "p1", mode: "server", canBuild: true }),
+      meta: expect.objectContaining({ type: "compose-update", composeId: "p1", verb: "update", mode: "server", canBuild: true }),
     }));
   });
 

@@ -28,10 +28,9 @@ export function representative(cs: ContainerSummary[]): ContainerSummary | undef
 export type ComposeVerb = "up" | "stop" | "pause" | "down" | "restart" | "pull" | "build" | "update";
 export const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", pause: "Pause", down: "Down", restart: "Restart", pull: "Pull", build: "Build", update: "Update" };
 
-// A project supports `build` when any service declares a build section. The list
-// keys off the backend's can_build flag (it has no per-service data); the detail
-// page derives the same answer from its loaded services, so both views gate the
-// Build button on identical logic.
+// A project supports image updates with a build step when any service declares
+// a build section. The list uses the backend's can_build flag; the detail page
+// derives the same answer from its loaded services.
 export function servicesHaveBuild(services: Record<string, Record<string, unknown>> | undefined | null): boolean {
   return !!services && Object.values(services).some((s) => s?.build != null);
 }

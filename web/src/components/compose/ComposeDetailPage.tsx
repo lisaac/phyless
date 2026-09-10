@@ -65,7 +65,7 @@ export const ComposeDetailPage: Component = () => {
     if (p?.name) setTabLabel(`/compose/${id()}`, p.name);
   });
 
-  // ── up/stop/down/restart/pull — shared with ComposeListPage via ComposeActionModal.
+  // ── compose actions — shared with ComposeListPage via ComposeActionModal.
   const [composeTarget, setComposeTarget] = createSignal<ComposeAction | null>(null);
   const isRunning = (verb: ComposeVerb) => isComposeRunning(id(), verb);
   const request = (a: ComposeAction) => requestComposeAction(a, setComposeTarget);
@@ -257,12 +257,8 @@ export const ComposeDetailPage: Component = () => {
             loading={isRunning("down")}
             onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) request({ id: id(), name: project()?.name ?? id(), verb: "down" }); }}
           >⊖ Down</ActBtn>
-          <ActBtn title="docker compose pull" loading={isRunning("pull")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "pull" })}>↓ Pull</ActBtn>
-          <Show when={servicesHaveBuild(detail()?.services)}>
-            <ActBtn title="docker compose build" loading={isRunning("build")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "build" })}>⚒︎ Build</ActBtn>
-          </Show>
           <ActBtn
-            title="更新：build（若有）→ pull → down → up"
+            title="仅更新镜像（不执行 down/up）"
             loading={isRunning("update")}
             onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "update", canBuild: servicesHaveBuild(detail()?.services) })}
           >↑ Update</ActBtn>

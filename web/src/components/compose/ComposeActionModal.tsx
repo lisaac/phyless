@@ -45,7 +45,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
           title: `${VERB_LABEL.update} — ${t.name}`,
           url: "",
           key: `compose:${t.id}`,
-          meta: { type: "compose-update", composeId: t.id, mode: "browser", canBuild: t.canBuild === true, workerUrl: pull.value.workerUrl ?? "" },
+          meta: { type: "compose-update", composeId: t.id, verb: "update", mode: "browser", canBuild: t.canBuild === true, workerUrl: pull.value.workerUrl ?? "" },
           secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
         });
       } else {
@@ -67,7 +67,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
         url: "",
         body: Object.keys(opts).length > 0 ? opts : undefined,
         key: `compose:${t.id}`,
-        meta: { type: "compose-update", composeId: t.id, mode: "server", canBuild: t.canBuild === true },
+        meta: { type: "compose-update", composeId: t.id, verb: "update", mode: "server", canBuild: t.canBuild === true },
       });
       close();
       return;

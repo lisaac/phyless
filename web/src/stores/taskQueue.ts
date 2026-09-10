@@ -316,7 +316,7 @@ function startBrowserAction(id: string) {
     }, cb));
 }
 
-// startComposeUpdate orchestrates build or pull/preload → down → up(never) as one
+// startComposeUpdate orchestrates pull/build or browser preload without Up as one
 // task. body holds the server-mode proxy payload; secret.creds the browser creds.
 function startComposeUpdate(id: string) {
   const t = find(id)!;
