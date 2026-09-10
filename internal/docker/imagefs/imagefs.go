@@ -49,6 +49,7 @@ type Manager struct {
 	now  func() time.Time
 	idle time.Duration
 	tick time.Duration
+	max  int // ponytail: LRU cap on resident indexes; each is the whole image tree in memory
 }
 
 func New(cli client.APIClient) *Manager {
@@ -56,8 +57,9 @@ func New(cli client.APIClient) *Manager {
 		cli:      cli,
 		sessions: map[string]*session{},
 		now:      time.Now,
-		idle:     10 * time.Minute,
+		idle:     3 * time.Minute,
 		tick:     time.Minute,
+		max:      4,
 	}
 }
 
@@ -240,9 +242,13 @@ func (m *Manager) cached(ctx context.Context, key string, owned bool, build func
 			return nil, ctx.Err()
 		}
 	}
+	evict := m.evictLocked()
 	s := &session{ready: make(chan struct{}), lastUsed: m.now(), owned: owned}
 	m.sessions[key] = s
 	m.mu.Unlock()
+	if evict != nil && evict.owned {
+		go m.remove(context.Background(), evict.containerID) //nolint:errcheck // gc retries via cleanup on restart
+	}
 
 	s.containerID, s.index, s.err = build()
 	if s.err != nil {
@@ -254,6 +260,31 @@ func (m *Manager) cached(ctx context.Context, key string, owned bool, build func
 	}
 	close(s.ready)
 	return s, s.err
+}
+
+// evictLocked drops the least recently used idle session when the cap is
+// reached and returns it so the caller can remove its helper container.
+// Caller holds m.mu.
+func (m *Manager) evictLocked() *session {
+	if len(m.sessions) < m.max {
+		return nil
+	}
+	var key string
+	var victim *session
+	for k, s := range m.sessions {
+		select {
+		case <-s.ready:
+		default:
+			continue
+		}
+		if s.inflight == 0 && (victim == nil || s.lastUsed.Before(victim.lastUsed)) {
+			key, victim = k, s
+		}
+	}
+	if victim != nil {
+		delete(m.sessions, key)
+	}
+	return victim
 }
 
 func (m *Manager) resolve(ctx context.Context, imageID string) (string, error) {

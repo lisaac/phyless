@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"phyless/internal/api"
@@ -12,6 +13,13 @@ import (
 )
 
 func main() {
+	// ponytail: soft heap ceiling for small hosts (routers); GOMEMLIMIT/GOGC env override.
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(128 << 20)
+	}
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(50)
+	}
 	dataDir := env("DATA_DIR", "/data")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatal(err)

@@ -366,3 +366,30 @@ func TestRelease(t *testing.T) {
 		t.Fatalf("release with nothing to do: %v %v", err, c.removed)
 	}
 }
+
+func TestEvictsLeastRecentlyUsedAtCap(t *testing.T) {
+	c := sampleClient(t)
+	m := New(c)
+	m.max = 2
+	now := time.Unix(0, 0)
+	m.now = func() time.Time { return now }
+	for _, id := range []string{"c1", "c2"} {
+		if _, err := m.ListContainer(context.Background(), id, "/"); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+	// c1 is the oldest; a third session must push it out (containers are not owned, so no removal).
+	if _, err := m.ListContainer(context.Background(), "c3", "/"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	_, hasC1 := m.sessions["container:c1"]
+	_, hasC2 := m.sessions["container:c2"]
+	_, hasC3 := m.sessions["container:c3"]
+	n := len(m.sessions)
+	m.mu.Unlock()
+	if hasC1 || !hasC2 || !hasC3 || n != 2 {
+		t.Fatalf("sessions after eviction: c1=%v c2=%v c3=%v n=%d", hasC1, hasC2, hasC3, n)
+	}
+}

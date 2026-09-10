@@ -1,11 +1,15 @@
 package api
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
+	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	dockerclient "github.com/docker/docker/client"
@@ -151,15 +155,21 @@ func (s *Server) routes() http.Handler {
 	// A fresh clone without `npm run build` embeds only dist/.gitkeep; serve the
 	// SPA only when there is actually an index.html to serve.
 	if _, err := fs.Stat(dist, "index.html"); err == nil {
-		fileServer := http.FileServer(http.FS(dist))
-		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-			path := r.URL.Path
-			if _, err := fs.Stat(dist, strings.TrimPrefix(path, "/")); err != nil {
-				// SPA fallback — index.html must never be stale
-				w.Header().Set("Cache-Control", "no-store")
-				http.ServeFileFS(w, r, dist, "index.html")
-				return
-			}
+		r.Get("/*", spaHandler(dist))
+	}
+
+	return r
+}
+
+// spaHandler serves the embedded frontend. web/scripts/gzip.mjs ships hashed
+// assets only as .gz, so the binary embeds the compressed bytes once; clients
+// that accept gzip get them verbatim, anyone else gets them inflated.
+func spaHandler(dist fs.FS) http.HandlerFunc {
+	fileServer := http.FileServer(http.FS(dist))
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		name := strings.TrimPrefix(path, "/")
+		if _, err := fs.Stat(dist, name); err == nil {
 			// Hashed assets (e.g. /assets/index-abc123.js) can be cached forever.
 			// index.html itself must not be cached.
 			if path == "/" || path == "/index.html" {
@@ -168,10 +178,32 @@ func (s *Server) routes() http.Handler {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 			fileServer.ServeHTTP(w, r)
-		})
+			return
+		}
+		if gz, err := dist.Open(name + ".gz"); err == nil && strings.HasPrefix(name, "assets/") {
+			defer gz.Close()
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.Header().Set("Vary", "Accept-Encoding")
+			if ct := mime.TypeByExtension(filepath.Ext(name)); ct != "" {
+				w.Header().Set("Content-Type", ct)
+			}
+			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				w.Header().Set("Content-Encoding", "gzip")
+				http.ServeFileFS(w, r, dist, name+".gz")
+				return
+			}
+			zr, err := gzip.NewReader(gz)
+			if err != nil {
+				http.Error(w, "bad asset", http.StatusInternalServerError)
+				return
+			}
+			_, _ = io.Copy(w, zr) // ponytail: rare path (no browser omits gzip); no range/etag support
+			return
+		}
+		// SPA fallback — index.html must never be stale
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFileFS(w, r, dist, "index.html")
 	}
-
-	return r
 }
 
 // wsAuth accepts token via ?token= query param (browsers can't set headers on WS upgrade).

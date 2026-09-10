@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
-    "build": "npm run typecheck && vite build",
+    "build": "npm run typecheck && vite build && node scripts/gzip.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
