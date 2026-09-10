@@ -193,7 +193,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
 
           {/* Right group: task panel toggle, refresh now + settings, theme. */}
           <button
-            class={`ml-auto flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
+            class={`ml-auto flex shrink-0 items-center gap-1 rounded p-1 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
             onClick={() => setPanelHidden(!panelHidden())}
             title={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
             aria-label={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
