@@ -64,11 +64,11 @@ export const ComposeListPage: Component = () => {
   };
 
   const remove = async (id: string, name: string) => {
-    if (!confirm(`删除 Compose 项目 ${name}？`)) return;
+    if (!confirm(`注销 Compose 项目 ${name}？`)) return;
     try {
-      await queued(`删除 Compose ${name}`, "DELETE", `/api/compose?id=${encodeURIComponent(id)}`, undefined, { key: `compose:${id}` });
+      await queued(`注销 Compose ${name}`, "DELETE", `/api/compose?id=${encodeURIComponent(id)}`, undefined, { key: `compose:${id}` });
       await store.refresh();
-      toast.success("已删除");
+      toast.success("已注销");
     } catch (e) { toast.error((e as Error).message); }
   };
 
@@ -146,24 +146,36 @@ export const ComposeListPage: Component = () => {
                     </Show>
                   </div>
                   <div class="flex shrink-0 flex-col items-start gap-0.5 whitespace-nowrap sm:ml-auto sm:items-end" onClick={(e) => e.stopPropagation()}>
+                    <div class="flex flex-nowrap items-center gap-0.5">
+                      <Show when={hasRole("operator")}>
+                        <Show when={p.discovered} fallback={
+                          <ActBtn danger title="注销项目" onClick={() => remove(p.id, p.name)}>⊖ 注销</ActBtn>
+                        }>
+                          <ActBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕ 注册</ActBtn>
+                        </Show>
+                      </Show>
+                      <ActBtn title="inspect" onClick={() => setInspectFor(p)}>
+                        <span class="inline-flex items-center gap-1"><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /> Inspect</span>
+                      </ActBtn>
+                      <ActBtn
+                        title="基于项目下所有容器创建容器 / 注册 Compose"
+                        onClick={() => void runProject(cs().map((c) => c.Id))}
+                      >⧉ Run/Compose</ActBtn>
+                    </div>
                     <Show when={hasRole("operator")}>
                       <div class="flex flex-nowrap items-center gap-0.5">
                         <ActBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
+                        <ActBtn title="docker compose pause" loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸ Pause</ActBtn>
                         <ActBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
                         <ActBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
-                        <ActBtn title="docker compose pause" loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸ Pause</ActBtn>
                         <ActBtn
                           danger
                           title="docker compose down（停止并移除容器、网络）"
                           loading={isRunning(p.id, "down")}
                           onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) request({ id: p.id, name: p.name, verb: "down" }); }}
                         >⊖ Down</ActBtn>
-                      </div>
-                      <div class="flex flex-nowrap items-center gap-0.5">
+                        <span class="mx-0.5 text-zinc-600">│</span>
                         <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
-                        <Show when={p.can_build}>
-                          <ActBtn title="docker compose build" loading={isRunning(p.id, "build")} onClick={() => request({ id: p.id, name: p.name, verb: "build" })}>⚒︎ Build</ActBtn>
-                        </Show>
                         <ActBtn
                           title="更新：build（若有）→ pull → down → up"
                           loading={isRunning(p.id, "update")}
@@ -171,20 +183,6 @@ export const ComposeListPage: Component = () => {
                         >↑ Update</ActBtn>
                       </div>
                     </Show>
-                    <div class="flex flex-nowrap items-center gap-0.5">
-                      <Show when={hasRole("operator")}>
-                        <Show when={p.discovered} fallback={
-                          <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>
-                        }>
-                          <ActBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕ 注册</ActBtn>
-                        </Show>
-                      </Show>
-                      <ActBtn title="inspect" onClick={() => setInspectFor(p)}><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /> Inspect</ActBtn>
-                      <ActBtn
-                        title="基于项目下所有容器创建容器 / 注册 Compose"
-                        onClick={() => void runProject(cs().map((c) => c.Id))}
-                      >⧉ Run/Compose</ActBtn>
-                    </div>
                   </div>
                 </div>
                 {/* CSS grid-rows 0fr→1fr animates height without knowing the
