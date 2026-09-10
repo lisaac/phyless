@@ -145,44 +145,46 @@ export const ComposeListPage: Component = () => {
                       <div class="text-[11px] text-zinc-500" title={p.base_dir}>目录：{p.base_dir}</div>
                     </Show>
                   </div>
-                  <div class="flex shrink-0 flex-wrap items-center gap-0.5 sm:ml-auto sm:justify-end" onClick={(e) => e.stopPropagation()}>
+                  <div class="flex shrink-0 flex-col items-start gap-0.5 whitespace-nowrap sm:ml-auto sm:items-end" onClick={(e) => e.stopPropagation()}>
                     <Show when={hasRole("operator")}>
-                      <Show when={p.discovered} fallback={
-                        <>
-                          <Show when={p.can_build}>
-                            <ActBtn title="docker compose build" loading={isRunning(p.id, "build")} onClick={() => request({ id: p.id, name: p.name, verb: "build" })}>⚒︎ Build</ActBtn>
-                          </Show>
+                      <div class="flex flex-nowrap items-center gap-0.5">
+                        <ActBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
+                        <ActBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
+                        <ActBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
+                        <ActBtn title="docker compose pause" loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸ Pause</ActBtn>
+                        <ActBtn
+                          danger
+                          title="docker compose down（停止并移除容器、网络）"
+                          loading={isRunning(p.id, "down")}
+                          onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) request({ id: p.id, name: p.name, verb: "down" }); }}
+                        >⊖ Down</ActBtn>
+                      </div>
+                      <div class="flex flex-nowrap items-center gap-0.5">
+                        <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
+                        <Show when={p.can_build}>
+                          <ActBtn title="docker compose build" loading={isRunning(p.id, "build")} onClick={() => request({ id: p.id, name: p.name, verb: "build" })}>⚒︎ Build</ActBtn>
+                        </Show>
+                        <ActBtn
+                          title="更新：build（若有）→ pull → down → up"
+                          loading={isRunning(p.id, "update")}
+                          onClick={() => request({ id: p.id, name: p.name, verb: "update", canBuild: p.can_build })}
+                        >↑ Update</ActBtn>
+                      </div>
+                    </Show>
+                    <div class="flex flex-nowrap items-center gap-0.5">
+                      <Show when={hasRole("operator")}>
+                        <Show when={p.discovered} fallback={
                           <ActBtn danger title="删除项目" onClick={() => remove(p.id, p.name)}>⊖ 删除</ActBtn>
-                        </>
-                      }>
-                        <ActBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕ 注册</ActBtn>
+                        }>
+                          <ActBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕ 注册</ActBtn>
+                        </Show>
                       </Show>
-                      <span class="mx-0.5 text-zinc-600">│</span>
-                    </Show>
-                    <Show when={hasRole("operator")}>
-                      <ActBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶ Up</ActBtn>
-                      <ActBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺ Restart</ActBtn>
-                      <ActBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■ Stop</ActBtn>
-                      <ActBtn title="docker compose pause" loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸ Pause</ActBtn>
+                      <ActBtn title="inspect" onClick={() => setInspectFor(p)}><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /> Inspect</ActBtn>
                       <ActBtn
-                        danger
-                        title="docker compose down（停止并移除容器、网络）"
-                        loading={isRunning(p.id, "down")}
-                        onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) request({ id: p.id, name: p.name, verb: "down" }); }}
-                      >⊖ Down</ActBtn>
-                      <ActBtn title="docker compose pull" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull" })}>↓ Pull</ActBtn>
-                      <ActBtn
-                        title="更新：build（若有）→ pull → down → up"
-                        loading={isRunning(p.id, "update")}
-                        onClick={() => request({ id: p.id, name: p.name, verb: "update", canBuild: p.can_build })}
-                      >↑ Update</ActBtn>
-                      <span class="mx-0.5 text-zinc-600">│</span>
-                    </Show>
-                    <ActBtn title="inspect" onClick={() => setInspectFor(p)}><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /> Inspect</ActBtn>
-                    <ActBtn
-                      title="基于项目下所有容器创建容器 / 注册 Compose"
-                      onClick={() => void runProject(cs().map((c) => c.Id))}
-                    >⧉ Run/Compose</ActBtn>
+                        title="基于项目下所有容器创建容器 / 注册 Compose"
+                        onClick={() => void runProject(cs().map((c) => c.Id))}
+                      >⧉ Run/Compose</ActBtn>
+                    </div>
                   </div>
                 </div>
                 {/* CSS grid-rows 0fr→1fr animates height without knowing the
