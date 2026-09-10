@@ -4,6 +4,7 @@ import { get } from "../../api/client";
 import type { Registry } from "../../types";
 import type { TaskSpec } from "../../stores/taskQueue";
 import { toast } from "./Toast";
+import { Ico } from "./ActionButton";
 import {
   type DownloadMode,
   getDownloadMode,
@@ -173,6 +174,76 @@ export function browserPullSpec(title: string, ref: string, key: string, value: 
 
 const PLATFORM_HINTS = ["linux/amd64", "linux/arm64", "linux/arm/v7"];
 
+const SavedAddressInput: Component<{
+  value: string;
+  urls: string[];
+  placeholder: string;
+  disabled?: boolean;
+  onInput: (value: string) => void;
+  onBlur: () => void;
+  onSelect: (value: string) => void;
+  onDelete: (value: string) => void;
+}> = (props) => {
+  const [open, setOpen] = createSignal(false);
+  let root: HTMLDivElement | undefined;
+  const onFocusOut = (e: FocusEvent) => {
+    const next = e.relatedTarget as Node | null;
+    if (!next || !root?.contains(next)) setTimeout(() => setOpen(false), 0);
+  };
+  return (
+    <div ref={root} class="relative flex min-w-0" onFocusOut={onFocusOut}>
+      <input
+        class="min-w-0 flex-1 border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500 disabled:opacity-40"
+        placeholder={props.placeholder}
+        autocomplete="off"
+        spellcheck={false}
+        disabled={props.disabled}
+        value={props.value}
+        onFocus={() => setOpen(true)}
+        onInput={(e) => props.onInput(e.currentTarget.value)}
+        onBlur={props.onBlur}
+      />
+      <button
+        type="button"
+        class="shrink-0 border border-l-0 border-zinc-700 bg-zinc-800 px-2 text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
+        aria-label="显示已保存地址"
+        disabled={props.disabled}
+        onMouseDown={(e) => { e.preventDefault(); setOpen((value) => !value); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((value) => !value);
+          }
+        }}
+      >▾</button>
+      <Show when={open() && props.urls.length > 0}>
+        <div class="absolute left-0 right-0 top-full z-30 mt-0.5 border border-zinc-700 bg-zinc-900 shadow-xl">
+          <For each={props.urls}>
+            {(url) => (
+              <div class="flex items-center border-b border-zinc-800 last:border-b-0">
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-xs text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { props.onSelect(url); setOpen(false); }}
+                >{url}</button>
+                <button
+                  type="button"
+                  class="shrink-0 px-2 py-1.5 text-zinc-500 transition-colors hover:bg-red-950/40 hover:text-red-400"
+                  aria-label={`删除地址 ${url}`}
+                  title={`删除地址 ${url}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => { e.stopPropagation(); props.onDelete(url); }}
+                ><Ico path="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></button>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+};
+
 export const PullOptions: Component<{
   options: PullOptionsState;
   showPlatform?: boolean;
@@ -183,8 +254,6 @@ export const PullOptions: Component<{
 }> = (props) => {
   const [registries] = createResource(() => get<Registry[]>("/api/registries"));
   const platformListId = createUniqueId();
-  const workerListId = createUniqueId();
-  const proxyListId = createUniqueId();
   const { value, set } = props.options;
   const [localWorkerUrls, setLocalWorkerUrls] = createSignal(getWorkerUrls());
   const [localProxyUrls, setLocalProxyUrls] = createSignal(readPullProxyUrls());
@@ -204,6 +273,7 @@ export const PullOptions: Component<{
 
   const saveWorker = () => {
     const url = validWorkerUrl(value.workerUrl);
+    if (!value.workerUrl.trim()) return;
     if (!url) {
       toast.error("请输入合法的 HTTPS Worker 地址");
       return;
@@ -212,18 +282,15 @@ export const PullOptions: Component<{
     set("workerUrl", url);
   };
 
-  const deleteWorker = () => {
-    const urls = removeWorkerUrl(value.workerUrl);
+  const deleteWorker = (url: string) => {
+    const urls = removeWorkerUrl(url);
     setLocalWorkerUrls(urls);
-    set("workerUrl", urls[0] ?? "");
-  };
-
-  const newWorker = () => {
-    set("workerUrl", "");
+    if (value.workerUrl.trim() === url.trim()) set("workerUrl", urls[0] ?? "");
   };
 
   const saveProxy = () => {
     const url = rememberableProxyUrl(value.proxyUrl);
+    if (!value.proxyUrl.trim()) return;
     if (!url) {
       toast.error("请输入合法的代理地址（http/https/socks5）");
       return;
@@ -232,14 +299,10 @@ export const PullOptions: Component<{
     set("proxyUrl", url);
   };
 
-  const deleteProxy = () => {
-    const urls = removePullProxyUrl(value.proxyUrl);
+  const deleteProxy = (url: string) => {
+    const urls = removePullProxyUrl(url);
     setLocalProxyUrls(urls);
-    set("proxyUrl", urls[0] ?? "");
-  };
-
-  const newProxy = () => {
-    set("proxyUrl", "");
+    if (value.proxyUrl.trim() === url.trim()) set("proxyUrl", urls[0] ?? "");
   };
 
   return (
@@ -262,27 +325,15 @@ export const PullOptions: Component<{
         <div class="space-y-3">
           <div>
             <span class="mb-1 block text-xs text-zinc-500">CF worker 地址</span>
-            <div class="flex gap-1">
-              <input
-                class="min-w-0 flex-1 border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500"
-                list={workerListId}
-                placeholder="https://your-worker.workers.dev"
-                autocomplete="off"
-                spellcheck={false}
-                value={value.workerUrl}
-                onInput={(e) => {
-                  set("workerUrl", e.currentTarget.value);
-                }}
-              />
-              <datalist id={workerListId}>
-                <For each={workerUrls()}>{(url) => <option value={url} />}</For>
-              </datalist>
-            </div>
-            <div class="mt-1 flex gap-1">
-              <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200" onClick={saveWorker}>保存地址</button>
-              <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200" onClick={newWorker}>新建</button>
-              <button type="button" class="border border-red-900/60 px-2 py-1 text-[11px] text-red-400 transition-colors hover:bg-red-950/40 disabled:opacity-30" disabled={!workerUrls().includes(value.workerUrl.trim())} onClick={deleteWorker}>删除地址</button>
-            </div>
+            <SavedAddressInput
+              value={value.workerUrl}
+              urls={workerUrls()}
+              placeholder="https://your-worker.workers.dev"
+              onInput={(url) => set("workerUrl", url)}
+              onBlur={saveWorker}
+              onSelect={(url) => set("workerUrl", url)}
+              onDelete={deleteWorker}
+            />
             <p class="mt-1 text-[11px] text-zinc-600">浏览器经此 worker 访问 registry；地址列表仅保存在此浏览器，且不含用户名/密码。</p>
           </div>
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -324,34 +375,22 @@ export const PullOptions: Component<{
       </Show>
 
       <Show when={!browserMode()}>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div class="space-y-3">
         <div>
           <label class="mb-1 flex items-center gap-1.5 text-xs text-zinc-500" title="代理只对本次请求生效；地址列表仅保存在此浏览器">
             <input type="checkbox" checked={value.useProxy} onChange={(e) => set("useProxy", e.currentTarget.checked)} />
             使用代理（可保存多个地址）
           </label>
-          <div class="flex gap-1">
-            <input
-              class="min-w-0 flex-1 border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500 disabled:opacity-40"
-              list={proxyListId}
-              placeholder="http://host.docker.internal:7890"
-              autocomplete="off"
-              spellcheck={false}
-              disabled={!value.useProxy}
-              value={value.proxyUrl}
-              onInput={(e) => {
-                set("proxyUrl", e.currentTarget.value);
-              }}
-            />
-            <datalist id={proxyListId}>
-              <For each={proxyUrls()}>{(url) => <option value={url} />}</For>
-            </datalist>
-          </div>
-          <div class="mt-1 flex gap-1">
-            <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200 disabled:opacity-30" disabled={!value.useProxy} onClick={saveProxy}>保存地址</button>
-            <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200 disabled:opacity-30" disabled={!value.useProxy} onClick={newProxy}>新建</button>
-            <button type="button" class="border border-red-900/60 px-2 py-1 text-[11px] text-red-400 transition-colors hover:bg-red-950/40 disabled:opacity-30" disabled={!value.useProxy || !proxyUrls().includes(value.proxyUrl.trim())} onClick={deleteProxy}>删除地址</button>
-          </div>
+          <SavedAddressInput
+            value={value.proxyUrl}
+            urls={proxyUrls()}
+            placeholder="http://host.docker.internal:7890"
+            disabled={!value.useProxy}
+            onInput={(url) => set("proxyUrl", url)}
+            onBlur={saveProxy}
+            onSelect={(url) => set("proxyUrl", url)}
+            onDelete={deleteProxy}
+          />
           <p class="mt-1 text-[11px] text-zinc-600">地址需从 phyless 容器可达；无认证地址会记住在此浏览器，含用户名/密码的地址不会保存。</p>
         </div>
 

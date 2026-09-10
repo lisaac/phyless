@@ -49,6 +49,23 @@ describe("pull options", () => {
     expect(readPullProxyUrls()).toEqual(["http://one.example:8080"]);
   });
 
+  it("saves on blur, deduplicates, and deletes from the dropdown", () => {
+    const pull = createPullOptions();
+    render(() => <PullOptions options={pull} />);
+    fireEvent.click(screen.getByLabelText(/使用代理/));
+    const input = screen.getByPlaceholderText("http://host.docker.internal:7890") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "http://proxy.example:8080" } });
+    fireEvent.blur(input);
+    fireEvent.input(input, { target: { value: "http://proxy.example:8080" } });
+    fireEvent.blur(input);
+    expect(readPullProxyUrls()).toEqual(["http://proxy.example:8080"]);
+
+    fireEvent.focus(input);
+    const remove = screen.getByRole("button", { name: "删除地址 http://proxy.example:8080" });
+    fireEvent.click(remove);
+    expect(readPullProxyUrls()).toEqual([]);
+  });
+
   it("remembers the proxy url but only sends it after opting in", () => {
     rememberPullProxyUrl("http://proxy.example:8080");
     const pull = createPullOptions();
