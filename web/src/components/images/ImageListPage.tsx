@@ -374,7 +374,7 @@ export const ImageListPage: Component = () => {
                     {/* Inline actions */}
                     <div class="mt-1 flex items-center gap-0.5">
                       <IBtn title="inspect" onClick={() => setInspectFor(img)}>
-                        🔍︎
+                        <Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" />
                       </IBtn>
                       <Show when={hasRole("operator")}>
                         <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>

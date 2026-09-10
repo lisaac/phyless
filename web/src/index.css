@@ -11,6 +11,68 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
 input[type="checkbox"] { border-radius: 3px !important; }
 input[type="radio"]    { border-radius: 50% !important; }
 
+/* ── Form toggles ────────────────────────────────────────────────────────── */
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  flex: 0 0 auto;
+  border: 1px solid #52525b;
+  background: #18181b;
+  color: #fff;
+  vertical-align: middle;
+  transition: background-color .15s, border-color .15s, box-shadow .15s, opacity .15s;
+  cursor: pointer;
+}
+input[type="checkbox"]::before {
+  content: "";
+  width: .3rem;
+  height: .6rem;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: scale(0) rotate(45deg) translate(-1px, -1px);
+  transition: transform .12s ease-out;
+}
+input[type="radio"]::before {
+  content: "";
+  width: .45rem;
+  height: .45rem;
+  border-radius: 50% !important;
+  background: currentColor;
+  transform: scale(0);
+  transition: transform .12s ease-out;
+}
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
+  border-color: #818cf8;
+  background: #4f46e5;
+}
+input[type="checkbox"]:checked::before,
+input[type="radio"]:checked::before { transform: scale(1); }
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  border-color: #a5b4fc !important;
+  box-shadow: 0 0 0 3px rgba(99,102,241,.3) !important;
+}
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled { cursor: not-allowed; opacity: .4; }
+html:not(.dark) input[type="checkbox"],
+html:not(.dark) input[type="radio"] {
+  border-color: #94a3b8;
+  background: #fff;
+  color: #fff;
+}
+html:not(.dark) input[type="checkbox"]:checked,
+html:not(.dark) input[type="radio"]:checked {
+  border-color: #4f46e5;
+  background: #4f46e5;
+}
+
 /* ── Subtle focus (not jarring blue) ──────────────────────────────────────── */
 input:focus, select:focus, textarea:focus {
   outline: none !important;

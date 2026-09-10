@@ -1,5 +1,5 @@
 // Browser-download settings persisted per browser (origin localStorage):
-// the CF worker URL, the chosen download mode, and — opt-in — a single private
+// saved CF worker URLs, the chosen download mode, and — opt-in — a private
 // registry credential so the user need not retype it.
 //
 // SECURITY: remembered credentials live in localStorage in cleartext and are
@@ -8,6 +8,7 @@
 // default and can be cleared from the pull dialog.
 
 const WORKER_KEY = "phyless_pull_worker_url";
+const WORKER_LIST_KEY = "phyless_pull_worker_urls";
 const MODE_KEY = "phyless_pull_download_mode";
 const CREDS_KEY = "phyless_pull_registry_creds";
 
@@ -35,10 +36,12 @@ export function validWorkerUrl(raw: string): string {
 
 export function getWorkerUrl(): string {
   try {
-    return validWorkerUrl(localStorage.getItem(WORKER_KEY) ?? "");
+    const current = validWorkerUrl(localStorage.getItem(WORKER_KEY) ?? "");
+    if (current) return current;
   } catch {
-    return "";
+    // Fall through to the list reader below.
   }
+  return getWorkerUrls()[0] ?? "";
 }
 
 export function setWorkerUrl(raw: string): void {
@@ -49,6 +52,61 @@ export function setWorkerUrl(raw: string): void {
   } catch {
     /* storage disabled — in-memory state still works */
   }
+}
+
+function uniqueWorkerUrls(values: unknown[]): string[] {
+  return [...new Set(values.map((value) => typeof value === "string" ? validWorkerUrl(value) : "").filter(Boolean))];
+}
+
+// Saved browser-proxy endpoints are origin-local. Migrate the old single-value
+// key the first time the list is read.
+export function getWorkerUrls(): string[] {
+  try {
+    const raw = localStorage.getItem(WORKER_LIST_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) return uniqueWorkerUrls(parsed);
+    }
+    const legacy = validWorkerUrl(localStorage.getItem(WORKER_KEY) ?? "");
+    if (legacy) {
+      const urls = [legacy];
+      localStorage.setItem(WORKER_LIST_KEY, JSON.stringify(urls));
+      return urls;
+    }
+  } catch {
+    // Browser storage may be disabled or contain malformed legacy data.
+  }
+  return [];
+}
+
+export function saveWorkerUrl(raw: string): string[] {
+  const value = validWorkerUrl(raw);
+  if (!value) return getWorkerUrls();
+  const urls = [value, ...getWorkerUrls().filter((url) => url !== value)];
+  try {
+    localStorage.setItem(WORKER_LIST_KEY, JSON.stringify(urls));
+    localStorage.setItem(WORKER_KEY, value);
+  } catch {
+    // Keep the current component value usable when storage is unavailable.
+  }
+  return urls;
+}
+
+export function removeWorkerUrl(raw: string): string[] {
+  const value = raw.trim();
+  const urls = getWorkerUrls().filter((url) => url !== value);
+  try {
+    if (urls.length) {
+      localStorage.setItem(WORKER_LIST_KEY, JSON.stringify(urls));
+      localStorage.setItem(WORKER_KEY, urls[0]);
+    } else {
+      localStorage.removeItem(WORKER_LIST_KEY);
+      localStorage.removeItem(WORKER_KEY);
+    }
+  } catch {
+    // Ignore storage failures; the caller still receives the new list.
+  }
+  return urls;
 }
 
 export function getDownloadMode(): DownloadMode {

@@ -17,6 +17,7 @@ import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { containersOf, representative, ActBtn, ComposeIcon } from "./composeShared";
+import { Ico } from "../shared/ActionButton";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
@@ -177,7 +178,7 @@ export const ComposeListPage: Component = () => {
                       >↑ Update</ActBtn>
                       <span class="mx-0.5 text-zinc-600">│</span>
                     </Show>
-                    <ActBtn title="inspect" onClick={() => setInspectFor(p)}>🔍︎ Inspect</ActBtn>
+                    <ActBtn title="inspect" onClick={() => setInspectFor(p)}><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /> Inspect</ActBtn>
                     <ActBtn
                       title="基于项目下所有容器创建容器 / 注册 Compose"
                       onClick={() => void runProject(cs().map((c) => c.Id))}

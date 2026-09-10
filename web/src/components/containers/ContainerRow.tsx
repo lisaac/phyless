@@ -2,7 +2,7 @@ import { Component, Show, For, createSignal, createResource, onCleanup } from "s
 import { displayImage } from "../../api/inspect";
 import { useNavigate } from "@solidjs/router";
 import { hasRole } from "../../stores/auth";
-import { IBtn } from "../shared/ActionButton";
+import { IBtn, Ico } from "../shared/ActionButton";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
@@ -73,7 +73,7 @@ export const ContainerRow: Component<{
   const viewBtns = () => (
     <>
       <IBtn title="查看 Run/Compose 命令" onClick={() => p.onViewCmd({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>⧉</IBtn>
-      <IBtn title="inspect" onClick={() => setShowInspect(true)}>🔍︎</IBtn>
+      <IBtn title="inspect" onClick={() => setShowInspect(true)}><Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" /></IBtn>
       <Show when={running() && p.onConsole}>
         <IBtn title="控制台" onClick={() => p.onConsole?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>&gt;_</IBtn>
       </Show>

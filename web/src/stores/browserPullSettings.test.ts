@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   validWorkerUrl,
   getWorkerUrl,
+  getWorkerUrls,
   setWorkerUrl,
+  saveWorkerUrl,
+  removeWorkerUrl,
   getDownloadMode,
   setDownloadMode,
   getRememberedCreds,
@@ -32,6 +35,15 @@ describe("worker url persistence", () => {
     expect(getWorkerUrl()).toBe("https://w.example"); // unchanged
     setWorkerUrl("");
     expect(getWorkerUrl()).toBe("");
+  });
+
+  it("manages multiple saved worker urls", () => {
+    expect(saveWorkerUrl("https://one.example")).toEqual(["https://one.example"]);
+    expect(saveWorkerUrl("https://two.example")).toEqual(["https://two.example", "https://one.example"]);
+    expect(saveWorkerUrl("https://one.example")).toEqual(["https://one.example", "https://two.example"]);
+    expect(removeWorkerUrl("https://one.example")).toEqual(["https://two.example"]);
+    expect(getWorkerUrls()).toEqual(["https://two.example"]);
+    expect(getWorkerUrl()).toBe("https://two.example");
   });
 });
 

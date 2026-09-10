@@ -1,16 +1,20 @@
-import { Component, createResource, createUniqueId, For, Show } from "solid-js";
+import { Component, createResource, createSignal, createUniqueId, For, Show } from "solid-js";
 import { createStore } from "solid-js/store";
 import { get } from "../../api/client";
 import type { Registry } from "../../types";
 import type { TaskSpec } from "../../stores/taskQueue";
+import { toast } from "./Toast";
 import {
   type DownloadMode,
   getDownloadMode,
   setDownloadMode,
   getWorkerUrl,
-  setWorkerUrl,
+  getWorkerUrls,
+  removeWorkerUrl,
+  saveWorkerUrl,
   getRememberedCreds,
   rememberCreds,
+  validWorkerUrl,
 } from "../../stores/browserPullSettings";
 
 export interface PullOptionsValue {
@@ -29,6 +33,7 @@ export interface PullOptionsValue {
 }
 
 const PULL_PROXY_STORAGE_KEY = "phyless_pull_proxy_url";
+const PULL_PROXY_LIST_STORAGE_KEY = "phyless_pull_proxy_urls";
 
 function rememberableProxyUrl(raw: string): string {
   const value = raw.trim();
@@ -47,18 +52,74 @@ function rememberableProxyUrl(raw: string): string {
 }
 
 export function readPullProxyUrl(): string {
+  return readPullProxyUrls()[0] ?? "";
+}
+
+function uniqueProxyUrls(values: unknown[]): string[] {
+  return [...new Set(values.map((value) => typeof value === "string" ? rememberableProxyUrl(value) : "").filter(Boolean))];
+}
+
+export function readPullProxyUrls(): string[] {
   try {
-    return rememberableProxyUrl(localStorage.getItem(PULL_PROXY_STORAGE_KEY) ?? "");
+    const raw = localStorage.getItem(PULL_PROXY_LIST_STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) return uniqueProxyUrls(parsed);
+    }
+    const legacy = rememberableProxyUrl(localStorage.getItem(PULL_PROXY_STORAGE_KEY) ?? "");
+    if (legacy) {
+      const urls = [legacy];
+      localStorage.setItem(PULL_PROXY_LIST_STORAGE_KEY, JSON.stringify(urls));
+      return urls;
+    }
   } catch {
-    return "";
+    // Browser storage may be disabled or contain malformed legacy data.
   }
+  return [];
 }
 
 export function rememberPullProxyUrl(raw: string): void {
+  const value = rememberableProxyUrl(raw);
+  if (value) {
+    savePullProxyUrl(value);
+    return;
+  }
+  if (!raw.trim()) clearPullProxyUrls();
+}
+
+export function savePullProxyUrl(raw: string): string[] {
+  const value = rememberableProxyUrl(raw);
+  if (!value) return readPullProxyUrls();
+  const urls = [value, ...readPullProxyUrls().filter((url) => url !== value)];
   try {
-    const value = rememberableProxyUrl(raw);
-    if (value) localStorage.setItem(PULL_PROXY_STORAGE_KEY, value);
-    else if (!raw.trim()) localStorage.removeItem(PULL_PROXY_STORAGE_KEY);
+    localStorage.setItem(PULL_PROXY_LIST_STORAGE_KEY, JSON.stringify(urls));
+    localStorage.setItem(PULL_PROXY_STORAGE_KEY, value);
+  } catch {
+    // Keep the current component value usable when storage is unavailable.
+  }
+  return urls;
+}
+
+export function removePullProxyUrl(raw: string): string[] {
+  const value = raw.trim();
+  const urls = readPullProxyUrls().filter((url) => url !== value);
+  try {
+    if (urls.length) {
+      localStorage.setItem(PULL_PROXY_LIST_STORAGE_KEY, JSON.stringify(urls));
+      localStorage.setItem(PULL_PROXY_STORAGE_KEY, urls[0]);
+    } else {
+      clearPullProxyUrls();
+    }
+  } catch {
+    // Ignore storage failures; the caller still receives the new list.
+  }
+  return urls;
+}
+
+function clearPullProxyUrls(): void {
+  try {
+    localStorage.removeItem(PULL_PROXY_LIST_STORAGE_KEY);
+    localStorage.removeItem(PULL_PROXY_STORAGE_KEY);
   } catch {
     // Browser storage may be disabled; the request still uses component state.
   }
@@ -122,7 +183,13 @@ export const PullOptions: Component<{
 }> = (props) => {
   const [registries] = createResource(() => get<Registry[]>("/api/registries"));
   const platformListId = createUniqueId();
+  const workerListId = createUniqueId();
+  const proxyListId = createUniqueId();
   const { value, set } = props.options;
+  const [localWorkerUrls, setLocalWorkerUrls] = createSignal(getWorkerUrls());
+  const [localProxyUrls, setLocalProxyUrls] = createSignal(readPullProxyUrls());
+  const workerUrls = localWorkerUrls;
+  const proxyUrls = localProxyUrls;
 
   const toggleRegistry = (id: string) => {
     const ids = value.registryIds;
@@ -134,6 +201,46 @@ export const PullOptions: Component<{
     setDownloadMode(mode);
   };
   const browserMode = () => !!props.allowBrowser && value.downloadMode === "browser";
+
+  const saveWorker = () => {
+    const url = validWorkerUrl(value.workerUrl);
+    if (!url) {
+      toast.error("请输入合法的 HTTPS Worker 地址");
+      return;
+    }
+    setLocalWorkerUrls(saveWorkerUrl(url));
+    set("workerUrl", url);
+  };
+
+  const deleteWorker = () => {
+    const urls = removeWorkerUrl(value.workerUrl);
+    setLocalWorkerUrls(urls);
+    set("workerUrl", urls[0] ?? "");
+  };
+
+  const newWorker = () => {
+    set("workerUrl", "");
+  };
+
+  const saveProxy = () => {
+    const url = rememberableProxyUrl(value.proxyUrl);
+    if (!url) {
+      toast.error("请输入合法的代理地址（http/https/socks5）");
+      return;
+    }
+    setLocalProxyUrls(savePullProxyUrl(url));
+    set("proxyUrl", url);
+  };
+
+  const deleteProxy = () => {
+    const urls = removePullProxyUrl(value.proxyUrl);
+    setLocalProxyUrls(urls);
+    set("proxyUrl", urls[0] ?? "");
+  };
+
+  const newProxy = () => {
+    set("proxyUrl", "");
+  };
 
   return (
     <div class="space-y-3 border-t border-zinc-800 pt-3">
@@ -155,18 +262,28 @@ export const PullOptions: Component<{
         <div class="space-y-3">
           <div>
             <span class="mb-1 block text-xs text-zinc-500">CF worker 地址</span>
-            <input
-              class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500"
-              placeholder="https://your-worker.workers.dev"
-              autocomplete="off"
-              spellcheck={false}
-              value={value.workerUrl}
-              onInput={(e) => {
-                set("workerUrl", e.currentTarget.value);
-                setWorkerUrl(e.currentTarget.value);
-              }}
-            />
-            <p class="mt-1 text-[11px] text-zinc-600">浏览器经此 worker 访问 registry；仅保存合法 https 地址（不含用户名/密码）。</p>
+            <div class="flex gap-1">
+              <input
+                class="min-w-0 flex-1 border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500"
+                list={workerListId}
+                placeholder="https://your-worker.workers.dev"
+                autocomplete="off"
+                spellcheck={false}
+                value={value.workerUrl}
+                onInput={(e) => {
+                  set("workerUrl", e.currentTarget.value);
+                }}
+              />
+              <datalist id={workerListId}>
+                <For each={workerUrls()}>{(url) => <option value={url} />}</For>
+              </datalist>
+            </div>
+            <div class="mt-1 flex gap-1">
+              <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200" onClick={saveWorker}>保存地址</button>
+              <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200" onClick={newWorker}>新建</button>
+              <button type="button" class="border border-red-900/60 px-2 py-1 text-[11px] text-red-400 transition-colors hover:bg-red-950/40 disabled:opacity-30" disabled={!workerUrls().includes(value.workerUrl.trim())} onClick={deleteWorker}>删除地址</button>
+            </div>
+            <p class="mt-1 text-[11px] text-zinc-600">浏览器经此 worker 访问 registry；地址列表仅保存在此浏览器，且不含用户名/密码。</p>
           </div>
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label class="block">
@@ -209,23 +326,33 @@ export const PullOptions: Component<{
       <Show when={!browserMode()}>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <label class="mb-1 flex items-center gap-1.5 text-xs text-zinc-500" title="只对本次请求生效，不会写入容器、Compose 文件或全局设置">
+          <label class="mb-1 flex items-center gap-1.5 text-xs text-zinc-500" title="代理只对本次请求生效；地址列表仅保存在此浏览器">
             <input type="checkbox" checked={value.useProxy} onChange={(e) => set("useProxy", e.currentTarget.checked)} />
-            使用代理（地址记住此浏览器）
+            使用代理（可保存多个地址）
           </label>
-          <input
-            class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500 disabled:opacity-40"
-            placeholder="http://host.docker.internal:7890"
-            autocomplete="off"
-            spellcheck={false}
-            disabled={!value.useProxy}
-            value={value.proxyUrl}
-            onInput={(e) => {
-              set("proxyUrl", e.currentTarget.value);
-              rememberPullProxyUrl(e.currentTarget.value);
-            }}
-          />
-          <p class="mt-1 text-[11px] text-zinc-600">地址需从 phyless 容器可达；有效的无认证地址会记住，含用户名/密码的地址不会保存。</p>
+          <div class="flex gap-1">
+            <input
+              class="min-w-0 flex-1 border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-indigo-500 disabled:opacity-40"
+              list={proxyListId}
+              placeholder="http://host.docker.internal:7890"
+              autocomplete="off"
+              spellcheck={false}
+              disabled={!value.useProxy}
+              value={value.proxyUrl}
+              onInput={(e) => {
+                set("proxyUrl", e.currentTarget.value);
+              }}
+            />
+            <datalist id={proxyListId}>
+              <For each={proxyUrls()}>{(url) => <option value={url} />}</For>
+            </datalist>
+          </div>
+          <div class="mt-1 flex gap-1">
+            <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200 disabled:opacity-30" disabled={!value.useProxy} onClick={saveProxy}>保存地址</button>
+            <button type="button" class="border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200 disabled:opacity-30" disabled={!value.useProxy} onClick={newProxy}>新建</button>
+            <button type="button" class="border border-red-900/60 px-2 py-1 text-[11px] text-red-400 transition-colors hover:bg-red-950/40 disabled:opacity-30" disabled={!value.useProxy || !proxyUrls().includes(value.proxyUrl.trim())} onClick={deleteProxy}>删除地址</button>
+          </div>
+          <p class="mt-1 text-[11px] text-zinc-600">地址需从 phyless 容器可达；无认证地址会记住在此浏览器，含用户名/密码的地址不会保存。</p>
         </div>
 
         <Show when={props.multipleRegistries} fallback={

@@ -84,7 +84,7 @@ export const VolumeListPage: Component = () => {
                       <Ico path="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z" />
                     </IBtn>
                     <IBtn title="inspect" onClick={() => setInspectFor(v)}>
-                      🔍︎
+                      <Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" />
                     </IBtn>
                     <Show when={hasRole("operator")}>
                       <IBtn title="删除" danger onClick={() => remove(v.Name)}>

@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
-import { PullOptions, createPullOptions, pullOptionsPayload, readPullProxyUrl, rememberPullProxyUrl } from "./PullOptions";
+import {
+  PullOptions,
+  createPullOptions,
+  pullOptionsPayload,
+  readPullProxyUrl,
+  readPullProxyUrls,
+  rememberPullProxyUrl,
+  removePullProxyUrl,
+  savePullProxyUrl,
+} from "./PullOptions";
 
 vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn() }));
 
@@ -31,6 +40,13 @@ describe("pull options", () => {
     rememberPullProxyUrl("http://proxy.example:8080");
     rememberPullProxyUrl(" ");
     expect(readPullProxyUrl()).toBe("");
+  });
+
+  it("manages multiple saved proxy urls", () => {
+    expect(savePullProxyUrl("http://one.example:8080")).toEqual(["http://one.example:8080"]);
+    expect(savePullProxyUrl("socks5://two.example:1080")).toEqual(["socks5://two.example:1080", "http://one.example:8080"]);
+    expect(removePullProxyUrl("socks5://two.example:1080")).toEqual(["http://one.example:8080"]);
+    expect(readPullProxyUrls()).toEqual(["http://one.example:8080"]);
   });
 
   it("remembers the proxy url but only sends it after opting in", () => {
