@@ -11,6 +11,7 @@ import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
 import { UpgradeContainerModal } from "./UpgradeContainerModal";
 import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
+import { ComposeIcon } from "../compose/composeShared";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import type { ContainerSummary } from "../../types";
 
@@ -102,7 +103,9 @@ export const ContainerListPage: Component = () => {
         </Show>
 
         <span class="text-zinc-400">│</span>
-        <Btn title="基于选中容器创建容器 / 注册 Compose" onClick={() => void bulkRun()}>⧉ Run/Compose</Btn>
+        <Btn title="基于选中容器创建容器 / 注册 Compose" onClick={() => void bulkRun()}>
+          <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
+        </Btn>
 
         <Show when={n() > 0}>
           <button class="ml-auto text-zinc-400 hover:text-zinc-400" onClick={() => setSelected(new Set())}>
@@ -144,7 +147,7 @@ export const ContainerListPage: Component = () => {
         </Show>
       </div>
 
-      {/* ── Run/Compose modal (per-row "⧉" button — single container only) ── */}
+      {/* ── Run/Compose modal (per-row Compose button — single container only) ── */}
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
       <UpgradeContainerModal target={upgradeTarget()} onClose={() => setUpgradeTarget(null)} />

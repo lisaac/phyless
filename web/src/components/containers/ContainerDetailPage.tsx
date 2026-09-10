@@ -23,6 +23,7 @@ import { KV, Sec } from "../shared/KV";
 import { Btn } from "../shared/ActionButton";
 import { Tabs } from "../shared/Tabs";
 import { ContainerIcon } from "./ContainerIcon";
+import { ComposeIcon } from "../compose/composeShared";
 import type { FileEntry, NetworkSummary } from "../../types";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -359,7 +360,9 @@ export const ContainerDetailPage: Component = () => {
               window.open(`/api/containers/${id()}/export?token=${encodeURIComponent(getToken() ?? "")}`, "_blank");
             }}>↓ 导出 tar</Btn>
             <Btn onClick={() => setUpgradeTarget({ id: id(), name: name() })}>↑ 升级</Btn>
-            <Btn onClick={() => void openCmdModal()}>⧉ Run/Compose</Btn>
+            <Btn onClick={() => void openCmdModal()}>
+              <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
+            </Btn>
             <Show when={running()}>
               <Btn onClick={() => setConsoleTarget({ id: id(), name: name() })}>&gt;_ 控制台</Btn>
             </Show>

@@ -164,6 +164,13 @@ html:not(.dark) .bg-zinc-900\/40            { background-color: rgba(241,245,249
 html:not(.dark) .bg-zinc-900\/60            { background-color: rgba(241,245,249,.9); }
 html:not(.dark) .bg-zinc-950               { background-color: #f8fafc; }
 
+/* All list pages use the same bordered overflow panel. Give that panel a
+   clean white surface in light mode and keep its responsive cell dividers as
+   quiet as the outer border instead of inheriting dark zinc. */
+html:not(.dark) .overflow-x-auto.border.border-zinc-800 { background-color: #fff; }
+html:not(.dark) [class~="border-zinc-800/60"],
+html:not(.dark) [class~="border-zinc-800/50"] { border-color: #e2e8f0; }
+
 html:not(.dark) ::-webkit-scrollbar-thumb  { background: #cbd5e1; }
 html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 

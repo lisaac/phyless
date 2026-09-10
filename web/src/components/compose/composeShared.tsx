@@ -35,9 +35,20 @@ export function servicesHaveBuild(services: Record<string, Record<string, unknow
   return !!services && Object.values(services).some((s) => s?.build != null);
 }
 
-// Text glyph used everywhere a compose project needs a visual marker.
+// Stacked-service mark used wherever a compose project needs a visual marker.
+// Its thin strokes match the container and action icons without adding an icon
+// dependency just for one Docker concept.
 export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => (
-  <span aria-hidden="true" class={p.class ?? "shrink-0 text-zinc-400"} style={{ "font-size": `${p.size ?? 16}px`, "line-height": "1" }}>⧉</span>
+  <svg
+    xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+    width={p.size ?? 16} height={p.size ?? 16} aria-hidden="true"
+    class={p.class ?? "shrink-0 text-zinc-400"}
+  >
+    <path d="m12 2 9 5-9 5-9-5 9-5Z" />
+    <path d="m3 12 9 5 9-5" />
+    <path d="m3 17 9 5 9-5" />
+  </svg>
 );
 
 // Thin wrapper around the shared Btn (same style used by the container list

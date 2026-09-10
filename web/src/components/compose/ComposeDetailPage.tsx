@@ -268,7 +268,9 @@ export const ComposeDetailPage: Component = () => {
             onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "update", canBuild: servicesHaveBuild(detail()?.services) })}
           >↑ Update</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
-          <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>⧉ Run/Compose</ActBtn>
+          <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>
+            <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
+          </ActBtn>
         </div>
       </Show>
 
