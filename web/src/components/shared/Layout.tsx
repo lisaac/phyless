@@ -193,7 +193,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
 
           {/* Right group: task panel toggle, refresh now + settings, theme. */}
           <button
-            class={`ml-auto flex shrink-0 items-center gap-1 rounded p-1 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
+            class={`ml-auto flex h-6 shrink-0 items-center gap-1 rounded p-1 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
             onClick={() => setPanelHidden(!panelHidden())}
             title={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
             aria-label={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
@@ -210,7 +210,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           </button>
           {/* Refresh now — plain icon button, no dropdown arrow beside it. */}
           <button
-            class={`shrink-0 rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
+            class={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
             onClick={refreshAll}
             title="立即刷新"
             aria-label="立即刷新"
@@ -219,7 +219,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           </button>
           {/* Refresh settings — gear, replaces the old ▾ arrow. */}
           <details ref={refreshMenu} class="group relative shrink-0">
-            <summary class="flex cursor-pointer list-none items-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100" title="刷新设置" aria-label="刷新设置">
+            <summary class="flex h-6 w-6 shrink-0 cursor-pointer list-none items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100" title="刷新设置" aria-label="刷新设置">
               <span aria-hidden="true" class="text-[15px] leading-none">⚙︎</span>
             </summary>
             <div class="absolute right-0 z-50 mt-2 flex w-48 flex-col gap-2 rounded-lg border border-zinc-700/50 bg-zinc-900 p-3 text-sm text-zinc-200 shadow-2xl">
@@ -238,7 +238,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             </div>
           </details>
           <button
-            class="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             onClick={toggleTheme}
             title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
             aria-label={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
