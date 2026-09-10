@@ -39,3 +39,12 @@ export const IBtn: Component<{
     {p.loading ? <span class="inline-block animate-spin text-xs">↺</span> : p.children}
   </button>
 );
+
+// Tiny 14px stroked SVG icon — feed it an SVG path `d`.
+export const Ico = (p: { path: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round"
+       stroke-linejoin="round" width="14" height="14">
+    <path d={p.path} />
+  </svg>
+);

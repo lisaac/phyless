@@ -73,7 +73,7 @@ export const ContainerRow: Component<{
   const viewBtns = () => (
     <>
       <IBtn title="查看 Run/Compose 命令" onClick={() => p.onViewCmd({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>⧉</IBtn>
-      <IBtn title="inspect" onClick={() => setShowInspect(true)}>⌕</IBtn>
+      <IBtn title="inspect" onClick={() => setShowInspect(true)}>🔍︎</IBtn>
       <Show when={running() && p.onConsole}>
         <IBtn title="控制台" onClick={() => p.onConsole?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>&gt;_</IBtn>
       </Show>

@@ -94,7 +94,7 @@ export const NetworkListPage: Component = () => {
                   >{n.Id.slice(0, 12)}</button>
                   <div class="mt-1 flex items-center gap-0.5">
                     <IBtn title="inspect" onClick={() => setInspectFor(n)}>
-                      ⌕
+                      🔍︎
                     </IBtn>
                     <Show when={hasRole("operator")}>
                       <IBtn title="删除" danger onClick={() => remove(n.Id, n.Name)}>

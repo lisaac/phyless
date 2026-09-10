@@ -6,7 +6,7 @@ import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
-import { Btn, IBtn } from "../shared/ActionButton";
+import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
@@ -374,7 +374,7 @@ export const ImageListPage: Component = () => {
                     {/* Inline actions */}
                     <div class="mt-1 flex items-center gap-0.5">
                       <IBtn title="inspect" onClick={() => setInspectFor(img)}>
-                        ⌕
+                        🔍︎
                       </IBtn>
                       <Show when={hasRole("operator")}>
                         <IBtn title="使用此镜像创建容器" onClick={() => setCreateFrom(img)}>
@@ -400,11 +400,11 @@ export const ImageListPage: Component = () => {
                         ↓
                       </a>
                       <IBtn title="文件" onClick={() => setFilesFor(img)}>
-                        ▤
+                        <Ico path="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z" />
                       </IBtn>
                       <Show when={hasRole("operator")}>
                         <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
-                          ◇
+                          <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
                         </IBtn>
                         <IBtn
                           title="删除"

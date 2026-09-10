@@ -256,7 +256,7 @@ export const ComposeDetailPage: Component = () => {
             title="docker compose down（停止并移除容器、网络）"
             loading={isRunning("down")}
             onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) request({ id: id(), name: project()?.name ?? id(), verb: "down" }); }}
-          >⊘ Down</ActBtn>
+          >⊖ Down</ActBtn>
           <ActBtn title="docker compose pull" loading={isRunning("pull")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "pull" })}>↓ Pull</ActBtn>
           <Show when={servicesHaveBuild(detail()?.services)}>
             <ActBtn title="docker compose build" loading={isRunning("build")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "build" })}>⚒︎ Build</ActBtn>
@@ -265,7 +265,7 @@ export const ComposeDetailPage: Component = () => {
             title="更新：build（若有）→ pull → down → up"
             loading={isRunning("update")}
             onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "update", canBuild: servicesHaveBuild(detail()?.services) })}
-          >⬆ Update</ActBtn>
+          >↑ Update</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>⧉ Run/Compose</ActBtn>
         </div>

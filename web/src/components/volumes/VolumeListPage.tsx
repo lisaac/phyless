@@ -4,7 +4,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
-import { IBtn } from "../shared/ActionButton";
+import { IBtn, Ico } from "../shared/ActionButton";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
@@ -81,10 +81,10 @@ export const VolumeListPage: Component = () => {
                   <div class="min-w-0 break-all font-medium" title={v.Name}>{midPath(v.Name)}</div>
                   <div class="mt-1 flex items-center gap-0.5">
                     <IBtn title="浏览文件" onClick={() => setBrowse(v)}>
-                      ▤
+                      <Ico path="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z" />
                     </IBtn>
                     <IBtn title="inspect" onClick={() => setInspectFor(v)}>
-                      ⌕
+                      🔍︎
                     </IBtn>
                     <Show when={hasRole("operator")}>
                       <IBtn title="删除" danger onClick={() => remove(v.Name)}>
