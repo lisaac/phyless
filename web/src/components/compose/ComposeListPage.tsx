@@ -16,7 +16,7 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import { containersOf, representative, ComposeIcon } from "./composeShared";
+import { composeActionAvailability, containersOf, representative, ComposeIcon } from "./composeShared";
 import { IBtn, Ico } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
@@ -117,6 +117,7 @@ export const ComposeListPage: Component = () => {
               const cs = () => containersOf(p, containers.items());
               const hasContainers = () => cs().length > 0;
               const rep = () => representative(cs());
+              const available = () => composeActionAvailability(p);
               // 全部运行中 → 绿色, 部分运行中 → 蓝色, 未运行/退出 → 默认（无强调色）
               const statusColor = () => {
                 const running = p.running ?? 0;
@@ -125,14 +126,16 @@ export const ComposeListPage: Component = () => {
                 if (running > 0) return "text-sky-400";
                 return "";
               };
-              const rowBg = "bg-indigo-500/[0.04] hover:bg-indigo-500/[0.08]";
+              const rowBg = () => available().stop
+                ? "bg-indigo-500/[0.04] hover:bg-indigo-500/[0.08]"
+                : "bg-slate-500/[0.06] hover:bg-slate-500/[0.11]";
               const actionButtons = () => (
                 <>
                   <Show when={hasRole("operator")}>
-                    <IBtn title="docker compose up -d" loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶</IBtn>
-                    <IBtn title="docker compose pause" loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸</IBtn>
-                    <IBtn title="docker compose restart" loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺</IBtn>
-                    <IBtn title="docker compose stop" loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■</IBtn>
+                    <IBtn title={available().up ? "docker compose up -d" : "项目中的容器均已运行"} disabled={!available().up} loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶</IBtn>
+                    <IBtn title={available().pause ? "docker compose pause" : "没有运行中的容器可暂停"} disabled={!available().pause} loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸</IBtn>
+                    <IBtn title={available().restart ? "docker compose restart" : "没有运行中的容器可重启"} disabled={!available().restart} loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺</IBtn>
+                    <IBtn title={available().stop ? "docker compose stop" : "没有运行中的容器可停止"} disabled={!available().stop} loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■</IBtn>
                     <span class="mx-0.5 text-zinc-400">│</span>
                     <IBtn title="Pull/Build：拉取镜像并构建；不执行 down/up" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull", canBuild: p.can_build })}>↓</IBtn>
                     <IBtn title="Update：Pull/Build → down → up" loading={isRunning(p.id, "update")} onClick={() => request({ id: p.id, name: p.name, verb: "update", canBuild: p.can_build })}>↑</IBtn>
@@ -151,7 +154,8 @@ export const ComposeListPage: Component = () => {
                     </Show>
                     <IBtn
                       danger
-                      title="docker compose down（停止并移除容器、网络）"
+                      title={available().down ? "docker compose down（停止并移除容器、网络）" : "没有已部署的容器可移除"}
+                      disabled={!available().down}
                       loading={isRunning(p.id, "down")}
                       onClick={() => void down(p)}
                     >

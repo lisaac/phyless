@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { containersOf, servicesHaveBuild, VERB_LABEL, LABEL_CONFIG_FILES, LABEL_PROJECT } from "./composeShared";
+import { composeActionAvailability, containersOf, servicesHaveBuild, VERB_LABEL, LABEL_CONFIG_FILES, LABEL_PROJECT } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 describe("Compose container matching", () => {
@@ -38,5 +38,14 @@ describe("servicesHaveBuild", () => {
     expect(VERB_LABEL.pause).toBe("Pause");
     expect(VERB_LABEL.pull).toBe("Pull/Build");
     expect(VERB_LABEL.update).toBe("Update");
+  });
+});
+
+describe("Compose action availability", () => {
+  it("only enables lifecycle actions that can change the project state", () => {
+    expect(composeActionAvailability({ running: 2, total: 2 })).toEqual({ up: false, pause: true, restart: true, stop: true, down: true });
+    expect(composeActionAvailability({ running: 0, total: 2 })).toEqual({ up: true, pause: false, restart: false, stop: false, down: true });
+    expect(composeActionAvailability({ running: 1, total: 2 })).toEqual({ up: true, pause: true, restart: true, stop: true, down: true });
+    expect(composeActionAvailability({ running: 0, total: 0 })).toEqual({ up: true, pause: false, restart: false, stop: false, down: false });
   });
 });

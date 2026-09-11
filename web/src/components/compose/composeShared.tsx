@@ -25,6 +25,18 @@ export function representative(cs: ContainerSummary[]): ContainerSummary | undef
   return cs.find((c) => c.State === "running") ?? cs[0];
 }
 
+export function composeActionAvailability(p: Pick<ComposeProject, "running" | "total">) {
+  const running = p.running ?? 0;
+  const total = p.total ?? 0;
+  return {
+    up: total === 0 || running < total,
+    pause: running > 0,
+    restart: running > 0,
+    stop: running > 0,
+    down: total > 0,
+  };
+}
+
 export type ComposeVerb = "up" | "stop" | "pause" | "down" | "restart" | "pull" | "build" | "update";
 export const VERB_LABEL: Record<ComposeVerb, string> = { up: "Up", stop: "Stop", pause: "Pause", down: "Down", restart: "Restart", pull: "Pull/Build", build: "Build", update: "Update" };
 
