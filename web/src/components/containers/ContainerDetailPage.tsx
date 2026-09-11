@@ -2,7 +2,7 @@ import {
   Component, createSignal, createResource, createEffect, For, Show, onMount, onCleanup, startTransition,
 } from "solid-js";
 import { A, useParams, useSearchParams, useNavigate } from "@solidjs/router";
-import { get, getToken, imageInspectUrl } from "../../api/client";
+import { get, getToken, imageInspectUrl, isApiNotFound } from "../../api/client";
 import { enqueue, queued, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { createContainerActions } from "./containerActions";
 import { toast } from "../shared/Toast";
@@ -130,9 +130,18 @@ export const ContainerDetailPage: Component = () => {
   const id = () => params.id;
   const tab = () => (searchParams.tab as Tab) || "info";
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
-  const [inspect, { refetch }] = createResource(id, (i) =>
-    get<any>(`/api/containers/${i}/inspect`)
-  );
+  const [inspectResult, { refetch }] = createResource(id, async (i) => {
+    try { return { data: await get<any>(`/api/containers/${i}/inspect`) }; }
+    catch (error) { return { error }; }
+  });
+  const inspect = () => inspectResult()?.data;
+  const inspectError = () => inspectResult()?.error;
+
+  createEffect(() => {
+    if (!isApiNotFound(inspectError())) return;
+    const path = `/containers/${id()}`;
+    void startTransition(() => navigate("/overview", { replace: true })).then(() => removeTab(path));
+  });
 
   // Auto-redirect to info when current tab requires running but container is
   // stopped. Must wait for inspect() to actually resolve first — state()
@@ -308,6 +317,10 @@ export const ContainerDetailPage: Component = () => {
   const onFilePathChange = (p: string) => setSearchParams({ tab: "files", path: p }, { replace: true });
 
   return (
+    <Show
+      when={!inspectError()}
+      fallback={<p class="text-sm text-red-400">加载失败：{(inspectError() as Error).message}</p>}
+    >
     <div class="flex flex-col gap-4">
 
       {/* ── Back ────────────────────────────────────────────────────────────── */}
@@ -738,5 +751,6 @@ export const ContainerDetailPage: Component = () => {
       {/* ── Download progress — non-blocking floating card ───────────────── */}
       <DownloadStatusWidget task={download} />
     </div>
+    </Show>
   );
 };

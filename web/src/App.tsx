@@ -27,7 +27,9 @@ const AuditPage = lazy(() => import("./components/settings/AuditPage").then((m) 
 const Guard: Component<{ children?: any }> = (props) => {
   return (
     <Show when={currentUser()} fallback={<Navigate href="/login" />}>
-      <Layout>{props.children}</Layout>
+      <Layout>
+        <Suspense fallback={<div class="p-8">加载中…</div>}>{props.children}</Suspense>
+      </Layout>
     </Show>
   );
 };

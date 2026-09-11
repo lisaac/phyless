@@ -9,6 +9,8 @@ export class ApiError extends Error {
   }
 }
 
+export const isApiNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }

@@ -1,12 +1,12 @@
-import { Component, createSignal, createResource, createEffect, onMount, onCleanup, For, Show } from "solid-js";
-import { useParams, useSearchParams } from "@solidjs/router";
-import { get, imageInspectUrl } from "../../api/client";
+import { Component, createSignal, createResource, createEffect, onMount, onCleanup, For, Show, startTransition } from "solid-js";
+import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
+import { get, imageInspectUrl, isApiNotFound } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { looksTextFile, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { createResourceStore } from "../../stores/resource";
 import { canSaveFile, createLatestFileRequest } from "../../stores/latestFile";
-import { setTabLabel } from "../../stores/tabs";
+import { removeTab, setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
 import { FileBrowser } from "../shared/FileBrowser";
@@ -39,6 +39,7 @@ const TABS: { key: Tab; label: string }[] = [
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
 
 export const ComposeDetailPage: Component = () => {
+  const navigate = useNavigate();
   const params = useParams();
   const id = () => params.id;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -53,7 +54,18 @@ export const ComposeDetailPage: Component = () => {
   const rep = () => representative(cs());
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [detail] = createResource(id, (i) => get<any>(`/api/compose/detail?id=${encodeURIComponent(i)}`));
+  const [detailResult] = createResource(id, async (i) => {
+    try { return { data: await get<any>(`/api/compose/detail?id=${encodeURIComponent(i)}`) }; }
+    catch (error) { return { error }; }
+  });
+  const detail = () => detailResult()?.data;
+  const detailError = () => detailResult()?.error;
+
+  createEffect(() => {
+    if (!isApiNotFound(detailError())) return;
+    const path = `/compose/${id()}`;
+    void startTransition(() => navigate("/overview", { replace: true })).then(() => removeTab(path));
+  });
 
   onMount(() => { store.startPolling(); containers.startPolling(); });
   onCleanup(() => { store.stopPolling(); containers.stopPolling(); });
@@ -246,6 +258,10 @@ export const ComposeDetailPage: Component = () => {
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
 
   return (
+    <Show
+      when={!detailError()}
+      fallback={<p class="text-sm text-red-400">加载失败：{(detailError() as Error).message}</p>}
+    >
     <div>
       <h1 class="mb-3 flex items-center gap-2 text-xl font-semibold">
         <ComposeIcon size={20} />
@@ -349,7 +365,7 @@ export const ComposeDetailPage: Component = () => {
       </Show>
 
       <Show when={tab() === "inspect"}>
-        <Show when={!detail.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+        <Show when={!detailResult.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
           <pre class="max-h-[calc(100vh-16rem)] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
             {JSON.stringify(detail(), null, 2)}
           </pre>
@@ -421,5 +437,6 @@ export const ComposeDetailPage: Component = () => {
         onClose={() => { downloadGeneration++; downloadController?.abort(); setDownloadState((s) => ({ ...s, active: false })); }}
       />
     </div>
+    </Show>
   );
 };

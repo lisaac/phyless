@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { request, ApiError, getToken, setToken, login } from "./client";
+import { request, ApiError, getToken, setToken, login, isApiNotFound } from "./client";
 
 beforeEach(() => {
   localStorage.clear();
@@ -16,6 +16,12 @@ describe("token storage", () => {
 });
 
 describe("request", () => {
+  it("recognizes only API 404 errors as missing resources", () => {
+    expect(isApiNotFound(new ApiError(404, "missing"))).toBe(true);
+    expect(isApiNotFound(new ApiError(500, "unavailable"))).toBe(false);
+    expect(isApiNotFound(new Error("missing"))).toBe(false);
+  });
+
   it("attaches bearer header and parses JSON", async () => {
     setToken("tok");
     const fetchMock = vi.fn().mockResolvedValue(

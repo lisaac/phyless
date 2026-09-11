@@ -123,7 +123,12 @@ export const ImageListPage: Component = () => {
   const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [inspectData] = createResource(inspectFor, (img) => get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`));
+  const [inspectResult] = createResource(inspectFor, async (img) => {
+    try { return { data: await get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`) }; }
+    catch (error) { return { error }; }
+  });
+  const inspectData = () => inspectResult()?.data;
+  const inspectError = () => inspectResult()?.error;
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
@@ -535,7 +540,10 @@ export const ImageListPage: Component = () => {
 
       {/* Inspect modal */}
       <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor() ? imgLabel(inspectFor()!) : ""}`} wide>
-        <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+        <Show
+          when={!inspectResult.loading && !inspectError()}
+          fallback={<p class={inspectError() ? "text-xs text-red-400" : "text-xs text-zinc-500"}>{inspectError() ? `加载失败：${(inspectError() as Error).message}` : "加载中…"}</p>}
+        >
           <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
             {JSON.stringify(inspectData(), null, 2)}
           </pre>
