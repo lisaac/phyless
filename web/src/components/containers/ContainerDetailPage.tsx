@@ -21,6 +21,7 @@ import { hasRole } from "../../stores/auth";
 import { setTabLabel, removeTab } from "../../stores/tabs";
 import { KV, Sec } from "../shared/KV";
 import { Btn } from "../shared/ActionButton";
+import { confirmAction } from "../shared/ConfirmModal";
 import { Tabs } from "../shared/Tabs";
 import { ContainerIcon } from "./ContainerIcon";
 import { ComposeIcon } from "../compose/composeShared";
@@ -206,6 +207,9 @@ export const ContainerDetailPage: Component = () => {
   const actions = createContainerActions();
   const isP = (verb: string) => actions.isP(id(), verb);
   const act = (verb: string) => actions.act(id(), verb, name());
+  const remove = async () => {
+    if (await confirmAction(`删除容器 ${name()}？`, { title: "删除容器", confirmText: "删除", danger: true })) void act("delete");
+  };
 
   const openCmdModal = async () => {
     try {
@@ -367,7 +371,7 @@ export const ContainerDetailPage: Component = () => {
               <Btn onClick={() => setConsoleTarget({ id: id(), name: name() })}>&gt;_ 控制台</Btn>
             </Show>
             <span class="mx-0.5 text-zinc-600">│</span>
-            <Btn danger loading={isP("delete")} onClick={() => { if (confirm(`删除容器 ${name()}?`)) void act("delete"); }}>⊖ 移除</Btn>
+            <Btn danger loading={isP("delete")} onClick={() => void remove()}>⊖ 移除</Btn>
           </div>
         </Show>
       </Show>

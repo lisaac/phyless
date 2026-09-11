@@ -3,6 +3,7 @@ import { Router, Route, Navigate } from "@solidjs/router";
 import { currentUser, doLogout, loadSession } from "./stores/auth";
 import { Layout } from "./components/shared/Layout";
 import { ToastHost } from "./components/shared/Toast";
+import { ConfirmModal } from "./components/shared/ConfirmModal";
 
 // Keep the login shell small; page-only dependencies (xterm, CodeMirror,
 // compose converters) load with the route that needs them.
@@ -43,6 +44,7 @@ export const App: Component = () => {
   return (
     <Show when={ready()} fallback={<div class="p-8">…</div>}>
       <ToastHost />
+      <ConfirmModal />
       <Suspense fallback={<div class="p-8">加载中…</div>}>
       <Router>
         <Route path="/login" component={LoginPage} />

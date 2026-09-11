@@ -7,6 +7,7 @@ export const Modal: Component<{
   children: JSX.Element;
   wide?: boolean;
   noBackdropClose?: boolean;
+  priority?: boolean;
 }> = (props) => {
   // Esc always closes, even for noBackdropClose modals — that prop only
   // guards against an accidental click outside the dialog, not a deliberate
@@ -21,11 +22,11 @@ export const Modal: Component<{
   return (
     <Show when={props.open}>
       <div
-        class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/65 px-0 py-0 sm:px-4 sm:py-8"
+        class={`fixed inset-0 ${props.priority ? "z-[60]" : "z-40"} flex items-start justify-center overflow-y-auto bg-black/65 px-0 py-0 sm:px-4 sm:py-8`}
         onClick={() => !props.noBackdropClose && props.onClose()}
       >
         <div
-          class={`relative min-h-screen w-full bg-zinc-900 shadow-2xl sm:min-h-0 sm:rounded-xl sm:border sm:border-zinc-700/50 ${
+          class={`relative min-h-[100dvh] w-full bg-zinc-900 shadow-2xl sm:min-h-0 sm:rounded-xl sm:border sm:border-zinc-700/50 ${
             props.wide ? "sm:max-w-6xl" : "sm:max-w-md"
           }`}
           onClick={(e) => e.stopPropagation()}

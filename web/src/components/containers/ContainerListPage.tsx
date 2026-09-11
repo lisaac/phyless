@@ -11,6 +11,7 @@ import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
 import { UpgradeContainerModal } from "./UpgradeContainerModal";
 import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
+import { confirmAction } from "../shared/ConfirmModal";
 import { ComposeIcon } from "../compose/composeShared";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import type { ContainerSummary } from "../../types";
@@ -63,6 +64,10 @@ export const ContainerListPage: Component = () => {
 
   const n = () => selected().size;
   const allSel = () => view.filtered().length > 0 && n() === view.filtered().length;
+  const confirmBulkDelete = async () => {
+    const count = n();
+    if (count && await confirmAction(`删除选中的 ${count} 个容器？`, { title: "删除容器", confirmText: "删除", danger: true })) bulk("delete");
+  };
 
   return (
     <div class="flex flex-col gap-3">
@@ -99,7 +104,7 @@ export const ContainerListPage: Component = () => {
           <Btn title="启动选中容器" disabled={n() === 0} onClick={() => void bulk("start")}>▶ 启动</Btn>
           <Btn title="停止选中容器" disabled={n() === 0} onClick={() => void bulk("stop")}>■ 停止</Btn>
           <Btn title="暂停选中容器" disabled={n() === 0} onClick={() => void bulk("pause")}>⏸ 暂停</Btn>
-          <Btn title="删除选中容器" danger disabled={n() === 0} onClick={() => { if (confirm(`删除选中的 ${n()} 个容器？`)) void bulk("delete"); }}>⊖ 删除</Btn>
+          <Btn title="删除选中容器" danger disabled={n() === 0} onClick={() => void confirmBulkDelete()}>⊖ 删除</Btn>
         </Show>
 
         <span class="text-zinc-400">│</span>

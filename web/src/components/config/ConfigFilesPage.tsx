@@ -2,6 +2,7 @@ import { Component, createSignal, Show, onCleanup } from "solid-js";
 import { FileBrowser } from "../shared/FileBrowser";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
+import { confirmAction } from "../shared/ConfirmModal";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
 import { get } from "../../api/client";
 import { enqueue, queued } from "../../stores/taskQueue";
@@ -37,7 +38,7 @@ export const ConfigFilesPage: Component = () => {
     get<FileEntry[]>(`/api/config/files?path=${encodeURIComponent(sub)}`);
 
   const openFile = async (path: string) => {
-    if (!looksTextFile(path) && !confirm(`${path.split("/").pop()} 看起来不是文本文件，仍要打开？`)) return;
+    if (!looksTextFile(path) && !await confirmAction(`${path.split("/").pop()} 看起来不是文本文件，仍要打开？`, { title: "打开非文本文件", confirmText: "继续打开" })) return;
     const request = fileRequest.begin({ id: "config", path });
     setOpenPath(path);
     setContent("");

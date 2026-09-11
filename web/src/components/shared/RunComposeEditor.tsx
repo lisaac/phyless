@@ -37,12 +37,12 @@ export const RunComposeEditor: Component<{
 
   return (
     <div class="flex h-full flex-col gap-2">
-      <div class="grid flex-1 grid-cols-1 gap-2 min-h-0 sm:grid-cols-2">
-        <div class="flex min-h-[35vh] flex-col sm:min-h-0">
+      <div class="grid min-h-0 flex-1 grid-cols-1 grid-rows-2 gap-2 sm:grid-cols-2 sm:grid-rows-1">
+        <div class="flex min-h-0 flex-col">
           <div class="mb-1 text-xs text-zinc-400">docker run</div>
           <div class="flex-1 min-h-0"><CodeEditor value={run()} onChange={onRunEdit} language="text" /></div>
         </div>
-        <div class="flex min-h-[35vh] flex-col sm:min-h-0">
+        <div class="flex min-h-0 flex-col">
           <div class="mb-1 text-xs text-zinc-400">compose.yaml</div>
           <div class="flex-1 min-h-0"><CodeEditor value={compose()} onChange={onComposeEdit} language="yaml" /></div>
         </div>

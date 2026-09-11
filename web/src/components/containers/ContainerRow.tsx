@@ -5,6 +5,7 @@ import { hasRole } from "../../stores/auth";
 import { IBtn, Ico } from "../shared/ActionButton";
 import { ComposeIcon } from "../compose/composeShared";
 import { Modal } from "../shared/Modal";
+import { confirmAction } from "../shared/ConfirmModal";
 import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
@@ -68,6 +69,11 @@ export const ContainerRow: Component<{
   const [inspectData] = createResource(() => (showInspect() ? c().Id : null), (id) => get<any>(`/api/containers/${id}/inspect`));
   const download = createDownloadTask();
   onCleanup(() => download.cancel());
+  const remove = async () => {
+    if (await confirmAction(`删除容器 ${name() || c().Id.slice(0, 8)}？`, { title: "删除容器", confirmText: "删除", danger: true })) {
+      void p.act(c().Id, "delete", name());
+    }
+  };
 
   // Shared "view" buttons — visible to every role (read-only). Lifecycle and
   // delete stay operator-only in the branches below.
@@ -133,7 +139,7 @@ export const ContainerRow: Component<{
 
             <Show when={!running()}>
               <span class="mx-0.5 text-zinc-400">│</span>
-              <IBtn title="删除容器" danger loading={p.isP(c().Id, "delete")} onClick={() => { if (confirm(`删除容器 ${name() || c().Id.slice(0, 8)}？`)) void p.act(c().Id, "delete", name()); }}>⊖</IBtn>
+              <IBtn title="删除容器" danger loading={p.isP(c().Id, "delete")} onClick={() => void remove()}>⊖</IBtn>
             </Show>
           </div>
         </Show>

@@ -24,6 +24,7 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { containersOf, representative, ActBtn, ComposeIcon, servicesHaveBuild, type ComposeVerb } from "./composeShared";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
+import { confirmAction } from "../shared/ConfirmModal";
 import { enqueue, queued } from "../../stores/taskQueue";
 import type { ComposeProject, ContainerSummary, FileEntry } from "../../types";
 
@@ -69,6 +70,12 @@ export const ComposeDetailPage: Component = () => {
   const [composeTarget, setComposeTarget] = createSignal<ComposeAction | null>(null);
   const isRunning = (verb: ComposeVerb) => isComposeRunning(id(), verb);
   const request = (a: ComposeAction) => requestComposeAction(a, setComposeTarget);
+  const down = async () => {
+    const name = project()?.name ?? id();
+    if (await confirmAction(`停止并移除 ${name} 的所有容器和网络？`, { title: "停止并移除 Compose", confirmText: "继续", danger: true })) {
+      request({ id: id(), name, verb: "down" });
+    }
+  };
   const [logRange, setLogRange] = createSignal<TimeRange>({});
   // Run/Compose reuses the same flow as the container list's own Run/Compose
   // button — feed CreateContainerModal the merged run commands and let its
@@ -175,8 +182,8 @@ export const ComposeDetailPage: Component = () => {
     }
   });
 
-  const openFile = (path: string) => {
-    if (!looksTextFile(path) && !confirm(`${path.split("/").pop()} 看起来不是文本文件，仍要打开？`)) return;
+  const openFile = async (path: string) => {
+    if (!looksTextFile(path) && !await confirmAction(`${path.split("/").pop()} 看起来不是文本文件，仍要打开？`, { title: "打开非文本文件", confirmText: "继续打开" })) return;
     setSelectedFile(path);
   };
 
@@ -255,7 +262,7 @@ export const ComposeDetailPage: Component = () => {
             danger
             title="docker compose down（停止并移除容器、网络）"
             loading={isRunning("down")}
-            onClick={() => { if (confirm(`停止并移除 ${project()?.name ?? id()} 的所有容器和网络？`)) request({ id: id(), name: project()?.name ?? id(), verb: "down" }); }}
+            onClick={() => void down()}
           >⊖ Down</ActBtn>
           <ActBtn
             title="Pull/Build：拉取镜像并构建；不执行 down/up"

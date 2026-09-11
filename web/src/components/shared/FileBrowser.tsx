@@ -1,5 +1,6 @@
 import { Component, createSignal, createResource, createEffect, For, Show, Suspense, createMemo } from "solid-js";
 import type { FileEntry } from "../../types";
+import { confirmAction } from "./ConfirmModal";
 
 function fmtSize(b: number): string {
   if (b < 1024) return `${b}B`;
@@ -139,7 +140,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
   };
 
   const doDelete = async (e: FileEntry) => {
-    if (!props.onDelete || !confirm(`删除 ${e.name}?`)) return;
+    if (!props.onDelete || !await confirmAction(`删除 ${e.name}？`, { title: "删除文件", confirmText: "删除", danger: true })) return;
     await props.onDelete(join(e.name));
     refetch();
   };

@@ -18,6 +18,7 @@ import { RegisterComposeModal } from "./RegisterComposeModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { containersOf, representative, ComposeIcon } from "./composeShared";
 import { IBtn, Ico } from "../shared/ActionButton";
+import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
@@ -64,7 +65,7 @@ export const ComposeListPage: Component = () => {
   };
 
   const remove = async (id: string, name: string) => {
-    if (!confirm(`注销 Compose 项目 ${name}？`)) return;
+    if (!await confirmAction(`注销 Compose 项目 ${name}？`, { title: "注销 Compose 项目", confirmText: "注销", danger: true })) return;
     try {
       await queued(`注销 Compose ${name}`, "DELETE", `/api/compose?id=${encodeURIComponent(id)}`, undefined, { key: `compose:${id}` });
       await store.refresh();
@@ -83,6 +84,11 @@ export const ComposeListPage: Component = () => {
       await store.refresh();
       toast.success("已注册");
     } catch (e) { toast.error((e as Error).message); }
+  };
+  const down = async (p: ComposeProject) => {
+    if (await confirmAction(`停止并移除 ${p.name} 的所有容器和网络？`, { title: "停止并移除 Compose", confirmText: "继续", danger: true })) {
+      request({ id: p.id, name: p.name, verb: "down" });
+    }
   };
 
   return (
@@ -152,7 +158,7 @@ export const ComposeListPage: Component = () => {
                       danger
                       title="docker compose down（停止并移除容器、网络）"
                       loading={isRunning(p.id, "down")}
-                      onClick={() => { if (confirm(`停止并移除 ${p.name} 的所有容器和网络？`)) request({ id: p.id, name: p.name, verb: "down" }); }}
+                      onClick={() => void down(p)}
                     >
                       <Ico path="M12 2v10M18.4 6.4a8 8 0 1 1-12.8 0" />
                     </IBtn>

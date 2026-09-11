@@ -1,7 +1,7 @@
 import { getToken, setToken } from "./client";
 
 // Extensions the CodeEditor/browser can render safely as text. Anything else
-// (images, archives, binaries…) gets a confirm() first — the editor loads
+// (images, archives, binaries…) gets a confirmation dialog first — the editor loads
 // content via res.text(), which silently mangles non-UTF8 bytes into
 // replacement characters instead of erroring, so a binary file would
 // otherwise open looking "fine" and then corrupt on save. Shared by the

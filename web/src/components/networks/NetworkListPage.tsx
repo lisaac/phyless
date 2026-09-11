@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
+import { confirmAction } from "../shared/ConfirmModal";
 import { IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { get } from "../../api/client";
@@ -54,7 +55,7 @@ export const NetworkListPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (id: string, name: string) => {
-    if (!confirm(`删除网络 ${name}？`)) return;
+    if (!await confirmAction(`删除网络 ${name}？`, { title: "删除网络", confirmText: "删除", danger: true })) return;
     try { await queued(`删除网络 ${name}`, "DELETE", `/api/networks/${id}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };

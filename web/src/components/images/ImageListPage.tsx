@@ -4,6 +4,7 @@ import { A } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
+import { confirmAction } from "../shared/ConfirmModal";
 import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
@@ -116,8 +117,6 @@ export const ImageListPage: Component = () => {
   const [remoteImportFile, setRemoteImportFile] = createSignal<File | undefined>(undefined);
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
-  const [confirmDelete, setConfirmDelete] = createSignal<ImageSummary | null>(null);
-  const [forceDelete, setForceDelete] = createSignal<ImageSummary | null>(null);
   const [inspectFor, setInspectFor] = createSignal<ImageSummary | null>(null);
   const [filesFor, setFilesFor] = createSignal<ImageSummary | null>(null);
   const download = createDownloadTask();
@@ -192,8 +191,6 @@ export const ImageListPage: Component = () => {
       const image = store.items().find((item) => item.Id === id);
       return image ? `${image.RepoTags?.join(", ") || imgLabel(image)} · ${image.Id.replace("sha256:", "").slice(0, 12)}` : id;
     });
-    setConfirmDelete(null);
-    setForceDelete(null);
     setSelected(new Set<string>());
     enqueue({
       title: `${force ? "强制删除" : "删除"} ${ids.length} 个镜像`,
@@ -212,6 +209,16 @@ export const ImageListPage: Component = () => {
   };
 
   const remove = (id: string, force = false) => startImageDelete([id], force);
+  const confirmImageDelete = async (img: ImageSummary) => {
+    if (await confirmAction(`确定删除镜像 ${imgLabel(img)}？`, { title: "删除镜像", confirmText: "删除", danger: true })) void remove(img.Id);
+  };
+  const confirmBulkRemove = async () => {
+    const count = selectedCount();
+    if (count && await confirmAction(`删除选中的 ${count} 个镜像？`, { title: "删除镜像", confirmText: "删除", danger: true })) bulkRemove();
+  };
+  const confirmPrune = async () => {
+    if (await confirmAction("清理所有未被容器使用的镜像？此操作不可撤销。", { title: "清理镜像", confirmText: "清理", danger: true })) prune();
+  };
   const deleting = (id: string) => isPending((t) => t.meta?.type === "image-delete" && (t.meta.ids as string[]).includes(id));
   const pruning = () => isPending((t) => t.meta?.type === "prune");
 
@@ -231,8 +238,9 @@ export const ImageListPage: Component = () => {
     if (kind === "image-delete" && ids.length === 1 && !t.meta!.force &&
         (t.error.includes("must be forced") || t.error.includes("is being used") || t.error.includes("referenced"))) {
       const id = ids[0];
-      const img = store.items().find(i => i.Id === id) ?? null;
-      setForceDelete(img ?? { Id: id, RepoTags: [], Size: 0, Created: 0 });
+      void confirmAction("该镜像正被容器使用，普通删除被拒绝。\n强制删除将移除镜像，已有容器会继续运行，但无法重新拉起该版本。", { title: "强制删除镜像", confirmText: "强制删除", danger: true }).then((confirmed) => {
+        if (confirmed) remove(id, true);
+      });
       return;
     }
     toast.error(t.error);
@@ -256,38 +264,36 @@ export const ImageListPage: Component = () => {
 
   return (
     <div>
-      <div class="mb-3 flex items-center justify-between">
-        <h1 class="text-xl font-semibold">镜像</h1>
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <h1 class="shrink-0 text-xl font-semibold">镜像</h1>
         <Show when={hasRole("operator")}>
-          <div class="flex items-center gap-2">
+          <div class="flex min-w-0 items-center justify-end gap-1 sm:gap-2">
             <button
-              class="rounded-md border border-red-500/30 px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+              class="whitespace-nowrap rounded-md border border-red-500/30 px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50 sm:px-3 sm:py-1.5 sm:text-sm"
               disabled={pruning()}
               title={pruning() ? "清理中" : "清理所有未被容器使用的镜像"}
-              onClick={() => {
-                if (confirm("清理所有未被容器使用的镜像？此操作不可撤销。")) void prune();
-              }}
+              onClick={() => void confirmPrune()}
             >
-              {pruning() ? "清理中…" : "清理镜像"}
+              {pruning() ? "清理中…" : "清理"}
             </button>
             <button
-              class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+              class="whitespace-nowrap rounded-md bg-indigo-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 sm:px-3 sm:py-1.5 sm:text-sm"
               onClick={() => setShowPullInput(true)}
             >
-              + 拉取镜像
+              + 拉取
             </button>
             <button
-              class="rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 disabled:opacity-50"
+              class="whitespace-nowrap rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 disabled:opacity-50 sm:px-3 sm:py-1.5 sm:text-sm"
               title="Import：导入容器导出的 rootfs tar，可选远程 URL 或本地文件"
               onClick={() => setShowRemoteImport(true)}
             >
-              + Import 镜像
+              + Import
             </button>
             <label
-              class="cursor-pointer rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100"
+              class="cursor-pointer whitespace-nowrap rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 sm:px-3 sm:py-1.5 sm:text-sm"
               title="Load：导入由镜像 save 导出的 tar 文件"
             >
-              + Load 镜像
+              + Load
               <input
                 type="file"
                 accept=".tar,.tar.gz,.tgz"
@@ -316,9 +322,7 @@ export const ImageListPage: Component = () => {
             title="删除选中镜像"
             danger
             disabled={selectedCount() === 0}
-            onClick={() => {
-              if (confirm(`删除选中的 ${selectedCount()} 个镜像？`)) void bulkRemove();
-            }}
+            onClick={() => void confirmBulkRemove()}
           >
             ⊖ 删除
           </Btn>
@@ -357,7 +361,7 @@ export const ImageListPage: Component = () => {
                               tag={tag}
                               img={img}
                               onChanged={() => void store.refresh()}
-                              onConfirmLastTagDelete={setConfirmDelete}
+                              onConfirmLastTagDelete={confirmImageDelete}
                             />
                           </div>
                         )}
@@ -410,7 +414,7 @@ export const ImageListPage: Component = () => {
                           title="删除"
                           danger
                           loading={deleting(img.Id)}
-                          onClick={() => setConfirmDelete(img)}
+                          onClick={() => void confirmImageDelete(img)}
                         >
                           ⊖
                         </IBtn>
@@ -526,29 +530,6 @@ export const ImageListPage: Component = () => {
         <div class="flex justify-end gap-2">
           <Button onClick={() => setTagFor(null)}>取消</Button>
           <Button variant="primary" onClick={addTag}>添加</Button>
-        </div>
-      </Modal>
-
-      {/* Delete confirmation */}
-      <Modal open={!!confirmDelete()} onClose={() => setConfirmDelete(null)} title="删除镜像">
-        <p class="mb-4 text-sm text-zinc-300">
-          确定删除镜像 <span class="font-mono text-zinc-100">{confirmDelete() && imgLabel(confirmDelete()!)}</span>？
-        </p>
-        <div class="flex justify-end gap-2">
-          <Button onClick={() => setConfirmDelete(null)}>取消</Button>
-          <Button variant="danger" onClick={() => void remove(confirmDelete()!.Id)}>删除</Button>
-        </div>
-      </Modal>
-
-      {/* Force-delete confirmation */}
-      <Modal open={!!forceDelete()} onClose={() => setForceDelete(null)} title="强制删除镜像">
-        <p class="mb-1 text-sm text-zinc-300">该镜像正被容器使用，普通删除被拒绝。</p>
-        <p class="mb-4 text-xs text-zinc-500">
-          强制删除将移除镜像，已有容器会继续运行，但无法重新拉起该版本。
-        </p>
-        <div class="flex justify-end gap-2">
-          <Button onClick={() => setForceDelete(null)}>取消</Button>
-          <Button variant="danger" onClick={() => void remove(forceDelete()!.Id, true)}>强制删除</Button>
         </div>
       </Modal>
 

@@ -626,7 +626,7 @@ export const CreateContainerModal: Component<{
 
       {/* ══ CMD TAB ═══════════════════════════════════════════════════════════ */}
       <Show when={tab() === "cmd"}>
-        <div class="flex flex-col" style={{ height: "65vh" }}>
+        <div class="flex h-[65dvh] flex-col sm:h-[65vh]">
           <div class="flex-1 min-h-0">
             <RunComposeEditor
               initialRun={runCmd()}

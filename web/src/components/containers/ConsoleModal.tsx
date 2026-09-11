@@ -13,7 +13,7 @@ export const ConsoleModal: Component<{ target: { id: string; name: string } | nu
     if (props.target) { setCmd("/bin/sh"); setUser(""); }
   });
 
-  const confirm = () => {
+  const openTerminal = () => {
     const t = props.target;
     if (!t) return;
     const params = new URLSearchParams();
@@ -39,7 +39,7 @@ export const ConsoleModal: Component<{ target: { id: string; name: string } | nu
             class={fieldCls}
             value={cmd()}
             onInput={(e) => setCmd(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && confirm()}
+            onKeyDown={(e) => e.key === "Enter" && openTerminal()}
             placeholder="/bin/sh"
           />
         </label>
@@ -49,14 +49,14 @@ export const ConsoleModal: Component<{ target: { id: string; name: string } | nu
             class={fieldCls}
             value={user()}
             onInput={(e) => setUser(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && confirm()}
+            onKeyDown={(e) => e.key === "Enter" && openTerminal()}
             placeholder="留空使用镜像默认用户"
           />
         </label>
       </div>
       <div class="mt-4 flex justify-end gap-2">
         <Button onClick={props.onClose}>取消</Button>
-        <Button variant="primary" onClick={confirm}>确定</Button>
+        <Button variant="primary" onClick={openTerminal}>确定</Button>
       </div>
     </Modal>
   );
