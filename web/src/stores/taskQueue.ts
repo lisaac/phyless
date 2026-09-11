@@ -52,6 +52,7 @@ export interface Task extends TaskSpec {
 }
 
 export const SETTLED_EVENT = "phyless:task-settled";
+export const ENQUEUED_EVENT = "phyless:task-enqueued";
 const STORAGE_KEY = "phyless_tasks";
 const MAX_STORED = 50;
 const MAX_CONCURRENT = 4;
@@ -78,9 +79,10 @@ function load(): Task[] {
 }
 
 export const [tasks, setTasks] = createStore<{ list: Task[] }>({ list: load() });
-// Panel visibility: 隐藏 / the header 任务 button toggles it; the next enqueue
-// shows it again. Starts hidden when there is nothing to show.
-export const [panelHidden, setPanelHidden] = createSignal(tasks.list.length === 0);
+export const runningCount = () => tasks.list.filter((t) => t.status === "running").length;
+// The task drawer is a destination, not an interruption: only its header
+// button opens it. New tasks announce themselves with ENQUEUED_EVENT instead.
+export const [panelHidden, setPanelHidden] = createSignal(true);
 
 function persist() {
   try {
@@ -169,9 +171,9 @@ export function enqueue(spec: TaskSpec): { id: string; done: Promise<Task> } {
     let dropped = 0;
     return next.filter((t) => { if (dropped < overflow && !isActive(t.status)) { dropped++; return false; } return true; });
   });
-  setPanelHidden(false);
   persist();
   pump();
+  window.dispatchEvent(new CustomEvent(ENQUEUED_EVENT, { detail: { id } }));
   return { id, done };
 }
 

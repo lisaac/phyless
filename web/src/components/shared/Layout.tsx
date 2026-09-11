@@ -7,10 +7,19 @@ import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { TaskQueueWidget } from "./TaskQueueWidget";
-import { tasks, panelHidden, setPanelHidden, isActive } from "../../stores/taskQueue";
+import { panelHidden, setPanelHidden, ENQUEUED_EVENT, runningCount } from "../../stores/taskQueue";
 import { autoRefresh, refreshSeconds, setAutoRefresh, setRefreshSeconds, refreshAll } from "../../stores/refresh";
 
 const CLOSE_ANIM_MS = 200;
+const TASK_FLIGHT_ORIGIN_MAX_AGE_MS = 1_000;
+
+interface TaskFlight {
+  id: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+}
 
 // Owns its own enter/exit animation so a tab visibly grows in the first time
 // it's ever opened and shrinks out on close — switching between tabs that
@@ -73,9 +82,11 @@ const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void
 
 export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const [drawerOpen, setDrawerOpen] = createSignal(false);
+  const [taskFlights, setTaskFlights] = createSignal<TaskFlight[]>([]);
   const location = useLocation();
   const navigate = useNavigate();
   let refreshMenu!: HTMLDetailsElement;
+  let taskButton!: HTMLButtonElement;
 
   onMount(() => {
     const closeRefreshMenu = (e: PointerEvent) => {
@@ -83,6 +94,29 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     };
     document.addEventListener("pointerdown", closeRefreshMenu);
     onCleanup(() => document.removeEventListener("pointerdown", closeRefreshMenu));
+  });
+
+  onMount(() => {
+    let lastPointer: { x: number; y: number; at: number } | undefined;
+    const rememberPointer = (e: PointerEvent) => {
+      lastPointer = { x: e.clientX, y: e.clientY, at: Date.now() };
+    };
+    const flyToTaskButton = (e: Event) => {
+      const origin = lastPointer;
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (!id || !origin || Date.now() - origin.at > TASK_FLIGHT_ORIGIN_MAX_AGE_MS || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+      const target = taskButton.getBoundingClientRect();
+      setTaskFlights((flights) => [...flights, {
+        id, fromX: origin.x, fromY: origin.y,
+        toX: target.left + target.width / 2, toY: target.top + target.height / 2,
+      }]);
+    };
+    document.addEventListener("pointerdown", rememberPointer, true);
+    window.addEventListener(ENQUEUED_EVENT, flyToTaskButton);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", rememberPointer, true);
+      window.removeEventListener(ENQUEUED_EVENT, flyToTaskButton);
+    });
   });
 
   createEffect(() => {
@@ -136,8 +170,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     void startTransition(() => navigate(dest, { replace: true })).then(() => removeTab(path));
   };
 
-  const activeCount = () => tasks.list.filter((t) => isActive(t.status)).length;
-  const running = () => tasks.list.some((t) => t.status === "running");
+  const taskButtonLabel = () => `${panelHidden() ? "显示" : "隐藏"}任务面板${runningCount() ? `，${runningCount()} 个任务运行中` : ""}`;
 
   return (
     <div class="flex h-full overflow-hidden">
@@ -193,21 +226,22 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
 
           {/* Right group: task panel toggle, refresh now + settings, theme. */}
           <button
+            ref={taskButton}
             class={`ml-auto flex h-6 shrink-0 items-center gap-1 rounded p-1 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
             onClick={() => setPanelHidden(!panelHidden())}
-            title={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
-            aria-label={panelHidden() ? "显示任务面板" : "隐藏任务面板"}
+            title={taskButtonLabel()}
+            aria-label={taskButtonLabel()}
           >
             <span class="relative flex">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" aria-hidden="true" class={running() ? "text-indigo-400" : ""}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" aria-hidden="true" class={runningCount() ? "text-indigo-400" : ""}>
                 <path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
               </svg>
-              <Show when={running()}>
+              <Show when={runningCount()}>
                 <span class="absolute -right-1 -top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />
               </Show>
             </span>
-            <Show when={activeCount() > 0}>
-              <span class="rounded-full bg-indigo-500/20 px-1.5 text-xs text-indigo-300">{activeCount()}</span>
+            <Show when={runningCount() > 0}>
+              <span aria-hidden="true" class="rounded-full bg-indigo-500/20 px-1.5 text-xs text-indigo-300">{runningCount()}</span>
             </Show>
           </button>
           {/* Refresh now — plain icon button, no dropdown arrow beside it. */}
@@ -260,6 +294,20 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
       {/* Global task queue panel — mounted once here (inside the Router, so
           it can navigate) and never remounted by route changes. */}
       <TaskQueueWidget />
+      <For each={taskFlights()}>
+        {(flight) => (
+          <span
+            aria-hidden="true"
+            class="task-launch-flight"
+            style={`left:${flight.fromX}px;top:${flight.fromY}px;--task-flight-x:${flight.toX - flight.fromX}px;--task-flight-y:${flight.toY - flight.fromY}px`}
+            onAnimationEnd={() => setTaskFlights((flights) => flights.filter((item) => item.id !== flight.id))}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12l4 4L19 6" />
+            </svg>
+          </span>
+        )}
+      </For>
     </div>
   );
 };

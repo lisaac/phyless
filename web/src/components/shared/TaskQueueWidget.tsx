@@ -1,7 +1,7 @@
 import { Component, createSignal, createMemo, createEffect, onCleanup, Show, For } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import {
-  tasks, panelHidden, setPanelHidden, cancel, remove, clearFinished, isActive, type Task,
+  tasks, panelHidden, setPanelHidden, cancel, remove, clearFinished, isActive, runningCount, type Task,
 } from "../../stores/taskQueue";
 
 const DEFAULT_VISIBLE = 12;
@@ -112,7 +112,6 @@ export const TaskQueueWidget: Component = () => {
 
   const sorted = createMemo(() => [...tasks.list].sort((a, b) => b.createdAt - a.createdAt));
   const shown = () => (showAll() ? sorted() : sorted().slice(0, DEFAULT_VISIBLE));
-  const runningCount = () => tasks.list.filter((t) => t.status === "running").length;
   const queuedCount = () => tasks.list.filter((t) => t.status === "queued").length;
   const toggleExpand = (id: string) =>
     setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });

@@ -13,7 +13,8 @@ vi.mock("../../stores/tabs", () => ({
   removeTab: vi.fn(), labelFor: () => "总览", markSeen: () => true,
 }));
 vi.mock("../../stores/taskQueue", () => ({
-  tasks: { list: [] }, panelHidden: () => true, setPanelHidden: vi.fn(), isActive: () => false,
+  tasks: { list: [] }, panelHidden: () => true, setPanelHidden: vi.fn(), runningCount: () => 0,
+  ENQUEUED_EVENT: "phyless:task-enqueued",
 }));
 vi.mock("../../stores/refresh", () => ({
   autoRefresh: () => true, refreshSeconds: () => 5, setAutoRefresh: vi.fn(),
@@ -34,5 +35,16 @@ describe("Layout refresh settings", () => {
 
     fireEvent.pointerDown(screen.getByText("页面内容"));
     expect(details.open).toBe(false);
+  });
+
+  it("flies a newly queued task from the last pointer position to the task button", () => {
+    render(() => <Layout><button>页面内容</button></Layout>);
+    fireEvent.pointerDown(document, { clientX: 24, clientY: 48 });
+    window.dispatchEvent(new CustomEvent("phyless:task-enqueued", { detail: { id: "t1" } }));
+
+    const flight = document.querySelector(".task-launch-flight")!;
+    expect(flight).toBeTruthy();
+    fireEvent.animationEnd(flight);
+    expect(document.querySelector(".task-launch-flight")).toBeNull();
   });
 });

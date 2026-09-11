@@ -29,6 +29,33 @@ beforeEach(() => { FakeXHR.requests = []; vi.stubGlobal("XMLHttpRequest", FakeXH
 afterEach(() => vi.unstubAllGlobals());
 
 describe("taskQueue scheduling", () => {
+  it("counts only running tasks and decreases as they finish", async () => {
+    const q = await load();
+    const a = q.enqueue({ title: "a", url: "/a" });
+    const b = q.enqueue({ title: "b", url: "/b" });
+
+    expect(q.runningCount()).toBe(2);
+    FakeXHR.requests[0].finish("");
+    await a.done;
+    expect(q.runningCount()).toBe(1);
+    FakeXHR.requests[1].finish("");
+    await b.done;
+    expect(q.runningCount()).toBe(0);
+  });
+
+  it("announces new tasks without opening the drawer", async () => {
+    const q = await load();
+    const announced: string[] = [];
+    const onEnqueued = (e: Event) => announced.push((e as CustomEvent<{ id: string }>).detail.id);
+    window.addEventListener(q.ENQUEUED_EVENT, onEnqueued);
+
+    const { id } = q.enqueue({ title: "a", url: "/a" });
+
+    expect(q.panelHidden()).toBe(true);
+    expect(announced).toEqual([id]);
+    window.removeEventListener(q.ENQUEUED_EVENT, onEnqueued);
+  });
+
   it("serializes tasks sharing a key and runs different keys concurrently", async () => {
     const q = await load();
     const a = q.enqueue({ title: "a", url: "/a", key: "k" });

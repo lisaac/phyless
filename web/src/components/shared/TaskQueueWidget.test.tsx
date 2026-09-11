@@ -25,6 +25,7 @@ describe("TaskQueueWidget", () => {
     const { TaskQueueWidget } = await import("./TaskQueueWidget");
     for (let i = 1; i <= 13; i++) q.enqueue({ title: `task ${i}`, url: `/t${i}` });
     FakeXHR.requests[0].finish('{"id":"layer1","status":"Downloading","progressDetail":{"current":5,"total":10}}\n');
+    q.setPanelHidden(false);
     const view = render(() => <TaskQueueWidget />);
     expect(view.queryAllByText(/^task \d+$/)).toHaveLength(12);
     expect(view.queryByText("task 1")).toBeNull(); // oldest is hidden
@@ -45,6 +46,7 @@ describe("TaskQueueWidget", () => {
       meta: { type: "image-delete", images: ["nginx:latest · a", "redis:7 · b"], ids: ["sha256:a", "sha256:b"] },
     });
     q.enqueue({ title: "拉取 ghcr.io/acme/app:v2", url: "/api/images/pull", body: { image: "ghcr.io/acme/app:v2" }, meta: { type: "pull" } });
+    q.setPanelHidden(false);
     const view = render(() => <TaskQueueWidget />);
     fireEvent.click(view.getByText("删除 2 个镜像"));
     expect(view.getByText("POST /api/images/delete")).toBeTruthy();
@@ -61,6 +63,7 @@ describe("TaskQueueWidget", () => {
     const q = await import("../../stores/taskQueue");
     const { TaskQueueWidget } = await import("./TaskQueueWidget");
     q.enqueue({ title: "one", url: "/1" });
+    q.setPanelHidden(false);
     const view = render(() => <TaskQueueWidget />);
     FakeXHR.requests[0].finish("");
     vi.advanceTimersByTime(9_000);
@@ -69,23 +72,20 @@ describe("TaskQueueWidget", () => {
     vi.advanceTimersByTime(1_500);
     expect(view.queryByText("one")).toBeNull();
     q.enqueue({ title: "two", url: "/2" });
+    q.setPanelHidden(false);
     FakeXHR.requests[1].finish('{"error":"denied"}\n');
     vi.advanceTimersByTime(20_000);
     expect(view.getByText("two")).toBeTruthy();
     vi.useRealTimers();
   });
 
-  it("closes the drawer and comes back when a new task is enqueued", async () => {
-    vi.useFakeTimers();
+  it("keeps the drawer closed when a new task is enqueued", async () => {
     const q = await import("../../stores/taskQueue");
     const { TaskQueueWidget } = await import("./TaskQueueWidget");
     q.enqueue({ title: "one", url: "/1" });
     const view = render(() => <TaskQueueWidget />);
-    fireEvent.click(view.getByTitle("关闭"));
-    vi.advanceTimersByTime(500); // let the slide-out unmount the drawer
     expect(view.queryByText("one")).toBeNull();
-    q.enqueue({ title: "two", url: "/2" });
-    expect(view.getByText("two")).toBeTruthy();
-    vi.useRealTimers();
+    q.setPanelHidden(false);
+    expect(view.getByText("one")).toBeTruthy();
   });
 });
