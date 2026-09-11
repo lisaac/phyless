@@ -167,6 +167,7 @@ html:not(.dark) .border-zinc-700    { border-color: #cbd5e1; }
 /* Tailwind's divide-* utility sets border-color on a different selector than
    .border-zinc-800, so it needs its own override to match the outer border. */
 html:not(.dark) .divide-zinc-800 > :not([hidden]) ~ :not([hidden]) { border-color: #e2e8f0; }
+html:not(.dark) .divide-zinc-800\/80 > :not([hidden]) ~ :not([hidden]) { border-color: #f1f5f9; }
 
 html:not(.dark) .text-zinc-100      { color: #0f172a; }
 html:not(.dark) .text-zinc-200      { color: #1e293b; }

@@ -43,6 +43,7 @@ export const ContainerRow: Component<{
     if (s === "running") return "bg-emerald-500/[0.08] hover:bg-emerald-500/[0.13]";
     if (s === "paused") return "bg-amber-500/[0.04] hover:bg-amber-500/[0.08]";
     if (s === "restarting") return "bg-sky-500/[0.04] hover:bg-sky-500/[0.08]";
+    if (s === "exited" || s === "created") return "bg-slate-500/[0.06] hover:bg-slate-500/[0.11]";
     if (s === "dead") return "bg-red-500/[0.05] hover:bg-red-500/[0.09]";
     return "hover:bg-white/[0.03]";
   };
