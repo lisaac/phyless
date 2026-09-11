@@ -43,7 +43,7 @@ export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => 
     xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
     width={p.size ?? 16} height={p.size ?? 16} aria-hidden="true"
-    class={p.class ?? "shrink-0 text-zinc-400"}
+    class={p.class ?? "shrink-0"}
   >
     <path d="m12 2 9 5-9 5-9-5 9-5Z" />
     <path d="m3 12 9 5 9-5" />

@@ -115,22 +115,17 @@ export const ComposeListPage: Component = () => {
             {(p) => {
               const isOpen = () => expanded().has(p.id);
               const cs = () => containersOf(p, containers.items());
+              const hasContainers = () => cs().length > 0;
               const rep = () => representative(cs());
               // 全部运行中 → 绿色, 部分运行中 → 蓝色, 未运行/退出 → 默认（无强调色）
-              const nameColor = () => {
+              const statusColor = () => {
                 const running = p.running ?? 0;
                 const total = p.total ?? 0;
                 if (total > 0 && running === total) return "text-emerald-400";
                 if (running > 0) return "text-sky-400";
                 return "";
               };
-              const rowBg = () => {
-                const running = p.running ?? 0;
-                const total = p.total ?? 0;
-                if (total > 0 && running === total) return "bg-emerald-500/[0.05] hover:bg-emerald-500/[0.09]";
-                if (running > 0) return "bg-sky-500/[0.04] hover:bg-sky-500/[0.08]";
-                return "hover:bg-white/[0.03]";
-              };
+              const rowBg = "bg-indigo-500/[0.04] hover:bg-indigo-500/[0.08]";
               const actionButtons = () => (
                 <>
                   <Show when={hasRole("operator")}>
@@ -168,23 +163,23 @@ export const ComposeListPage: Component = () => {
               return (
                 <div>
                   <div
-                    class={`flex flex-col text-sm transition-colors sm:flex-row sm:items-start ${rowBg()}`}
-                    onClick={() => toggleExpand(p.id)}
+                    class={`flex flex-col text-sm transition-colors sm:flex-row sm:items-start ${rowBg} ${hasContainers() ? "cursor-pointer" : ""}`}
+                    onClick={() => { if (hasContainers()) toggleExpand(p.id); }}
                   >
                     <div class="w-full px-3 py-2 sm:w-96 sm:shrink-0">
                       <div class="flex min-w-0 gap-2.5">
-                        <ComposeIcon size={16} class="mt-0.5 shrink-0 text-zinc-400" />
+                        <ComposeIcon size={16} class="mt-0.5 shrink-0 text-indigo-400" />
                         <div class="min-w-0">
                           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <a
                               href={`/compose/${p.id}`}
-                              class={`border-b border-dashed border-zinc-600 font-medium transition-colors hover:border-indigo-400 hover:text-indigo-400 ${nameColor()}`}
+                              class="border-b border-dashed border-indigo-400/60 font-medium text-indigo-400 transition-colors hover:border-indigo-300 hover:text-indigo-300"
                               onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                             >{p.name}</a>
                             <Show when={p.discovered}>
                               <span class="bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" title="根据容器上的 compose 标签自动发现，非手动注册">自动发现</span>
                             </Show>
-                            <span class={`text-xs sm:hidden ${nameColor() || "text-zinc-500"}`}>
+                            <span class={`text-xs sm:hidden ${statusColor() || "text-zinc-500"}`}>
                               {p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}
                             </span>
                           </div>
@@ -196,7 +191,7 @@ export const ComposeListPage: Component = () => {
                       </div>
                     </div>
                     <div class="hidden w-32 shrink-0 px-3 py-2 text-xs sm:block">
-                      <div class={nameColor() || "text-zinc-500"}>{p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}</div>
+                      <div class={statusColor() || "text-zinc-500"}>{p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}</div>
                       <Show when={rep()}>
                         {(r) => <div class="mt-0.5 truncate text-[11px] text-zinc-400">{fmtContainerStatus(r().State, r().Status)}</div>}
                       </Show>
@@ -211,45 +206,38 @@ export const ComposeListPage: Component = () => {
                       {actionButtons()}
                     </div>
                   </div>
-                {/* CSS grid-rows 0fr→1fr animates height without knowing the
-                    content's real height up front — <Show> would just snap
-                    the content in/out with no transition to play. */}
-                <div
-                  class="grid transition-[grid-template-rows] duration-200 ease-out"
-                  style={{ "grid-template-rows": isOpen() ? "1fr" : "0fr" }}
-                >
-                  {/* overflow-hidden must carry NO padding/border of its own —
-                      those add real box height on top of the "auto min-height
-                      is 0 under overflow:hidden" trick that lets the grid row
-                      actually reach 0px, which is why a p-2/border-t placed
-                      directly here used to leave a sliver visible even when
-                      collapsed. Padding/border live one level deeper instead. */}
-                  <div class="overflow-hidden">
-                    <div class="border-t border-zinc-800 p-2">
-                      {/* Boxed the same way ComposeDetailPage's info-tab "容器"
-                          section is (mt-1 border border-zinc-800) — this used
-                          to be just a top border, which read differently from
-                          the detail page's own container list. */}
-                      <div class="border border-zinc-800">
-                        <Show when={cs().length > 0} fallback={<div class="px-3 py-3 text-xs text-zinc-500">无容器</div>}>
-                          <div class="divide-y divide-zinc-800">
-                            <For each={cs()}>
-                              {(c) => (
-                                <ContainerRow
-                                  c={c}
-                                  isP={isP}
-                                  act={act}
-                                  onViewCmd={setRunTarget}
-                                  onConsole={setConsoleTarget}
-                                />
-                              )}
-                            </For>
+                  <Show when={hasContainers()}>
+                    {/* Keep the open state animation, but make the child list part
+                        of the project row instead of a second boxed surface. */}
+                    <div
+                      class="grid transition-[grid-template-rows] duration-200 ease-out"
+                      style={{ "grid-template-rows": isOpen() ? "1fr" : "0fr" }}
+                    >
+                      <div class="overflow-hidden">
+                        <div class="border-t border-zinc-800 bg-zinc-900/40 px-3 pb-3 pt-2 sm:px-4">
+                          <div class="border-l-2 border-indigo-500/30 pl-3">
+                            <div class="mb-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                              <span class="font-medium text-zinc-400">容器</span>
+                              <span>{cs().length} 个</span>
+                            </div>
+                            <div class="divide-y divide-zinc-800/80">
+                              <For each={cs()}>
+                                {(c) => (
+                                  <ContainerRow
+                                    c={c}
+                                    isP={isP}
+                                    act={act}
+                                    onViewCmd={setRunTarget}
+                                    onConsole={setConsoleTarget}
+                                  />
+                                )}
+                              </For>
+                            </div>
                           </div>
-                        </Show>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
+                  </Show>
                 </div>
               );
             }}
