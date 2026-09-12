@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composeActionAvailability, containersOf, servicesHaveBuild, VERB_LABEL, LABEL_CONFIG_FILES, LABEL_PROJECT } from "./composeShared";
+import { composeActionAvailability, composeProjectState, containersOf, servicesHaveBuild, VERB_LABEL, LABEL_CONFIG_FILES, LABEL_PROJECT } from "./composeShared";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 describe("Compose container matching", () => {
@@ -47,5 +47,13 @@ describe("Compose action availability", () => {
     expect(composeActionAvailability({ running: 0, total: 2 })).toEqual({ up: true, pause: false, restart: false, stop: false, down: true });
     expect(composeActionAvailability({ running: 1, total: 2 })).toEqual({ up: true, pause: true, restart: true, stop: true, down: true });
     expect(composeActionAvailability({ running: 0, total: 0 })).toEqual({ up: true, pause: false, restart: false, stop: false, down: false });
+  });
+});
+
+describe("Compose project state", () => {
+  it("distinguishes stopped, partly running, and fully running projects", () => {
+    expect(composeProjectState({ running: 0, total: 2 })).toBe("stopped");
+    expect(composeProjectState({ running: 1, total: 2 })).toBe("partial");
+    expect(composeProjectState({ running: 2, total: 2 })).toBe("running");
   });
 });

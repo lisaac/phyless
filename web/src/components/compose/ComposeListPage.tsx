@@ -16,7 +16,7 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import { composeActionAvailability, containersOf, representative, ComposeIcon } from "./composeShared";
+import { composeActionAvailability, composeProjectState, containersOf, representative, ComposeIcon } from "./composeShared";
 import { IBtn, Ico } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
@@ -117,18 +117,19 @@ export const ComposeListPage: Component = () => {
               const cs = () => containersOf(p, containers.items());
               const hasContainers = () => cs().length > 0;
               const rep = () => representative(cs());
+              const state = () => composeProjectState(p);
               const available = () => composeActionAvailability(p);
               // 全部运行中 → 绿色, 部分运行中 → 蓝色, 未运行/退出 → 默认（无强调色）
               const statusColor = () => {
-                const running = p.running ?? 0;
-                const total = p.total ?? 0;
-                if (total > 0 && running === total) return "text-emerald-400";
-                if (running > 0) return "text-sky-400";
+                if (state() === "running") return "text-emerald-400";
+                if (state() === "partial") return "text-sky-400";
                 return "";
               };
-              const rowBg = () => available().stop
+              const rowBg = () => state() === "running"
                 ? "bg-indigo-500/[0.04] hover:bg-indigo-500/[0.08]"
-                : "bg-slate-500/[0.06] hover:bg-slate-500/[0.11]";
+                : state() === "partial"
+                  ? "bg-sky-500/[0.04] hover:bg-sky-500/[0.08]"
+                  : "hover:bg-white/[0.03]";
               const actionButtons = () => (
                 <>
                   <Show when={hasRole("operator")}>
