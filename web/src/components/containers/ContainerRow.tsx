@@ -52,7 +52,21 @@ export const ContainerRow: Component<{
     const seen = new Set<number>();
     return c().Ports.filter((port) => port.PublicPort && !seen.has(port.PublicPort) && seen.add(port.PublicPort));
   };
-  const nets = () => Object.keys(c().NetworkSettings?.Networks ?? {}).join(", ");
+  const networkRows = () => {
+    const container = c() as ContainerSummary & {
+      HostConfig?: { NetworkMode?: string };
+      NetworkSettings?: {
+        Networks: Record<string, { IPAddress?: string; GlobalIPv6Address?: string }>;
+      };
+    };
+    const rows = Object.entries(container.NetworkSettings?.Networks ?? {}).map(([name, endpoint]) => ({
+      name,
+      ips: [endpoint.IPAddress, endpoint.GlobalIPv6Address].filter((ip): ip is string => Boolean(ip)),
+    }));
+    const mode = container.HostConfig?.NetworkMode ?? "";
+    if (mode.startsWith("container:")) return [{ name: mode, ips: [] }, ...rows];
+    return rows.length > 0 || !mode ? rows : [{ name: mode, ips: [] }];
+  };
 
   const goto = (path: string) => (e: MouseEvent) => {
     e.stopPropagation();
@@ -153,8 +167,31 @@ export const ContainerRow: Component<{
 
       {/* Network + Ports */}
       <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left sm:w-36 sm:shrink-0 sm:border-t-0 sm:text-center">
-        <Show when={nets()}>
-          <div class="truncate text-xs text-zinc-500 sm:mx-auto sm:max-w-[10rem]" title={nets()}>{nets()}</div>
+        <Show when={networkRows().length > 0}>
+          <div class="space-y-px sm:mx-auto sm:max-w-[10rem]">
+            <For each={networkRows()}>
+              {(network) => (
+                <div class="min-w-0 text-xs leading-4" title={`${network.name}${network.ips.length ? `: ${network.ips.join(", ")}` : ""}`}>
+                  <Show
+                    when={network.name.startsWith("container:")}
+                    fallback={<div class="truncate text-zinc-500">{network.name}</div>}
+                  >
+                    <a
+                      class="truncate text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
+                      href={`/containers/${network.name.slice("container:".length)}`}
+                      title={`查看共享网络容器 ${network.name.slice("container:".length)}`}
+                      onClick={goto(`/containers/${network.name.slice("container:".length)}`)}
+                    >
+                      {network.name}
+                    </a>
+                  </Show>
+                  <Show when={network.ips.length > 0}>
+                    <div class="truncate font-mono text-[11px] text-zinc-300">{network.ips.join(", ")}</div>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
         </Show>
         <Show when={pubPorts().length > 0}>
           <div class="mt-0.5 flex flex-wrap items-center justify-start gap-x-1.5 gap-y-0.5 sm:justify-center">
@@ -174,7 +211,7 @@ export const ContainerRow: Component<{
             </For>
           </div>
         </Show>
-        <Show when={!nets() && pubPorts().length === 0}>
+        <Show when={networkRows().length === 0 && pubPorts().length === 0}>
           <span class="text-xs text-zinc-500">—</span>
         </Show>
       </div>
