@@ -51,7 +51,8 @@ describe("Compose action availability", () => {
 });
 
 describe("Compose project state", () => {
-  it("distinguishes stopped, partly running, and fully running projects", () => {
+  it("distinguishes empty, stopped, partly running, and fully running projects", () => {
+    expect(composeProjectState({ running: 0, total: 0 })).toBe("empty");
     expect(composeProjectState({ running: 0, total: 2 })).toBe("stopped");
     expect(composeProjectState({ running: 1, total: 2 })).toBe("partial");
     expect(composeProjectState({ running: 2, total: 2 })).toBe("running");

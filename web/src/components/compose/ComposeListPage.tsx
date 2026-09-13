@@ -129,7 +129,9 @@ export const ComposeListPage: Component = () => {
                 ? "bg-indigo-500/[0.04] hover:bg-indigo-500/[0.08]"
                 : state() === "partial"
                   ? "bg-sky-500/[0.04] hover:bg-sky-500/[0.08]"
-                  : "hover:bg-white/[0.03]";
+                  : state() === "empty"
+                    ? "bg-slate-500/[0.06] hover:bg-slate-500/[0.11]"
+                    : "hover:bg-white/[0.03]";
               const actionButtons = () => (
                 <>
                   <Show when={hasRole("operator")}>

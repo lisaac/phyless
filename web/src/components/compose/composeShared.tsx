@@ -25,22 +25,24 @@ export function representative(cs: ContainerSummary[]): ContainerSummary | undef
   return cs.find((c) => c.State === "running") ?? cs[0];
 }
 
-export type ComposeProjectState = "stopped" | "partial" | "running";
+export type ComposeProjectState = "empty" | "stopped" | "partial" | "running";
 
 export function composeProjectState(p: Pick<ComposeProject, "running" | "total">): ComposeProjectState {
   const running = p.running ?? 0;
+  if ((p.total ?? 0) === 0) return "empty";
   if (running === 0) return "stopped";
   return running < (p.total ?? 0) ? "partial" : "running";
 }
 
 export function composeActionAvailability(p: Pick<ComposeProject, "running" | "total">) {
   const state = composeProjectState(p);
+  const running = p.running ?? 0;
   const total = p.total ?? 0;
   return {
     up: state !== "running",
-    pause: state !== "stopped",
-    restart: state !== "stopped",
-    stop: state !== "stopped",
+    pause: running > 0,
+    restart: running > 0,
+    stop: running > 0,
     down: total > 0,
   };
 }
