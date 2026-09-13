@@ -202,7 +202,7 @@ export const ContainerRow: Component<{
                     )}
                   </Show>
                   <Show when={network.ips.length > 0}>
-                    <div class="truncate font-mono text-[11px] text-zinc-300">{network.ips.join(", ")}</div>
+                    <div class="truncate font-mono text-[11px] text-zinc-400">{network.ips.join(", ")}</div>
                   </Show>
                 </div>
               )}
