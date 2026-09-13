@@ -126,11 +126,11 @@ export const ComposeListPage: Component = () => {
                 return "";
               };
               const rowBg = () => state() === "running"
-                ? "bg-indigo-500/20 hover:bg-indigo-500/25"
+                ? "bg-emerald-500/[0.08] hover:bg-emerald-500/[0.13]"
                 : state() === "partial"
-                  ? "bg-sky-500/20 hover:bg-sky-500/25"
+                  ? "bg-sky-500/[0.04] hover:bg-sky-500/[0.08]"
                   : state() === "empty"
-                    ? "bg-slate-500/15 hover:bg-slate-500/20"
+                    ? "bg-slate-500/[0.06] hover:bg-slate-500/[0.11]"
                     : "hover:bg-white/[0.03]";
               const actionButtons = () => (
                 <>
