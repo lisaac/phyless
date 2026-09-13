@@ -52,20 +52,39 @@ export const ContainerRow: Component<{
     const seen = new Set<number>();
     return c().Ports.filter((port) => port.PublicPort && !seen.has(port.PublicPort) && seen.add(port.PublicPort));
   };
-  const networkRows = () => {
-    const container = c() as ContainerSummary & {
-      HostConfig?: { NetworkMode?: string };
-      NetworkSettings?: {
-        Networks: Record<string, { IPAddress?: string; GlobalIPv6Address?: string }>;
-      };
+  const networkContainer = () => c() as ContainerSummary & {
+    HostConfig?: { NetworkMode?: string };
+    NetworkSettings?: {
+      Networks: Record<string, { IPAddress?: string; GlobalIPv6Address?: string }>;
     };
+  };
+  const sharedNetTarget = () => {
+    const mode = networkContainer().HostConfig?.NetworkMode ?? "";
+    return mode.startsWith("container:") ? mode.slice("container:".length) : "";
+  };
+  const [sharedNetName] = createResource(sharedNetTarget, (target) =>
+    target
+      ? get<{ Name?: string }>(`/api/containers/${encodeURIComponent(target)}/inspect`)
+        .then((info) => String(info?.Name ?? "").replace(/^\//, ""))
+        .catch(() => "")
+      : Promise.resolve("")
+  );
+  const networkRows = () => {
+    const container = networkContainer();
     const rows = Object.entries(container.NetworkSettings?.Networks ?? {}).map(([name, endpoint]) => ({
       name,
       ips: [endpoint.IPAddress, endpoint.GlobalIPv6Address].filter((ip): ip is string => Boolean(ip)),
+      target: undefined as string | undefined,
     }));
     const mode = container.HostConfig?.NetworkMode ?? "";
-    if (mode.startsWith("container:")) return [{ name: mode, ips: [] }, ...rows];
-    return rows.length > 0 || !mode ? rows : [{ name: mode, ips: [] }];
+    if (mode.startsWith("container:")) {
+      return [{
+        name: `container:${sharedNetName() || "…"}`,
+        target: sharedNetTarget(),
+        ips: [],
+      }, ...rows];
+    }
+    return rows.length > 0 || !mode ? rows : [{ name: mode, target: undefined, ips: [] }];
   };
 
   const goto = (path: string) => (e: MouseEvent) => {
@@ -114,17 +133,12 @@ export const ContainerRow: Component<{
           <a
             class="max-w-[9rem] truncate border-b border-dashed border-zinc-600 font-medium text-zinc-200 transition-colors hover:border-indigo-400 hover:text-indigo-400"
             href={`/containers/${c().Id}`}
-            title={name() || "(unnamed)"}
+            title={`容器：${name() || "(unnamed)"}\n容器 ID：${c().Id}`}
             onClick={goto(`/containers/${c().Id}`)}
           >
             {name() || <span class="text-zinc-400">(unnamed)</span>}
           </a>
         </div>
-        <a
-          class="mt-0.5 inline-block font-mono text-[11px] text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
-          href={`/containers/${c().Id}`}
-          onClick={goto(`/containers/${c().Id}`)}
-        >{c().Id.slice(0, 12)}</a>
         <div class="max-w-[10rem] truncate text-[11px] text-zinc-400" title={c().Image}>{displayImage(c().Image, c().Labels)}</div>
         <div class="mt-0.5 text-[11px] text-zinc-400">
           {fmtContainerStatus(c().State, c().Status)}
@@ -173,17 +187,19 @@ export const ContainerRow: Component<{
               {(network) => (
                 <div class="min-w-0 text-xs leading-4" title={`${network.name}${network.ips.length ? `: ${network.ips.join(", ")}` : ""}`}>
                   <Show
-                    when={network.name.startsWith("container:")}
+                    when={network.target}
                     fallback={<div class="truncate text-zinc-500">{network.name}</div>}
                   >
-                    <a
-                      class="truncate text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
-                      href={`/containers/${network.name.slice("container:".length)}`}
-                      title={`查看共享网络容器 ${network.name.slice("container:".length)}`}
-                      onClick={goto(`/containers/${network.name.slice("container:".length)}`)}
-                    >
-                      {network.name}
-                    </a>
+                    {(target) => (
+                      <a
+                        class="block break-all text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
+                        href={`/containers/${encodeURIComponent(target())}`}
+                        title={`查看共享网络容器 ${sharedNetName() || target()}`}
+                        onClick={goto(`/containers/${encodeURIComponent(target())}`)}
+                      >
+                        {network.name}
+                      </a>
+                    )}
                   </Show>
                   <Show when={network.ips.length > 0}>
                     <div class="truncate font-mono text-[11px] text-zinc-300">{network.ips.join(", ")}</div>
