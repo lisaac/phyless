@@ -21,6 +21,7 @@ echo "== building backend for $os/$arch =="
 rm -rf backend/web/dist
 mkdir -p backend/web/dist
 cp -R frontend/dist/. backend/web/dist/
+touch backend/web/dist/.gitkeep
 CGO_ENABLED="$cgo" GOOS="$os" GOARCH="$arch" ./scripts/go-build.sh -o "$output" ./backend/cmd/server/
 
 echo "built $output"

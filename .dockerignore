@@ -1,8 +1,4 @@
-.git/*
-!.git/HEAD
-!.git/refs/
-!.git/refs/heads/
-!.git/refs/heads/**
+.git/
 frontend/node_modules
 frontend/dist
 data/
