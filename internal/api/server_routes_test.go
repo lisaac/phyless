@@ -12,9 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	dockersystem "github.com/docker/docker/api/types/system"
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -94,6 +96,14 @@ func (c *routeClient) VolumeInspect(context.Context, string) (volumetypes.Volume
 	return volumetypes.Volume{Mountpoint: c.volumeRoot}, nil
 }
 
+func (*routeClient) Info(context.Context) (dockersystem.Info, error) {
+	return dockersystem.Info{OSType: "linux", Architecture: "amd64"}, nil
+}
+
+func (*routeClient) ServerVersion(context.Context) (dockertypes.Version, error) {
+	return dockertypes.Version{Version: "28.0.0", APIVersion: "1.50"}, nil
+}
+
 func routeTestServer(t *testing.T) (*Server, http.Handler, string, map[models.Role]string) {
 	t.Helper()
 	secret := "route-test-secret"
@@ -148,6 +158,7 @@ func TestViewerCanReadResourceDetailsThroughCompleteRouter(t *testing.T) {
 		{"/api/compose/files?id=missing", http.StatusNotFound},
 		{"/api/compose/files/content?id=missing&path=compose.yaml", http.StatusNotFound},
 		{"/api/compose/files/download?id=missing&path=compose.yaml", http.StatusNotFound},
+		{"/api/system/info", http.StatusOK},
 		{"/api/config/files", http.StatusOK},
 		{"/api/config/files/content?path=hosts", http.StatusOK},
 		{"/api/config/files/download?path=hosts", http.StatusOK},

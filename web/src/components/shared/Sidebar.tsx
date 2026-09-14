@@ -16,7 +16,7 @@ export const mainLinks = [
   { to: "/networks",   label: "网络" },
   { to: "/volumes",    label: "存储卷" },
   { to: "/events",     label: "事件" },
-  { to: "/config",     label: "配置文件" },
+  { to: "/config",     label: "本机配置" },
 ];
 export const adminLinks = [
   { to: "/settings/docker",     label: "Docker 连接" },
@@ -94,6 +94,9 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
           )}
         </For>
 
+        <div class="mx-4 mt-4 mb-1 border-t border-zinc-800 pt-3 text-[10px] font-medium uppercase tracking-widest text-zinc-500">
+          配置
+        </div>
         <A href={configLink.to} replace class={linkCls} activeClass={activeCls} onClick={() => props.onClose?.()}>
           {configLink.label}
         </A>

@@ -135,7 +135,7 @@ export const ConfigFilesPage: Component = () => {
 
   return (
     <div>
-      <h1 class="mb-3 text-xl font-semibold">配置文件</h1>
+      <h1 class="mb-3 text-xl font-semibold">本机配置</h1>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div class="h-[calc(100vh-13rem)] overflow-auto border border-zinc-800 p-2">
           <FileBrowser

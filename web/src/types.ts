@@ -93,6 +93,29 @@ export interface DockerSettings {
   active_id: string;
 }
 
+export interface DockerInfo {
+  host_name: string;
+  server_version: string;
+  api_version: string;
+  min_api_version: string;
+  operating_system: string;
+  os_type: string;
+  architecture: string;
+  kernel_version: string;
+  n_cpu: number;
+  mem_total: number;
+  n_goroutines: number;
+  n_fds: number;
+  docker_root_dir: string;
+  storage_driver: string;
+  storage_available?: string;
+  cgroup_driver: string;
+  cgroup_version: string;
+  logging_driver: string;
+  default_runtime: string;
+  live_restore: boolean;
+}
+
 export interface AuditEntry {
   time: string;
   user: string;

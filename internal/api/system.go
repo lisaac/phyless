@@ -5,6 +5,83 @@ import (
 	"strings"
 )
 
+// dockerInfoResponse deliberately exposes only operational metadata. In
+// particular, Docker's Info also contains proxy and registry configuration,
+// which does not belong in a browser response.
+type dockerInfoResponse struct {
+	HostName         string `json:"host_name"`
+	ServerVersion    string `json:"server_version"`
+	APIVersion       string `json:"api_version"`
+	MinAPIVersion    string `json:"min_api_version"`
+	OperatingSystem  string `json:"operating_system"`
+	OSType           string `json:"os_type"`
+	Architecture     string `json:"architecture"`
+	KernelVersion    string `json:"kernel_version"`
+	NCPU             int    `json:"n_cpu"`
+	MemTotal         int64  `json:"mem_total"`
+	NGoroutines      int    `json:"n_goroutines"`
+	NFd              int    `json:"n_fds"`
+	DockerRootDir    string `json:"docker_root_dir"`
+	StorageDriver    string `json:"storage_driver"`
+	StorageAvailable string `json:"storage_available,omitempty"`
+	CgroupDriver     string `json:"cgroup_driver"`
+	CgroupVersion    string `json:"cgroup_version"`
+	LoggingDriver    string `json:"logging_driver"`
+	DefaultRuntime   string `json:"default_runtime"`
+	LiveRestore      bool   `json:"live_restore"`
+}
+
+// handleSystemInfo returns the small, non-secret part of Docker's daemon
+// metadata that is useful on the overview. Keep this separate from /platform:
+// that endpoint is deliberately minimal because it is also used by image pull.
+func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
+	version, err := s.docker.ServerVersion(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "无法获取 Docker 版本信息")
+		return
+	}
+	info, err := s.docker.Info(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "无法获取 Docker 信息")
+		return
+	}
+	serverVersion := version.Version
+	if serverVersion == "" {
+		serverVersion = info.ServerVersion
+	}
+	writeJSON(w, http.StatusOK, dockerInfoResponse{
+		HostName:         info.Name,
+		ServerVersion:    serverVersion,
+		APIVersion:       version.APIVersion,
+		MinAPIVersion:    version.MinAPIVersion,
+		OperatingSystem:  info.OperatingSystem,
+		OSType:           strings.ToLower(info.OSType),
+		Architecture:     normalizeArch(info.Architecture),
+		KernelVersion:    info.KernelVersion,
+		NCPU:             info.NCPU,
+		MemTotal:         info.MemTotal,
+		NGoroutines:      info.NGoroutines,
+		NFd:              info.NFd,
+		DockerRootDir:    info.DockerRootDir,
+		StorageDriver:    info.Driver,
+		StorageAvailable: driverStatusValue(info.DriverStatus, "Data Space Available"),
+		CgroupDriver:     info.CgroupDriver,
+		CgroupVersion:    info.CgroupVersion,
+		LoggingDriver:    info.LoggingDriver,
+		DefaultRuntime:   info.DefaultRuntime,
+		LiveRestore:      info.LiveRestoreEnabled,
+	})
+}
+
+func driverStatusValue(status [][2]string, label string) string {
+	for _, item := range status {
+		if strings.EqualFold(strings.TrimSpace(item[0]), label) {
+			return strings.TrimSpace(item[1])
+		}
+	}
+	return ""
+}
+
 // handleSystemPlatform reports the Docker daemon's OS/architecture so the
 // browser-download flow can pick the right image platform. The browser cannot
 // otherwise learn the daemon arch (the server-side proxy reads it from Info),
