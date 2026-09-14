@@ -78,12 +78,19 @@ export interface Registry {
   username: string;
 }
 
-export interface DockerSettings {
+export interface DockerServer {
+  id: string;
+  name: string;
   host: string;
   tls: boolean;
   has_ca_pem: boolean;
   has_cert_pem: boolean;
   has_key_pem: boolean;
+}
+
+export interface DockerSettings {
+  servers: DockerServer[];
+  active_id: string;
 }
 
 export interface AuditEntry {

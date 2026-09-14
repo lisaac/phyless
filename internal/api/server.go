@@ -17,7 +17,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"phyless/internal/audit"
 	"phyless/internal/auth"
-	"phyless/internal/docker"
 	dockercompose "phyless/internal/docker/compose"
 	"phyless/internal/docker/imagefs"
 	"phyless/internal/models"
@@ -35,35 +34,15 @@ type Server struct {
 	composeRuntime *dockercompose.Runtime
 	imagefs        *imagefs.Manager
 	buildCache     *buildCapabilityCache
+	reloadDocker   func() error
 }
 
 func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
-	cfg, err := s.Read()
-	if err != nil {
-		panic("cannot read Docker configuration: " + err.Error())
+	runtime := newDockerRuntime(s, jwtSecret, dataDir)
+	if err := runtime.reload(); err != nil {
+		panic("cannot initialize Docker runtime: " + err.Error())
 	}
-	dc, err := docker.NewClient(cfg.Docker)
-	if err != nil {
-		panic("cannot connect to Docker: " + err.Error())
-	}
-	composeRuntime, err := dockercompose.NewRuntime(dc)
-	if err != nil {
-		_ = dc.Close()
-		panic("cannot initialize Compose: " + err.Error())
-	}
-	mgr := imagefs.New(dc)
-	go mgr.Run(context.Background())
-	srv := &Server{
-		store:          s,
-		jwtSecret:      jwtSecret,
-		dataDir:        dataDir,
-		audit:          audit.New(dataDir + "/audit.log"),
-		docker:         dc,
-		composeRuntime: composeRuntime,
-		imagefs:        mgr,
-		buildCache:     newBuildCapabilityCache(),
-	}
-	return srv.routes()
+	return runtime
 }
 
 // routes builds the complete HTTP router from an already constructed Server.

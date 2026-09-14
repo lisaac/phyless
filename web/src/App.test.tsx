@@ -1,18 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@solidjs/testing-library";
 import { App } from "./App";
+import { dockerServerChanged } from "./stores/dockerServer";
 
-const routeMock = vi.hoisted(() => ({ suspendContainer: false }));
+const routeMock = vi.hoisted(() => ({ suspendContainer: false, layoutMounts: 0, overviewMounts: 0 }));
 
 vi.mock("./stores/auth", () => ({
   currentUser: () => ({ id: "1", username: "admin", role: "admin" }),
   doLogout: vi.fn(),
   loadSession: () => Promise.resolve(),
 }));
-vi.mock("./components/shared/Layout", () => ({ Layout: (props: { children?: any }) => <div data-testid="layout">{props.children}</div> }));
+vi.mock("./components/shared/Layout", () => ({ Layout: (props: { children?: any }) => <div data-testid="layout" data-mount={++routeMock.layoutMounts}>{props.children}</div> }));
 vi.mock("./components/shared/Toast", () => ({ ToastHost: () => null }));
 vi.mock("./components/shared/ConfirmModal", () => ({ ConfirmModal: () => null }));
-vi.mock("./components/overview/OverviewPage", () => ({ OverviewPage: () => <div>overview-page</div> }));
+vi.mock("./components/overview/OverviewPage", () => ({ OverviewPage: () => <div data-mount={++routeMock.overviewMounts}>overview-page</div> }));
 vi.mock("./components/containers/ContainerDetailPage", async () => {
   const { createResource } = await import("solid-js");
   return {
@@ -24,7 +25,11 @@ vi.mock("./components/containers/ContainerDetailPage", async () => {
 });
 vi.mock("./components/containers/TerminalWindowPage", () => ({ TerminalWindowPage: () => <div>terminal-page</div> }));
 
-beforeEach(() => vi.stubGlobal("scrollTo", vi.fn()));
+beforeEach(() => {
+  vi.stubGlobal("scrollTo", vi.fn());
+  routeMock.layoutMounts = 0;
+  routeMock.overviewMounts = 0;
+});
 
 afterEach(() => {
   cleanup();
@@ -60,5 +65,15 @@ describe("route fallback", () => {
 
     await screen.findByText(page);
     expect(window.location.pathname).toBe(path);
+  });
+
+  it("recreates Docker-backed views after a server switch", async () => {
+    render(() => <App />);
+    await screen.findByText("overview-page");
+    const layoutBefore = routeMock.layoutMounts;
+    const overviewBefore = routeMock.overviewMounts;
+    dockerServerChanged();
+    expect(routeMock.layoutMounts).toBe(layoutBefore + 1);
+    expect(routeMock.overviewMounts).toBe(overviewBefore + 1);
   });
 });

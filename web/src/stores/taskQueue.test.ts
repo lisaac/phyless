@@ -78,6 +78,18 @@ describe("taskQueue scheduling", () => {
     FakeXHR.requests[0].finish("");
     expect(FakeXHR.requests).toHaveLength(1);
   });
+
+  it("cancels running and queued work without sending queued work to a new server", async () => {
+    const q = await load();
+    const running = q.enqueue({ title: "running", url: "/running", key: "server" });
+    const queued = q.enqueue({ title: "queued", url: "/queued", key: "server" });
+
+    q.cancelActiveTasks();
+
+    expect(FakeXHR.requests).toHaveLength(1);
+    expect((await running.done).status).toBe("cancelled");
+    expect((await queued.done).status).toBe("cancelled");
+  });
 });
 
 describe("taskQueue outcomes", () => {

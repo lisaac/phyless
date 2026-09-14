@@ -1,4 +1,33 @@
 const TOKEN_KEY = "phyless_token";
+let readController = new AbortController();
+
+// Docker server changes invalidate every read from the prior runtime. The task
+// queue cancels its XHR writes separately at the same transition.
+export function cancelPendingReads(): void {
+  readController.abort();
+  readController = new AbortController();
+}
+
+// Direct GET helpers with their own local cancellation also join this signal.
+// dispose removes the two listeners after the request settles.
+export function readSignal(signal?: AbortSignal): { signal: AbortSignal; dispose: () => void } {
+  const shared = readController.signal;
+  if (!signal || signal === shared) return { signal: shared, dispose: () => {} };
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (shared.aborted || signal.aborted) abort();
+  else {
+    shared.addEventListener("abort", abort, { once: true });
+    signal.addEventListener("abort", abort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      shared.removeEventListener("abort", abort);
+      signal.removeEventListener("abort", abort);
+    },
+  };
+}
 
 export class ApiError extends Error {
   status: number;
@@ -35,7 +64,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  const res = await fetch(path, { method, headers, body: payload });
+  const res = await fetch(path, { method, headers, body: payload, signal: method === "GET" ? readController.signal : undefined });
   if (res.status === 401 && token === getToken()) {
     setToken(null);
     window.dispatchEvent(new CustomEvent("phyless:unauthorized"));

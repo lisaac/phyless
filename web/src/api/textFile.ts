@@ -1,4 +1,4 @@
-import { getToken, setToken } from "./client";
+import { getToken, readSignal, setToken } from "./client";
 
 // Extensions the CodeEditor/browser can render safely as text. Anything else
 // (images, archives, binaries…) gets a confirmation dialog first — the editor loads
@@ -23,15 +23,20 @@ export function looksTextFile(path: string): boolean {
 // dispatching the same global unauthorized event the rest of the app uses).
 export async function fetchTextFile(url: string, signal?: AbortSignal): Promise<{ text: string; truncated: boolean } | null> {
   const token = getToken();
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token ?? ""}` }, signal });
-  if (res.status === 401) {
-    if (token === getToken()) {
-      setToken(null);
-      window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+  const read = readSignal(signal);
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token ?? ""}` }, signal: read.signal });
+    if (res.status === 401) {
+      if (token === getToken()) {
+        setToken(null);
+        window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+      }
+      return null;
     }
-    return null;
+    if (!res.ok) throw new Error(await res.text());
+    const text = await res.text();
+    return { text, truncated: res.headers.get("X-Truncated") === "true" };
+  } finally {
+    read.dispose();
   }
-  if (!res.ok) throw new Error(await res.text());
-  const text = await res.text();
-  return { text, truncated: res.headers.get("X-Truncated") === "true" };
 }

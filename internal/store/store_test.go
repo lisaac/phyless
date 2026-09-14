@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,6 +92,35 @@ func TestUpdateCallbackErrorKeepsPreviousConfig(t *testing.T) {
 	}
 	if cfg.Users[0].Username != "admin" {
 		t.Fatalf("config changed after failed update: %+v", cfg.Users[0])
+	}
+}
+
+func TestReadMigratesLegacyDockerEndpoint(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(f, []byte(`{"docker":{"host":"tcp://docker.example:2375","tls":false}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(f)
+	cfg, err := s.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.DockerServers) != 1 || cfg.ActiveDockerServerID != models.LocalDockerServerID || cfg.DockerServers[0].Host != "tcp://docker.example:2375" {
+		t.Fatalf("migrated Docker servers = %+v, active = %q", cfg.DockerServers, cfg.ActiveDockerServerID)
+	}
+	if err := s.Write(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]json.RawMessage
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := persisted["docker"]; exists {
+		t.Fatalf("legacy Docker field was persisted: %s", data)
 	}
 }
 

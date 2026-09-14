@@ -102,6 +102,7 @@ const xhrs = new Map<string, XMLHttpRequest>();
 const browserAborts = new Map<string, AbortController>();
 const waiters = new Map<string, (t: Task) => void>();
 let nextId = Date.now();
+let suspendPump = false;
 
 const DETAIL_LABELS: Record<string, string> = {
   image: "镜像", images: "镜像", ids: "镜像 ID", ref: "镜像引用", source: "来源",
@@ -197,6 +198,17 @@ export function cancel(id: string) {
   browserAborts.get(id)?.abort();
 }
 
+// A Docker server switch must not let old queued work start against the new
+// daemon. Abort active transports and settle queued work before pumping again.
+export function cancelActiveTasks() {
+  const ids = tasks.list.filter((t) => isActive(t.status)).map((t) => t.id);
+  if (!ids.length) return;
+  suspendPump = true;
+  ids.forEach(cancel);
+  suspendPump = false;
+  pump();
+}
+
 export function remove(id: string) {
   if (find(id)?.status === "running") return;
   setTasks("list", (l) => l.filter((t) => t.id !== id));
@@ -223,7 +235,7 @@ function settle(id: string, status: TaskStatus, error = "") {
   waiters.get(id)?.(snapshot);
   waiters.delete(id);
   window.dispatchEvent(new CustomEvent(SETTLED_EVENT, { detail: snapshot }));
-  pump();
+  if (!suspendPump) pump();
 }
 
 function pump() {

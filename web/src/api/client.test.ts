@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { request, ApiError, getToken, setToken, login, isApiNotFound } from "./client";
+import { cancelDockerServerRequests } from "../stores/dockerServer";
 
 beforeEach(() => {
   localStorage.clear();
@@ -64,6 +65,19 @@ describe("request", () => {
     expect(getToken()).toBe("new-token");
     expect(handler).not.toHaveBeenCalled();
     window.removeEventListener("phyless:unauthorized", handler);
+  });
+
+  it("aborts a stale read when the Docker server changes", async () => {
+    const aborted = new Error("aborted");
+    const fetchMock = vi.fn((_path: string, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(aborted), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = request("GET", "/api/containers");
+    const signal = (fetchMock.mock.calls[0][1] as RequestInit).signal;
+    cancelDockerServerRequests();
+    expect(signal?.aborted).toBe(true);
+    await expect(pending).rejects.toBe(aborted);
   });
 });
 

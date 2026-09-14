@@ -110,8 +110,8 @@ interface TokenCache {
   header: string | null;
 }
 
-async function proxiedGet(workerUrl: string, target: string, headers: Record<string, string>): Promise<Response> {
-  return fetch(proxied(workerUrl, target), { headers });
+async function proxiedGet(workerUrl: string, target: string, headers: Record<string, string>, signal?: AbortSignal): Promise<Response> {
+  return fetch(proxied(workerUrl, target), { headers, signal });
 }
 
 async function authorizedGet(
@@ -120,10 +120,11 @@ async function authorizedGet(
   accept: string,
   creds: Creds | undefined,
   cache: TokenCache,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const headers: Record<string, string> = { Accept: accept };
   if (cache.header) headers.Authorization = cache.header;
-  let resp = await proxiedGet(workerUrl, target, headers);
+  let resp = await proxiedGet(workerUrl, target, headers, signal);
   if (resp.status === 401) {
     const wa = resp.headers.get("WWW-Authenticate");
     if (!wa) throw new Error("registry 需要认证但未提供认证方式");
@@ -132,10 +133,10 @@ async function authorizedGet(
       if (!creds) throw new Error("该镜像需要登录凭据");
       cache.header = "Basic " + btoa(`${creds.username}:${creds.secret}`);
     } else {
-      cache.header = "Bearer " + (await fetchToken(workerUrl, challenge, creds));
+      cache.header = "Bearer " + (await fetchToken(workerUrl, challenge, creds, signal));
     }
     headers.Authorization = cache.header;
-    resp = await proxiedGet(workerUrl, target, headers);
+    resp = await proxiedGet(workerUrl, target, headers, signal);
   }
   if (!resp.ok) throw new Error(`registry 请求失败（${resp.status}）`);
   return resp;
@@ -145,6 +146,7 @@ async function fetchToken(
   workerUrl: string,
   challenge: { realm: string; service?: string; scope?: string },
   creds: Creds | undefined,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!challenge.realm) throw new Error("registry 认证信息不完整");
   const url = new URL(challenge.realm);
@@ -152,7 +154,7 @@ async function fetchToken(
   if (challenge.scope) url.searchParams.set("scope", challenge.scope);
   const headers: Record<string, string> = {};
   if (creds) headers.Authorization = "Basic " + btoa(`${creds.username}:${creds.secret}`);
-  const resp = await proxiedGet(workerUrl, url.toString(), headers);
+  const resp = await proxiedGet(workerUrl, url.toString(), headers, signal);
   if (!resp.ok) throw new Error("registry 认证失败");
   const body = (await resp.json()) as { token?: string; access_token?: string };
   const token = body.token || body.access_token;
@@ -164,13 +166,13 @@ async function fetchToken(
 // Authorization header. Used to re-authorize a layer blob fetch whose token has
 // expired mid-pull (registry tokens are short-lived; a large image can outlive
 // the one obtained during the manifest phase).
-export async function authHeaderFromChallenge(workerUrl: string, wwwAuthenticate: string, creds?: Creds): Promise<string> {
+export async function authHeaderFromChallenge(workerUrl: string, wwwAuthenticate: string, creds?: Creds, signal?: AbortSignal): Promise<string> {
   const challenge = parseWWWAuthenticate(wwwAuthenticate);
   if (challenge.scheme === "basic") {
     if (!creds) throw new Error("该镜像需要登录凭据");
     return "Basic " + btoa(`${creds.username}:${creds.secret}`);
   }
-  return "Bearer " + (await fetchToken(workerUrl, challenge, creds));
+  return "Bearer " + (await fetchToken(workerUrl, challenge, creds, signal));
 }
 
 async function readBounded(resp: Response, limit: number): Promise<Uint8Array> {
@@ -212,7 +214,7 @@ function selectPlatform(manifests: PlatformDesc[], want: { os: string; architect
   );
 }
 
-export async function resolveImage(ref: string, platform: string, workerUrl: string, creds?: Creds): Promise<ResolvedImage> {
+export async function resolveImage(ref: string, platform: string, workerUrl: string, creds?: Creds, signal?: AbortSignal): Promise<ResolvedImage> {
   if (!workerUrl.trim()) throw new Error("未配置下载代理地址");
   const parsed = parseImageRef(ref);
   const want = parsePlatform(platform);
@@ -220,7 +222,7 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
 
   const cache: TokenCache = { header: null };
   const manifestUrl = `https://${parsed.registryHost}/v2/${parsed.repository}/manifests/${parsed.tag}`;
-  let resp = await authorizedGet(workerUrl, manifestUrl, MANIFEST_ACCEPT, creds, cache);
+  let resp = await authorizedGet(workerUrl, manifestUrl, MANIFEST_ACCEPT, creds, cache, signal);
   let raw = await readBounded(resp, MAX_META);
   let doc = JSON.parse(dec.decode(raw)) as {
     mediaType?: string;
@@ -234,7 +236,7 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
     const pick = selectPlatform(doc.manifests || [], want);
     if (!pick) throw new Error("镜像不包含目标平台");
     const byDigest = `https://${parsed.registryHost}/v2/${parsed.repository}/manifests/${pick.digest}`;
-    resp = await authorizedGet(workerUrl, byDigest, MANIFEST_ACCEPT, creds, cache);
+    resp = await authorizedGet(workerUrl, byDigest, MANIFEST_ACCEPT, creds, cache, signal);
     raw = await readBounded(resp, MAX_META);
     doc = JSON.parse(dec.decode(raw));
     mediaType = doc.mediaType || (resp.headers.get("Content-Type") || "").split(";")[0].trim();
@@ -253,7 +255,7 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
   // would make `docker load`'s OCI path fail digest verification.
   const manifestDigest = await sha256Digest(raw);
 
-  const configResp = await authorizedGet(workerUrl, blobUrl(parsed.registryHost, parsed.repository, doc.config.digest), "*/*", creds, cache);
+  const configResp = await authorizedGet(workerUrl, blobUrl(parsed.registryHost, parsed.repository, doc.config.digest), "*/*", creds, cache, signal);
   const configBytes = await readBounded(configResp, MAX_META);
   const cfg = JSON.parse(dec.decode(configBytes)) as { os?: string; architecture?: string; variant?: string };
   if ((cfg.os || "") !== want.os) throw new Error("镜像 OS 与目标平台不符");

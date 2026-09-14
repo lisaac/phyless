@@ -56,6 +56,16 @@ type DockerEndpoint struct {
 	KeyPEM  string `json:"key_pem,omitempty"`
 }
 
+const LocalDockerServerID = "local"
+
+// DockerServer is one selectable Docker daemon. Embedding keeps the PEM text
+// fields flat in config.json while API responses can omit them explicitly.
+type DockerServer struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	DockerEndpoint
+}
+
 type Template struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`

@@ -14,11 +14,13 @@ import (
 )
 
 type Config struct {
-	Users           []models.User           `json:"users"`
-	ComposeProjects []models.ComposeProject `json:"compose_projects"`
-	Registries      []models.Registry       `json:"registries"`
-	Docker          models.DockerEndpoint   `json:"docker"`
-	Templates       []models.Template       `json:"templates"`
+	Users                []models.User           `json:"users"`
+	ComposeProjects      []models.ComposeProject `json:"compose_projects"`
+	Registries           []models.Registry       `json:"registries"`
+	DockerServers        []models.DockerServer   `json:"docker_servers"`
+	ActiveDockerServerID string                  `json:"active_docker_server_id"`
+	LegacyDocker         *models.DockerEndpoint  `json:"docker,omitempty"`
+	Templates            []models.Template       `json:"templates"`
 }
 
 type Store struct {
@@ -60,6 +62,7 @@ func (s *Store) readLocked() (*Config, error) {
 	if cfg.Templates == nil {
 		cfg.Templates = []models.Template{}
 	}
+	normalizeDockerServers(&cfg)
 	return &cfg, nil
 }
 
@@ -90,6 +93,7 @@ func (s *Store) Update(fn func(*Config) error) error {
 }
 
 func (s *Store) writeLocked(cfg *Config) error {
+	normalizeDockerServers(cfg)
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -142,11 +146,50 @@ func (s *Store) writeLocked(cfg *Config) error {
 
 func emptyConfig() *Config {
 	return &Config{
-		Users:           []models.User{},
-		ComposeProjects: []models.ComposeProject{},
-		Registries:      []models.Registry{},
-		Templates:       []models.Template{},
+		Users:                []models.User{},
+		ComposeProjects:      []models.ComposeProject{},
+		Registries:           []models.Registry{},
+		DockerServers:        []models.DockerServer{{ID: models.LocalDockerServerID, Name: "本机 Docker"}},
+		Templates:            []models.Template{},
+		ActiveDockerServerID: models.LocalDockerServerID,
 	}
+}
+
+// ActiveDockerServer returns the selected server after the migration/default
+// normalization performed by Read and Write.
+func (cfg *Config) ActiveDockerServer() (models.DockerServer, error) {
+	for _, server := range cfg.DockerServers {
+		if server.ID == cfg.ActiveDockerServerID {
+			return server, nil
+		}
+	}
+	return models.DockerServer{}, fmt.Errorf("store: active Docker server not found")
+}
+
+func normalizeDockerServers(cfg *Config) {
+	if cfg.DockerServers == nil {
+		cfg.DockerServers = []models.DockerServer{}
+	}
+	if len(cfg.DockerServers) == 0 {
+		name := "本机 Docker"
+		endpoint := models.DockerEndpoint{}
+		if cfg.LegacyDocker != nil {
+			endpoint = *cfg.LegacyDocker
+			if endpoint != (models.DockerEndpoint{}) {
+				name = "默认 Docker"
+			}
+		}
+		cfg.DockerServers = append(cfg.DockerServers, models.DockerServer{
+			ID: models.LocalDockerServerID, Name: name, DockerEndpoint: endpoint,
+		})
+	}
+	cfg.LegacyDocker = nil
+	for _, server := range cfg.DockerServers {
+		if server.ID == cfg.ActiveDockerServerID {
+			return
+		}
+	}
+	cfg.ActiveDockerServerID = cfg.DockerServers[0].ID
 }
 
 // NewID returns a collision-resistant identifier without adding a dependency.

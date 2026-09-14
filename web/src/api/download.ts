@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { getToken, setToken } from "./client";
+import { getToken, readSignal, setToken } from "./client";
 
 export const DOWNLOAD_FALLBACK_LIMIT = 64 * 1024 * 1024;
 
@@ -58,6 +58,7 @@ export async function streamDownload(
   signal?: AbortSignal,
 ): Promise<void> {
   if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  const read = readSignal(signal);
   let writable: WritableFile | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   const token = getToken();
@@ -75,7 +76,7 @@ export async function streamDownload(
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token ?? ""}` },
-      signal,
+      signal: read.signal,
     });
     if (res.status === 401) {
       if (token === getToken()) {
@@ -130,6 +131,7 @@ export async function streamDownload(
     throw e;
   } finally {
     reader?.releaseLock();
+    read.dispose();
   }
 }
 

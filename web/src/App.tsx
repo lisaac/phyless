@@ -1,6 +1,7 @@
 import { Component, createSignal, onMount, onCleanup, Show, Suspense, lazy } from "solid-js";
 import { Router, Route, Navigate } from "@solidjs/router";
 import { currentUser, doLogout, loadSession } from "./stores/auth";
+import { dockerServerEpoch } from "./stores/dockerServer";
 import { Layout } from "./components/shared/Layout";
 import { ToastHost } from "./components/shared/Toast";
 import { ConfirmModal } from "./components/shared/ConfirmModal";
@@ -28,9 +29,11 @@ const AuditPage = lazy(() => import("./components/settings/AuditPage").then((m) 
 const Guard: Component<{ children?: any }> = (props) => {
   return (
     <Show when={currentUser()} fallback={<Navigate href="/login" />}>
-      <Layout>
-        <Suspense fallback={<div class="p-8">加载中…</div>}>{props.children}</Suspense>
-      </Layout>
+      <Show when={dockerServerEpoch()} keyed>
+        <Layout>
+          <Suspense fallback={<div class="p-8">加载中…</div>}>{props.children}</Suspense>
+        </Layout>
+      </Show>
     </Show>
   );
 };

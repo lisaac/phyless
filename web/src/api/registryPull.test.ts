@@ -123,4 +123,20 @@ describe("resolveImage", () => {
     vi.stubGlobal("fetch", mockRegistry(goodManifest));
     await expect(resolveImage("nginx:1.27", "linux/arm64", "https://w.example")).rejects.toThrow(/目标平台/);
   });
+
+  it("aborts registry metadata fetches with the task signal", async () => {
+    const aborted = new Error("aborted");
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(aborted), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    const pending = resolveImage("nginx:1.27", "linux/amd64", "https://w.example", undefined, controller.signal);
+    const signal = (fetchMock.mock.calls[0][1] as RequestInit).signal;
+    controller.abort();
+
+    expect(signal?.aborted).toBe(true);
+    await expect(pending).rejects.toBe(aborted);
+  });
 });

@@ -61,7 +61,7 @@ export const defaultDeps: BrowserPullDeps = {
       // fresh one from the challenge and reuse it for the remaining layers.
       const wa = resp.headers.get("WWW-Authenticate");
       if (wa) {
-        img.authHeader = await authHeaderFromChallenge(workerUrl, wa, creds);
+        img.authHeader = await authHeaderFromChallenge(workerUrl, wa, creds, signal);
         resp = await fetch(url, { headers: { Authorization: img.authHeader }, signal });
       }
     }
@@ -74,7 +74,7 @@ export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullC
   if (cb.signal.aborted) throw new Error("已取消");
   cb.note("解析镜像信息…");
   const platform = params.platform?.trim() || (await deps.daemonPlatform());
-  const img = await deps.resolveImage(params.ref, platform, params.workerUrl, params.creds);
+  const img = await deps.resolveImage(params.ref, platform, params.workerUrl, params.creds, cb.signal);
   if (cb.signal.aborted) throw new Error("已取消");
 
   const localId = await deps.inspectLocalId(img.repoTag);
