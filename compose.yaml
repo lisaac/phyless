@@ -1,0 +1,15 @@
+services:
+  phyless:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: phyless:latest
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    restart: unless-stopped

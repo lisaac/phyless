@@ -6,7 +6,7 @@
 
 Compose 列表每行的操作区中，「删除」按钮**前面**会出现一个 `🔨 Build` 按钮。
 点击后对该项目执行 Compose Build，构建过程以流式日志的形式经全局任务队列
-（`web/src/stores/taskQueue.ts`）返回，与 Up / Pull 等操作一致。
+（`frontend/src/stores/taskQueue.ts`）返回，与 Up / Pull 等操作一致。
 
 弹窗支持两种下载方式。服务端代理模式沿用后端代理；浏览器下载模式先按
 `GET /api/compose/pull-plan` 返回的 `build_bases` 顺序预拉 Dockerfile 的 `FROM`
@@ -29,7 +29,7 @@ Build 按钮**仅在满足以下全部条件时显示**：
 POST /api/compose/build?id=<项目ID>
 ```
 
-复用 `runComposeOperation`（`internal/api/compose.go`），内部调用官方 Compose API 的
+复用 `runComposeOperation`（`backend/internal/api/compose.go`），内部调用官方 Compose API 的
 `service.Compose().Build`，进度以 `plain` 模式流式写回。需要可读的 compose 文件；
 文件不可读时返回错误，不会静默构建一个不同的配置（与 Up / Pull 的严格策略一致）。
 
@@ -56,7 +56,7 @@ func (s *Server) projectHasBuild(ctx, p) bool // 加载 compose 文件，任一 
 
 - `build` 已并入共享的 `ComposeVerb` 与 `VERB_LABEL`（`composeShared.tsx`），
   与其他 compose 动词共用一套按钮与运行态逻辑。
-- 类型 `ComposeProject` 新增可选字段 `can_build`（`web/src/types.ts`），仅出现在
+- 类型 `ComposeProject` 新增可选字段 `can_build`（`frontend/src/types.ts`），仅出现在
   列表响应中。
 - 按钮渲染在 `ComposeListPage.tsx` 的操作区，位于「删除」之前，`<Show when={p.can_build}>`
   控制显隐。Build 可选择服务端代理或浏览器下载；浏览器模式仅支持 Linux/tag 镜像及可静态解析的

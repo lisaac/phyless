@@ -3,5 +3,6 @@
 !.git/refs/
 !.git/refs/heads/
 !.git/refs/heads/**
-web/node_modules
-web/dist
+frontend/node_modules
+frontend/dist
+data/

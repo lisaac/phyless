@@ -1,7 +1,7 @@
 #!/bin/sh
 # Release build. The embedded Compose API drags in code that this server can
 # never reach (it pins BUILDX_BUILDER=default and COMPOSE_BAKE=false at startup,
-# see internal/docker/compose/runtime.go, and never exports telemetry). We drop
+# see backend/internal/docker/compose/runtime.go, and never exports telemetry). We drop
 # it with go build -overlay instead of forking the modules:
 #
 #   compose  build_buildkit.go   blank-imports of the kubernetes/remote/

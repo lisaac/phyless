@@ -4,6 +4,6 @@ set -eu
 cd "$(dirname "$0")/.."
 go test -race ./...
 go vet ./...
-cd web
+cd frontend
 npm test -- --reporter=dot
 npm run build

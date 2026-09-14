@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
 
-target=${PHYLESS_ACCEPTANCE_SSH_TARGET:-user@docker.example.test}
-key=${PHYLESS_ACCEPTANCE_SSH_KEY:-~/.ssh/id_ed25519}
+target=${PHYLESS_ACCEPTANCE_SSH_TARGET:-}
+key=${PHYLESS_ACCEPTANCE_SSH_KEY:-}
+protected_containers=${PHYLESS_ACCEPTANCE_PROTECTED_CONTAINERS:-}
+protected_image=${PHYLESS_ACCEPTANCE_PROTECTED_IMAGE:-}
 binary=${1:-${PHYLESS_ACCEPTANCE_BINARY:-}}
 
 ssh_readonly() {
@@ -10,28 +12,39 @@ ssh_readonly() {
 }
 
 if [ "${PHYLESS_ACCEPTANCE_RUN:-0}" != "1" ]; then
+	if [ -z "$target" ] || [ -z "$key" ]; then
+		echo "Set PHYLESS_ACCEPTANCE_SSH_TARGET and PHYLESS_ACCEPTANCE_SSH_KEY for the remote Docker baseline" >&2
+		exit 0
+	fi
 	echo "PHYLESS_ACCEPTANCE_RUN is unset; running read-only Docker baseline only" >&2
 	ssh_readonly 'set -eu
 echo "== docker version =="
 docker version --format "server={{.Server.Version}} api={{.Server.APIVersion}} os={{.Server.Os}} arch={{.Server.Arch}}"
 echo "== docker info =="
 docker info --format "name={{.Name}} os={{.OperatingSystem}} arch={{.Architecture}} driver={{.Driver}} mem={{.MemTotal}} ncpu={{.NCPU}}"
-echo "== protected containers =="
-docker inspect -f "{{.Name}} image={{.Config.Image}} id={{.Id}} status={{.State.Status}}" protected-container phyless-app
-echo "== protected image =="
-docker image inspect -f "{{.Id}} {{.RepoTags}}" phyless:latest
 echo "== images =="
 docker image ls --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}"
 echo "== system df =="
 docker system df --format "type={{.Type}} total={{.TotalCount}} active={{.Active}} size={{.Size}} reclaimable={{.Reclaimable}}"'
+	if [ -n "$protected_containers" ]; then
+		echo "== protected containers ==" >&2
+		ssh_readonly "docker inspect -f \"{{.Name}} image={{.Config.Image}} id={{.Id}} status={{.State.Status}}\" $protected_containers"
+	fi
+	if [ -n "$protected_image" ]; then
+		echo "== protected image ==" >&2
+		ssh_readonly "docker image inspect -f \"{{.Id}} {{.RepoTags}}\" $protected_image"
+	fi
 	exit 0
 fi
+
+[ -n "$target" ] || { echo "PHYLESS_ACCEPTANCE_SSH_TARGET is required" >&2; exit 2; }
+[ -n "$key" ] || { echo "PHYLESS_ACCEPTANCE_SSH_KEY is required" >&2; exit 2; }
 
 if [ -z "$binary" ] || [ ! -f "$binary" ]; then
 	build_dir=$(mktemp -d "${TMPDIR:-/tmp}/phyless-acceptance.XXXXXX")
 	binary="$build_dir/compose-acceptance.test"
 	trap 'rm -rf "$build_dir"' EXIT INT TERM
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c ./internal/docker/compose -o "$binary"
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c ./backend/internal/docker/compose -o "$binary"
 fi
 
 test -f "$binary"
@@ -45,8 +58,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-before_containers=$(ssh_readonly 'docker inspect -f "{{.Name}} image={{.Config.Image}} id={{.Id}} status={{.State.Status}}" protected-container phyless-app')
-before_image=$(ssh_readonly 'docker image inspect -f "{{.Id}}" phyless:latest')
+before_containers=""
+before_image=""
+if [ -n "$protected_containers" ]; then
+	before_containers=$(ssh_readonly "docker inspect -f \"{{.Name}} image={{.Config.Image}} id={{.Id}} status={{.State.Status}}\" $protected_containers")
+fi
+if [ -n "$protected_image" ]; then
+	before_image=$(ssh_readonly "docker image inspect -f \"{{.Id}}\" $protected_image")
+fi
 scp -q -o BatchMode=yes -o ConnectTimeout=10 -i "$key" "$binary" "$target:$remote_binary"
 
 set +e
@@ -54,8 +73,14 @@ ssh_readonly "docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m
 test_status=$?
 set -e
 
-after_containers=$(ssh_readonly 'docker inspect -f "{{.Name}} image={{.Config.Image}} id={{.Id}} status={{.State.Status}}" protected-container phyless-app')
-after_image=$(ssh_readonly 'docker image inspect -f "{{.Id}}" phyless:latest')
+after_containers=""
+after_image=""
+if [ -n "$protected_containers" ]; then
+	after_containers=$(ssh_readonly "docker inspect -f \"{{.Name}} image={{.Config.Image}} id={{.Id}} status={{.State.Status}}\" $protected_containers")
+fi
+if [ -n "$protected_image" ]; then
+	after_image=$(ssh_readonly "docker image inspect -f \"{{.Id}}\" $protected_image")
+fi
 if [ "$before_containers" != "$after_containers" ]; then
 	echo "protected container state changed" >&2
 	echo "before: $before_containers" >&2
@@ -63,7 +88,7 @@ if [ "$before_containers" != "$after_containers" ]; then
 	test_status=1
 fi
 if [ "$before_image" != "$after_image" ]; then
-	echo "protected phyless:latest image changed" >&2
+	echo "protected image state changed" >&2
 	echo "before: $before_image" >&2
 	echo "after:  $after_image" >&2
 	test_status=1
