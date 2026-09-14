@@ -17,6 +17,7 @@ type Config struct {
 	Users           []models.User           `json:"users"`
 	ComposeProjects []models.ComposeProject `json:"compose_projects"`
 	Registries      []models.Registry       `json:"registries"`
+	Docker          models.DockerEndpoint   `json:"docker"`
 	Templates       []models.Template       `json:"templates"`
 }
 

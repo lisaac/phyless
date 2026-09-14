@@ -110,9 +110,10 @@ const DETAIL_LABELS: Record<string, string> = {
   old_path: "原路径", new_path: "新路径", target_id: "目标容器", target_path: "目标路径", container: "容器",
   base_dir: "项目目录", compose_file: "Compose 文件", env_file: "环境文件", pull_policy: "拉取策略",
   proxy_url: "拉取代理", registry_id: "镜像仓库", registry_ids: "镜像仓库",
+  ca_pem: "CA 证书", cert_pem: "客户端证书", key_pem: "客户端私钥",
   workerUrl: "下载代理", canBuild: "包含构建",
 };
-const HIDDEN_KEYS = /^(password|passwd|secret|token|authorization|auth|credentials?|registry_auth)$/i;
+const HIDDEN_KEYS = /^(password|passwd|secret|token|authorization|auth|credentials?|registry_auth|(?:ca|cert|key)_pem)$/i;
 const ENV_KEYS = /^(env|environment)$/i;
 const CONTENT_KEYS = /^(cmd|command|content|data)$/i;
 

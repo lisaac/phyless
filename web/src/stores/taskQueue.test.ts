@@ -202,4 +202,14 @@ describe("taskQueue persistence", () => {
     expect(JSON.stringify(detail)).not.toContain("never-store-this");
     expect(JSON.stringify(localStorage.getItem("phyless_tasks"))).not.toContain("never-store-this");
   });
+
+  it("does not retain Docker TLS PEM text in task details", async () => {
+    const q = await load();
+    q.enqueue({
+      title: "save Docker", url: "/api/settings/docker", method: "PUT",
+      body: { host: "tcp://docker.example:2376", tls: true, key_pem: "never-store-this" },
+    });
+    expect(JSON.stringify(q.tasks.list[0].details)).not.toContain("never-store-this");
+    expect(localStorage.getItem("phyless_tasks")).not.toContain("never-store-this");
+  });
 });

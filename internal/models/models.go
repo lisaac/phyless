@@ -45,6 +45,17 @@ type Registry struct {
 	PasswordEnc string `json:"password_enc"`
 }
 
+// DockerEndpoint selects the daemon used by the server. TLS material stays as
+// PEM text in the config file so a mounted /data volume is the only storage it
+// needs.
+type DockerEndpoint struct {
+	Host    string `json:"host,omitempty"`
+	TLS     bool   `json:"tls"`
+	CAPEM   string `json:"ca_pem,omitempty"`
+	CertPEM string `json:"cert_pem,omitempty"`
+	KeyPEM  string `json:"key_pem,omitempty"`
+}
+
 type Template struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`

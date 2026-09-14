@@ -38,7 +38,11 @@ type Server struct {
 }
 
 func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
-	dc, err := docker.NewClient()
+	cfg, err := s.Read()
+	if err != nil {
+		panic("cannot read Docker configuration: " + err.Error())
+	}
+	dc, err := docker.NewClient(cfg.Docker)
 	if err != nil {
 		panic("cannot connect to Docker: " + err.Error())
 	}
@@ -129,6 +133,7 @@ func (s *Server) routes() http.Handler {
 	// Admin only
 	r.Group(func(r chi.Router) {
 		r.Use(auth.MiddlewareWithUser(jwtSecret, models.RoleAdmin, s.lookupUser))
+		s.mountDockerSettingsRoutes(r)
 		r.Get("/api/users", s.handleListUsers)
 		r.Post("/api/users", s.handleCreateUser)
 		r.Get("/api/users/{id}", s.handleGetUser)
