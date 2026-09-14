@@ -1,4 +1,6 @@
 .git/
 frontend/node_modules
 frontend/dist
+backend/web/dist/*
+!backend/web/dist/.gitkeep
 data/
