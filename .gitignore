@@ -1,4 +1,13 @@
+/phyless
 /infra-manager
 /Makefile
 /data/
+/backend/web/dist/*
+!/backend/web/dist/.gitkeep
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
 .DS_Store

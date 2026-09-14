@@ -11,7 +11,7 @@ case "$os" in
   *) echo "build.sh: unsupported operating system: $os" >&2; exit 1 ;;
 esac
 
-output=infra-manager
+output=phyless
 [ "$os" = windows ] && output="$output.exe"
 
 echo "== building frontend =="

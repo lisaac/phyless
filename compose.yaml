@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: phyless:latest
+    command: ["./phyless", "-C", "/data"]
     environment:
       JWT_SECRET: ${JWT_SECRET:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

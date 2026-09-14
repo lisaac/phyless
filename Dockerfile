@@ -15,7 +15,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /frontend/dist ./backend/web/dist
-RUN ./scripts/go-build.sh -o infra-manager ./backend/cmd/server/
+RUN ./scripts/go-build.sh -o phyless ./backend/cmd/server/
 
 FROM alpine:latest
 # Compose is embedded through the Go API; the runtime image intentionally has
@@ -23,8 +23,8 @@ FROM alpine:latest
 # registry HTTPS requests made by the in-process pull backend.
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
-COPY --from=builder /app/infra-manager .
+COPY --from=builder /app/phyless .
 VOLUME /data
 EXPOSE 8080
 ENV COMPOSE_BAKE=false
-CMD ["./infra-manager", "-C", "/data"]
+CMD ["./phyless", "-C", "/data"]

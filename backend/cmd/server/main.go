@@ -46,7 +46,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Println("infra-manager listening on :8080")
+	log.Println("phyless listening on :8080")
 	server := &http.Server{
 		Addr:              ":8080",
 		Handler:           api.New(s, jwtSecret, dataDir),
@@ -60,7 +60,7 @@ func main() {
 }
 
 func configDir(args []string) (string, error) {
-	flags := flag.NewFlagSet("infra-manager", flag.ContinueOnError)
+	flags := flag.NewFlagSet("phyless", flag.ContinueOnError)
 	dir := flags.String("C", defaultDataDir, "configuration directory")
 	if err := flags.Parse(args); err != nil {
 		return "", err
