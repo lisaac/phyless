@@ -78,7 +78,6 @@ export const NetworkListPage: Component = () => {
           <div class="min-w-0 flex-1 px-3 py-2">名称</div>
           <div class="w-28 shrink-0 px-3 py-2">驱动 / 范围</div>
           <div class="w-48 shrink-0 px-3 py-2">子网 / 网关</div>
-          <div class="w-28 shrink-0 px-3 py-2">特性</div>
           <div class="w-44 shrink-0 px-3 py-2">使用容器</div>
           <div class="w-40 shrink-0 px-3 py-2 text-center">创建时间</div>
         </div>
@@ -110,25 +109,17 @@ export const NetworkListPage: Component = () => {
                 </div>
                 <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:w-48 sm:shrink-0 sm:border-t-0">
                   <Show when={ipamRanges(n).length > 0} fallback={<span class="text-zinc-600">—</span>}>
-                    <div class="flex flex-col gap-0.5 font-mono">
+                    <div class="space-y-px">
                       <For each={ipamRanges(n)}>
                         {(c) => (
-                          <div class="truncate" title={`${c.Subnet ?? ""}${c.Gateway ? ` → ${c.Gateway}` : ""}`}>
-                            <span>{c.Subnet ?? ""}</span>
-                            <Show when={c.Gateway}><span class="text-zinc-600"> → {c.Gateway}</span></Show>
+                          <div class="min-w-0 text-xs leading-4" title={`${c.Subnet ?? "—"} → ${c.Gateway ?? "—"}`}>
+                            <div class="truncate text-zinc-500">子网：<span class="font-mono text-[11px] text-zinc-400">{c.Subnet ?? "—"}</span></div>
+                            <div class="truncate text-zinc-500">网关：<span class="font-mono text-[11px] text-zinc-400">{c.Gateway ?? "—"}</span></div>
                           </div>
                         )}
                       </For>
                     </div>
                   </Show>
-                </div>
-                <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-28 sm:shrink-0 sm:border-t-0">
-                  <div class="flex flex-wrap gap-1">
-                    <Show when={n.Internal}><span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">internal</span></Show>
-                    <Show when={n.Attachable}><span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">attachable</span></Show>
-                    <Show when={n.EnableIPv6}><span class="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">IPv6</span></Show>
-                    <Show when={!n.Internal && !n.Attachable && !n.EnableIPv6}><span class="text-xs text-zinc-600">—</span></Show>
-                  </div>
                 </div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-44 sm:shrink-0 sm:border-t-0">
                   <Show when={(n.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
