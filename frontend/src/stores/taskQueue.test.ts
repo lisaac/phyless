@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 vi.mock("../api/client", () => ({ getToken: () => "token", setToken: vi.fn() }));
+vi.mock("../components/shared/Toast", () => ({ toast: { error: toastError } }));
 
 class FakeXHR {
   static requests: FakeXHR[] = [];
@@ -25,7 +27,7 @@ class FakeXHR {
 const load = () => import("./taskQueue");
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-beforeEach(() => { FakeXHR.requests = []; vi.stubGlobal("XMLHttpRequest", FakeXHR); localStorage.clear(); vi.resetModules(); });
+beforeEach(() => { FakeXHR.requests = []; toastError.mockClear(); vi.stubGlobal("XMLHttpRequest", FakeXHR); localStorage.clear(); vi.resetModules(); });
 afterEach(() => vi.unstubAllGlobals());
 
 describe("taskQueue scheduling", () => {
@@ -174,6 +176,18 @@ describe("taskQueue outcomes", () => {
     expect((await done).status).toBe("error");
     expect(client.setToken).toHaveBeenCalledWith(null);
     expect(unauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifies an unseen failure until the task panel is opened", async () => {
+    const q = await load();
+    const { done } = q.enqueue({ title: "pull", url: "/pull" });
+    FakeXHR.requests[0].finish('{"error":"registry denied"}\n');
+
+    await expect(done).resolves.toMatchObject({ status: "error", error: "registry denied" });
+    expect(toastError).toHaveBeenCalledWith("registry denied");
+    expect(q.unseenFailureCount()).toBe(1);
+    q.showTaskPanel();
+    expect(q.unseenFailureCount()).toBe(0);
   });
 });
 

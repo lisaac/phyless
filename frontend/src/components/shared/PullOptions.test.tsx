@@ -10,6 +10,7 @@ import {
   removePullProxyUrl,
   savePullProxyUrl,
 } from "./PullOptions";
+import { rememberCreds, saveWorkerUrl } from "../../stores/browserPullSettings";
 
 vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn() }));
 
@@ -79,6 +80,45 @@ describe("pull options", () => {
     expect(pull.value.useProxy).toBe(false);
     fireEvent.click(screen.getByLabelText("浏览器代理导入"));
     expect(pull.value.downloadMode).toBe("browser");
+  });
+
+  it("persists credentials entered after opting in and reloads them on reset", () => {
+    saveWorkerUrl("https://worker.example");
+    const pull = createPullOptions();
+    render(() => <PullOptions options={pull} allowBrowser />);
+    fireEvent.click(screen.getByLabelText("浏览器代理导入"));
+    fireEvent.click(screen.getByLabelText(/记住凭据/));
+    fireEvent.input(screen.getByLabelText("私有镜像用户名（可选）"), { target: { value: "alice" } });
+    fireEvent.input(screen.getByLabelText("密码 / Token（可选）"), { target: { value: "secret" } });
+
+    expect(localStorage.getItem("phyless_pull_registry_creds")).toContain("alice");
+    pull.reset();
+    expect(pull.value).toMatchObject({ creds: { username: "alice", secret: "secret" }, rememberCreds: true });
+  });
+
+  it("loads credentials for a selected worker and clears them for a new one", () => {
+    saveWorkerUrl("https://one.example");
+    saveWorkerUrl("https://two.example");
+    rememberCreds("https://one.example", { username: "one-user", secret: "one-secret" });
+    rememberCreds("https://two.example", { username: "two-user", secret: "two-secret" });
+    const pull = createPullOptions();
+    render(() => <PullOptions options={pull} allowBrowser />);
+    fireEvent.click(screen.getByLabelText("浏览器代理导入"));
+    const worker = screen.getByPlaceholderText("https://your-worker.workers.dev") as HTMLInputElement;
+    const username = screen.getByLabelText("私有镜像用户名（可选）") as HTMLInputElement;
+    const secret = screen.getByLabelText("密码 / Token（可选）") as HTMLInputElement;
+    const remember = screen.getByLabelText(/记住凭据/) as HTMLInputElement;
+    expect(username.value).toBe("two-user");
+
+    fireEvent.focus(worker);
+    fireEvent.click(screen.getByText("https://one.example"));
+    expect(username.value).toBe("one-user");
+    expect(secret.value).toBe("one-secret");
+
+    fireEvent.input(worker, { target: { value: "https://new.example" } });
+    expect(username.value).toBe("");
+    expect(secret.value).toBe("");
+    expect(remember.checked).toBe(false);
   });
 
   it("remembers the proxy url but only sends it in server proxy mode", () => {

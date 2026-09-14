@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, setToken } from "../api/client";
 import { runBrowserPull, runBrowserPullCompose, runBrowserCreate, runBrowserUpgrade, runComposeUpdate, type BrowserPullCallbacks } from "./browserPull";
+import { toast } from "../components/shared/Toast";
 
 // Global queue for every server-mutating request (pull/upgrade/compose/
 // start/stop/delete/upload/rename/…). Lives at module scope, not inside a
@@ -54,6 +55,7 @@ export interface Task extends TaskSpec {
 export const SETTLED_EVENT = "phyless:task-settled";
 export const ENQUEUED_EVENT = "phyless:task-enqueued";
 const STORAGE_KEY = "phyless_tasks";
+const FAILURE_SEEN_KEY = "phyless_task_failure_seen_at";
 const MAX_STORED = 50;
 const MAX_CONCURRENT = 4;
 const MAX_STORED_NOTES = 20;
@@ -83,6 +85,31 @@ export const runningCount = () => tasks.list.filter((t) => t.status === "running
 // The task drawer is a destination, not an interruption: only its header
 // button opens it. New tasks announce themselves with ENQUEUED_EVENT instead.
 export const [panelHidden, setPanelHidden] = createSignal(true);
+
+function loadFailureSeenAt(): number {
+  try {
+    const value = Number(localStorage.getItem(FAILURE_SEEN_KEY));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+const [failureSeenAt, setFailureSeenAt] = createSignal(loadFailureSeenAt());
+export const unseenFailureCount = () => tasks.list.filter((t) =>
+  t.status === "error" && (t.finishedAt ?? t.createdAt) > failureSeenAt(),
+).length;
+
+export function markFailuresSeen(): void {
+  const now = Date.now();
+  setFailureSeenAt(now);
+  try { localStorage.setItem(FAILURE_SEEN_KEY, String(now)); } catch { /* ignore */ }
+}
+
+export function showTaskPanel(): void {
+  setPanelHidden(false);
+  markFailuresSeen();
+}
 
 function persist() {
   try {
@@ -229,6 +256,10 @@ function settle(id: string, status: TaskStatus, error = "") {
   xhrs.delete(id);
   browserAborts.delete(id);
   persist();
+  if (status === "error") {
+    toast.error(error || "任务失败");
+    if (!panelHidden()) markFailuresSeen();
+  }
   // Strip transient credentials before broadcasting: the snapshot goes to every
   // SETTLED_EVENT listener and to the enqueue().done/queued() promise consumers.
   const snapshot = { ...unwrap(find(id)!), secret: undefined };

@@ -41,9 +41,11 @@ describe("worker url persistence", () => {
     expect(saveWorkerUrl("https://one.example")).toEqual(["https://one.example"]);
     expect(saveWorkerUrl("https://two.example")).toEqual(["https://two.example", "https://one.example"]);
     expect(saveWorkerUrl("https://one.example")).toEqual(["https://one.example", "https://two.example"]);
+    rememberCreds("https://one.example", { username: "u", secret: "s" });
     expect(removeWorkerUrl("https://one.example")).toEqual(["https://two.example"]);
     expect(getWorkerUrls()).toEqual(["https://two.example"]);
     expect(getWorkerUrl()).toBe("https://two.example");
+    expect(getRememberedCreds("https://one.example")).toBeNull();
   });
 });
 
@@ -58,15 +60,26 @@ describe("download mode", () => {
 });
 
 describe("remembered credentials", () => {
-  it("round-trips and clears", () => {
-    expect(getRememberedCreds()).toBeNull();
-    rememberCreds({ username: "u", secret: "s" });
-    expect(getRememberedCreds()).toEqual({ username: "u", secret: "s" });
-    rememberCreds(null);
-    expect(getRememberedCreds()).toBeNull();
+  it("round-trips separately for each worker and clears with its address", () => {
+    const one = "https://one.example";
+    const two = "https://two.example";
+    expect(getRememberedCreds(one)).toBeNull();
+    rememberCreds(one, { username: "one-user", secret: "one-secret" });
+    rememberCreds(two, { username: "two-user", secret: "two-secret" });
+    expect(getRememberedCreds(one)).toEqual({ username: "one-user", secret: "one-secret" });
+    expect(getRememberedCreds(two)).toEqual({ username: "two-user", secret: "two-secret" });
+    rememberCreds(one, null);
+    expect(getRememberedCreds(one)).toBeNull();
+    expect(getRememberedCreds(two)).toEqual({ username: "two-user", secret: "two-secret" });
   });
   it("does not store incomplete credentials", () => {
-    rememberCreds({ username: "u", secret: "" });
-    expect(getRememberedCreds()).toBeNull();
+    rememberCreds("https://one.example", { username: "u", secret: "" });
+    expect(getRememberedCreds("https://one.example")).toBeNull();
+  });
+  it("migrates a legacy credential to the current worker", () => {
+    setWorkerUrl("https://one.example");
+    localStorage.setItem("phyless_pull_registry_creds", JSON.stringify({ username: "u", secret: "s" }));
+    expect(getRememberedCreds("https://one.example")).toEqual({ username: "u", secret: "s" });
+    expect(localStorage.getItem("phyless_pull_registry_creds")).toContain("https://one.example");
   });
 });

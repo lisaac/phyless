@@ -1,6 +1,7 @@
 // Browser-download settings persisted per browser (origin localStorage):
-// saved CF worker URLs, the chosen download mode, and — opt-in — a private
-// registry credential so the user need not retype it.
+// saved CF worker URLs, the chosen download mode, and — opt-in — private
+// registry credentials keyed by Worker URL so one endpoint cannot reuse
+// another endpoint's credentials.
 //
 // SECURITY: remembered credentials live in localStorage in cleartext and are
 // readable by any script that runs on this origin (i.e. an XSS would expose
@@ -93,8 +94,9 @@ export function saveWorkerUrl(raw: string): string[] {
 }
 
 export function removeWorkerUrl(raw: string): string[] {
-  const value = raw.trim();
+  const value = validWorkerUrl(raw);
   const urls = getWorkerUrls().filter((url) => url !== value);
+  rememberCreds(value, null);
   try {
     if (urls.length) {
       localStorage.setItem(WORKER_LIST_KEY, JSON.stringify(urls));
@@ -125,23 +127,52 @@ export function setDownloadMode(mode: DownloadMode): void {
   }
 }
 
-export function getRememberedCreds(): Creds | null {
+function isCreds(value: unknown): value is Creds {
+  return !!value && typeof value === "object" &&
+    typeof (value as Creds).username === "string" && typeof (value as Creds).secret === "string" &&
+    !!(value as Creds).username && !!(value as Creds).secret;
+}
+
+function readCreds(): Record<string, Creds> {
   try {
     const raw = localStorage.getItem(CREDS_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Creds>;
-    if (typeof parsed?.username === "string" && typeof parsed?.secret === "string") {
-      return { username: parsed.username, secret: parsed.secret };
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    // Migrate the old one-credential shape to the browser's current Worker.
+    if (isCreds(parsed)) {
+      const workerUrl = getWorkerUrl();
+      if (!workerUrl) return {};
+      const creds = { [workerUrl]: parsed };
+      localStorage.setItem(CREDS_KEY, JSON.stringify(creds));
+      return creds;
     }
-    return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const creds: Record<string, Creds> = {};
+    for (const [url, value] of Object.entries(parsed)) {
+      const workerUrl = validWorkerUrl(url);
+      if (workerUrl && isCreds(value)) creds[workerUrl] = value;
+    }
+    return creds;
   } catch {
-    return null;
+    return {};
   }
 }
 
-export function rememberCreds(creds: Creds | null): void {
+export function getRememberedCreds(workerUrl: string): Creds | null {
+  const url = validWorkerUrl(workerUrl);
+  if (!url) return null;
+  const creds = readCreds()[url];
+  return creds ? { ...creds } : null;
+}
+
+export function rememberCreds(workerUrl: string, creds: Creds | null): void {
+  const url = validWorkerUrl(workerUrl);
+  if (!url) return;
   try {
-    if (creds && creds.username && creds.secret) localStorage.setItem(CREDS_KEY, JSON.stringify(creds));
+    const all = readCreds();
+    if (isCreds(creds)) all[url] = { ...creds };
+    else delete all[url];
+    if (Object.keys(all).length) localStorage.setItem(CREDS_KEY, JSON.stringify(all));
     else localStorage.removeItem(CREDS_KEY);
   } catch {
     /* ignore */

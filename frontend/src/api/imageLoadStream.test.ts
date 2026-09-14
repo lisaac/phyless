@@ -68,7 +68,7 @@ describe("streamTarToDaemon", () => {
     s.emit('{"stream":"Loading layer"}');
     s.emit('{"status":"done"}');
     await expect(p).resolves.toBeUndefined();
-    expect(progress).toEqual(['{"stream":"Loading layer"}']);
+    expect(progress).toEqual(["Loading layer"]);
     expect(s.closed).toBe(true);
   });
 
@@ -77,8 +77,8 @@ describe("streamTarToDaemon", () => {
     const s = FakeSocket.last;
     s.onopen?.(null);
     await flush();
-    s.emit('{"error":"镜像导入失败"}');
-    await expect(p).rejects.toThrow(/镜像导入失败/);
+    s.emit('{"errorDetail":{"message":"镜像导入失败：磁盘空间不足"}}');
+    await expect(p).rejects.toThrow(/磁盘空间不足/);
     expect(s.closed).toBe(true);
   });
 

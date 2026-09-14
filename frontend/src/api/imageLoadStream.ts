@@ -65,17 +65,20 @@ export function streamTarToDaemon(opts: StreamOpts): Promise<void> {
 
     socket.onmessage = (ev) => {
       const text = typeof ev.data === "string" ? ev.data : "";
-      let obj: { error?: string; status?: string } | null = null;
+      let obj: { error?: string; errorDetail?: { message?: string } | string; status?: string; stream?: string } | null = null;
       try {
         obj = JSON.parse(text);
       } catch {
         obj = null;
       }
-      if (obj?.error) {
-        finish(new Error(obj.error));
+      const error = obj?.error || (typeof obj?.errorDetail === "string" ? obj.errorDetail : obj?.errorDetail?.message);
+      if (error) {
+        finish(new Error(error));
       } else if (obj?.status === "done") {
         finish();
-      } else if (text) {
+      } else if (obj?.stream || obj?.status) {
+        opts.onProgress?.((obj.stream ?? obj.status ?? "").trim());
+      } else if (text && !obj) {
         opts.onProgress?.(text);
       }
     };

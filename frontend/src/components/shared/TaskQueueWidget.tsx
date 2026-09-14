@@ -1,7 +1,7 @@
 import { Component, createSignal, createMemo, createEffect, onCleanup, Show, For } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import {
-  tasks, panelHidden, setPanelHidden, cancel, remove, clearFinished, isActive, runningCount, type Task,
+  tasks, panelHidden, setPanelHidden, cancel, remove, clearFinished, isActive, runningCount, markFailuresSeen, type Task,
 } from "../../stores/taskQueue";
 
 const DEFAULT_VISIBLE = 12;
@@ -90,6 +90,7 @@ export const TaskQueueWidget: Component = () => {
   const [slid, setSlid] = createSignal(open());
   createEffect(() => {
     if (open()) {
+      markFailuresSeen();
       setRendered(true);
       requestAnimationFrame(() => setSlid(true));
     } else {

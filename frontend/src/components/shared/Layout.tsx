@@ -7,7 +7,7 @@ import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { TaskQueueWidget } from "./TaskQueueWidget";
-import { panelHidden, setPanelHidden, ENQUEUED_EVENT, runningCount } from "../../stores/taskQueue";
+import { panelHidden, setPanelHidden, ENQUEUED_EVENT, runningCount, showTaskPanel, unseenFailureCount } from "../../stores/taskQueue";
 import { autoRefresh, refreshSeconds, setAutoRefresh, setRefreshSeconds, refreshAll } from "../../stores/refresh";
 
 const CLOSE_ANIM_MS = 200;
@@ -170,7 +170,11 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     void startTransition(() => navigate(dest, { replace: true })).then(() => removeTab(path));
   };
 
-  const taskButtonLabel = () => `${panelHidden() ? "显示" : "隐藏"}任务面板${runningCount() ? `，${runningCount()} 个任务运行中` : ""}`;
+  const taskBadgeCount = () => unseenFailureCount() || runningCount();
+  const taskButtonLabel = () => {
+    const failed = unseenFailureCount();
+    return `${panelHidden() ? "显示" : "隐藏"}任务面板${failed ? `，${failed} 个任务失败` : runningCount() ? `，${runningCount()} 个任务运行中` : ""}`;
+  };
 
   return (
     <div class="flex h-full overflow-hidden">
@@ -228,20 +232,20 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           <button
             ref={taskButton}
             class={`ml-auto flex h-6 shrink-0 items-center gap-1 rounded p-1 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
-            onClick={() => setPanelHidden(!panelHidden())}
+            onClick={() => panelHidden() ? showTaskPanel() : setPanelHidden(true)}
             title={taskButtonLabel()}
             aria-label={taskButtonLabel()}
           >
             <span class="relative flex">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" aria-hidden="true" class={runningCount() ? "text-indigo-400" : ""}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" aria-hidden="true" class={unseenFailureCount() ? "text-red-400" : runningCount() ? "text-indigo-400" : ""}>
                 <path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
               </svg>
-              <Show when={runningCount()}>
-                <span class="absolute -right-1 -top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />
+              <Show when={taskBadgeCount()}>
+                <span class={`absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full ${unseenFailureCount() ? "bg-red-500" : "animate-pulse bg-indigo-500"}`} />
               </Show>
             </span>
-            <Show when={runningCount() > 0}>
-              <span aria-hidden="true" class="rounded-full bg-indigo-500/20 px-1.5 text-xs text-indigo-300">{runningCount()}</span>
+            <Show when={taskBadgeCount() > 0}>
+              <span aria-hidden="true" class={`rounded-full px-1.5 text-xs ${unseenFailureCount() ? "bg-red-500/20 text-red-300" : "bg-indigo-500/20 text-indigo-300"}`}>{taskBadgeCount()}</span>
             </Show>
           </button>
           {/* Refresh now — plain icon button, no dropdown arrow beside it. */}

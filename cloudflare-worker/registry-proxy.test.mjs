@@ -7,6 +7,7 @@ import {
   resolveAllowedOrigin,
   validateOriginPolicy,
 } from './registry-proxy.js';
+import worker from './registry-proxy.js';
 
 test('parseAllowlist trims, lowercases, drops empties', () => {
   assert.deepEqual(parseAllowlist(' A , b.com ,, C '), ['a', 'b.com', 'c']);
@@ -37,4 +38,19 @@ test('validateOriginPolicy default-denies missing origin', () => {
   assert.equal(validateOriginPolicy({ originAllowlist: [], allowMissingOrigin: true }, ''), '');
   assert.equal(validateOriginPolicy({ originAllowlist: ['https://a'] }, 'https://a'), '');
   assert.notEqual(validateOriginPolicy({ originAllowlist: ['https://a'] }, 'https://b'), '');
+});
+
+test('forwards and exposes Retry-After from a rate-limited registry', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('slow down', { status: 429, headers: { 'Retry-After': '30' } });
+  try {
+    const response = await worker.fetch(
+      new Request('https://worker.example/?url=https%3A%2F%2Fregistry.example%2Fv2%2F', { headers: { Origin: 'https://app.example' } }),
+      { UPSTREAM_ALLOWLIST: 'registry.example' },
+    );
+    assert.equal(response.headers.get('Retry-After'), '30');
+    assert.match(response.headers.get('Access-Control-Expose-Headers') || '', /Retry-After/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

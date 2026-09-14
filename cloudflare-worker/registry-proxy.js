@@ -11,7 +11,7 @@
 const ALLOWED_METHODS = 'GET,HEAD,OPTIONS';
 const ALLOWED_HEADERS = 'Accept, Authorization, Cache-Control, Content-Type, Range';
 const EXPOSED_HEADERS =
-  'Accept-Ranges, Content-Encoding, Content-Length, Content-Range, Content-Type, Docker-Content-Digest, WWW-Authenticate';
+  'Accept-Ranges, Content-Encoding, Content-Length, Content-Range, Content-Type, Docker-Content-Digest, Retry-After, WWW-Authenticate';
 // Only headers a registry pull legitimately needs; everything else is dropped.
 const FORWARDED_HEADERS = ['accept', 'authorization', 'cache-control', 'content-type', 'if-modified-since', 'if-none-match', 'range'];
 

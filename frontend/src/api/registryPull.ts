@@ -10,6 +10,7 @@
 const dec = new TextDecoder();
 
 const MAX_META = 16 << 20;
+const MAX_ERROR_TEXT = 4096;
 const MANIFEST_ACCEPT = [
   "application/vnd.oci.image.index.v1+json",
   "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -110,8 +111,51 @@ interface TokenCache {
   header: string | null;
 }
 
-async function proxiedGet(workerUrl: string, target: string, headers: Record<string, string>, signal?: AbortSignal): Promise<Response> {
-  return fetch(proxied(workerUrl, target), { headers, signal });
+export async function proxiedGet(workerUrl: string, target: string, headers: Record<string, string>, signal?: AbortSignal): Promise<Response> {
+  try {
+    return await fetch(proxied(workerUrl, target), { headers, signal });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    const message = error instanceof Error && error.message ? `：${error.message}` : "";
+    throw new Error(`无法连接 CF Worker，请检查地址、CORS 和网络${message}`);
+  }
+}
+
+function responseErrorText(raw: string): string {
+  const text = raw.trim();
+  if (!text || text.startsWith("<")) return "";
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return text.slice(0, MAX_ERROR_TEXT);
+    const body = parsed as Record<string, unknown>;
+    if (typeof body.error === "string" && body.error.trim()) return body.error.trim();
+    if (typeof body.message === "string" && body.message.trim()) return body.message.trim();
+    if (Array.isArray(body.errors)) {
+      const messages = body.errors.map((item) => {
+        if (typeof item === "string") return item;
+        if (!item || typeof item !== "object") return "";
+        const error = item as Record<string, unknown>;
+        return typeof error.message === "string" ? error.message : typeof error.code === "string" ? error.code : "";
+      }).filter(Boolean);
+      if (messages.length) return messages.join("；");
+    }
+  } catch {
+    // Plain-text registry errors are useful too.
+  }
+  return text.slice(0, MAX_ERROR_TEXT);
+}
+
+export async function registryResponseError(resp: Response, action: string): Promise<Error> {
+  const detail = responseErrorText(await resp.text().catch(() => ""));
+  const suffix = detail ? `：${detail}` : "";
+  if (resp.status === 401) return new Error(`镜像仓库认证失败（401）${suffix}`);
+  if (resp.status === 404) return new Error(`镜像、标签或镜像层不存在（404）${suffix}`);
+  if (resp.status === 429) {
+    const retryAfter = resp.headers.get("Retry-After");
+    const retry = retryAfter && /^\d+$/.test(retryAfter) ? `，请 ${retryAfter} 秒后重试` : "，请稍后重试";
+    return new Error(`镜像仓库请求过于频繁（429）${retry}${suffix}`);
+  }
+  return new Error(`${action}失败（${resp.status}）${suffix}`);
 }
 
 async function authorizedGet(
@@ -127,7 +171,7 @@ async function authorizedGet(
   let resp = await proxiedGet(workerUrl, target, headers, signal);
   if (resp.status === 401) {
     const wa = resp.headers.get("WWW-Authenticate");
-    if (!wa) throw new Error("registry 需要认证但未提供认证方式");
+    if (!wa) throw await registryResponseError(resp, "镜像仓库请求");
     const challenge = parseWWWAuthenticate(wa);
     if (challenge.scheme === "basic") {
       if (!creds) throw new Error("该镜像需要登录凭据");
@@ -138,7 +182,7 @@ async function authorizedGet(
     headers.Authorization = cache.header;
     resp = await proxiedGet(workerUrl, target, headers, signal);
   }
-  if (!resp.ok) throw new Error(`registry 请求失败（${resp.status}）`);
+  if (!resp.ok) throw await registryResponseError(resp, "镜像仓库请求");
   return resp;
 }
 
@@ -155,7 +199,7 @@ async function fetchToken(
   const headers: Record<string, string> = {};
   if (creds) headers.Authorization = "Basic " + btoa(`${creds.username}:${creds.secret}`);
   const resp = await proxiedGet(workerUrl, url.toString(), headers, signal);
-  if (!resp.ok) throw new Error("registry 认证失败");
+  if (!resp.ok) throw await registryResponseError(resp, "获取镜像仓库访问令牌");
   const body = (await resp.json()) as { token?: string; access_token?: string };
   const token = body.token || body.access_token;
   if (!token) throw new Error("registry 未返回访问令牌");

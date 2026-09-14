@@ -143,20 +143,19 @@ export function pullOptionsPayload(value: PullOptionsValue): Record<string, unkn
 // upgrade, compose up/pull). reset() is what callers run on close: the proxy
 // mode is off per open, while saved URLs come back from this browser's memory.
 export function createPullOptions() {
-  const remembered = readRememberedCreds();
-  const fresh = (): Required<PullOptionsValue> => ({
-    proxyUrl: readPullProxyUrl(), useProxy: false, registryId: "", registryIds: [], platform: "",
-    downloadMode: getDownloadMode(), workerUrl: getWorkerUrl(),
-    creds: remembered ?? { username: "", secret: "" }, rememberCreds: !!remembered,
-  });
+  const fresh = (): Required<PullOptionsValue> => {
+    const workerUrl = getWorkerUrl();
+    const remembered = getRememberedCreds(workerUrl);
+    return {
+      proxyUrl: readPullProxyUrl(), useProxy: false, registryId: "", registryIds: [], platform: "",
+      downloadMode: getDownloadMode(), workerUrl,
+      creds: remembered ?? { username: "", secret: "" }, rememberCreds: !!remembered,
+    };
+  };
   const [value, set] = createStore(fresh());
   return { value, set, payload: () => pullOptionsPayload(value), reset: () => set(fresh()) };
 }
 export type PullOptionsState = ReturnType<typeof createPullOptions>;
-
-function readRememberedCreds() {
-  return getRememberedCreds();
-}
 
 export function isBrowserDownload(value: PullOptionsValue): boolean {
   return value.downloadMode === "browser";
@@ -281,6 +280,13 @@ export const PullOptions: Component<{
   const browserMode = () => pullMode() === "browser";
   const serverProxyMode = () => pullMode() === "server";
 
+  const setWorker = (workerUrl: string) => {
+    const creds = getRememberedCreds(workerUrl);
+    set("workerUrl", workerUrl);
+    set("creds", creds ?? { username: "", secret: "" });
+    set("rememberCreds", !!creds);
+  };
+
   const saveWorker = () => {
     const url = validWorkerUrl(value.workerUrl);
     if (!value.workerUrl.trim()) return;
@@ -289,13 +295,13 @@ export const PullOptions: Component<{
       return;
     }
     setLocalWorkerUrls(saveWorkerUrl(url));
-    set("workerUrl", url);
+    setWorker(url);
   };
 
   const deleteWorker = (url: string) => {
     const urls = removeWorkerUrl(url);
     setLocalWorkerUrls(urls);
-    if (value.workerUrl.trim() === url.trim()) set("workerUrl", urls[0] ?? "");
+    if (value.workerUrl.trim() === url.trim()) setWorker(urls[0] ?? "");
   };
 
   const saveProxy = () => {
@@ -313,6 +319,11 @@ export const PullOptions: Component<{
     const urls = removePullProxyUrl(url);
     setLocalProxyUrls(urls);
     if (value.proxyUrl.trim() === url.trim()) set("proxyUrl", urls[0] ?? "");
+  };
+
+  const setCreds = (creds: { username: string; secret: string }) => {
+    set("creds", creds);
+    if (value.rememberCreds) rememberCreds(value.workerUrl, creds);
   };
 
   return (
@@ -343,9 +354,9 @@ export const PullOptions: Component<{
               value={value.workerUrl}
               urls={workerUrls()}
               placeholder="https://your-worker.workers.dev"
-              onInput={(url) => set("workerUrl", url)}
+              onInput={setWorker}
               onBlur={saveWorker}
-              onSelect={(url) => set("workerUrl", url)}
+              onSelect={setWorker}
               onDelete={deleteWorker}
             />
             <p class="mt-1 text-[11px] text-zinc-600">浏览器经此 worker 访问 registry；地址列表仅保存在此浏览器，且不含用户名/密码。</p>
@@ -357,7 +368,7 @@ export const PullOptions: Component<{
                 class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-500"
                 autocomplete="off"
                 value={value.creds?.username ?? ""}
-                onInput={(e) => set("creds", { ...value.creds, username: e.currentTarget.value, secret: value.creds?.secret ?? "" })}
+                onInput={(e) => setCreds({ username: e.currentTarget.value, secret: value.creds?.secret ?? "" })}
               />
             </label>
             <label class="block">
@@ -367,7 +378,7 @@ export const PullOptions: Component<{
                 class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-500"
                 autocomplete="off"
                 value={value.creds?.secret ?? ""}
-                onInput={(e) => set("creds", { ...value.creds, username: value.creds?.username ?? "", secret: e.currentTarget.value })}
+                onInput={(e) => setCreds({ username: value.creds?.username ?? "", secret: e.currentTarget.value })}
               />
             </label>
           </div>
@@ -378,12 +389,12 @@ export const PullOptions: Component<{
               onChange={(e) => {
                 const on = e.currentTarget.checked;
                 set("rememberCreds", on);
-                rememberCreds(on && value.creds?.secret ? value.creds : null);
+                rememberCreds(value.workerUrl, on ? value.creds ?? null : null);
               }}
             />
             记住凭据（仅此浏览器，明文存于 localStorage，XSS 可读取）
           </label>
-          <p class="text-[11px] text-zinc-600">凭据只经浏览器与你的 worker 发往 registry，不会发送给 phyless 服务端。</p>
+          <p class="text-[11px] text-zinc-600">凭据按 CF worker 地址保存；切换地址会载入对应凭据，新地址保持为空。凭据不会发送给 phyless 服务端。</p>
           <p class="text-[11px] text-zinc-600">限制：仅支持 Linux 的 tag 镜像；digest、foreign layer 不支持。Compose Build 仅预拉可静态解析的 Dockerfile FROM。</p>
         </div>
       </Show>

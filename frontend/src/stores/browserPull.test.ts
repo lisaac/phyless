@@ -16,6 +16,11 @@ describe("streamCompose", () => {
     await expect(streamCompose("down", "1", { token: "t", signal: sig() })).rejects.toThrow(/失败（500）/);
   });
 
+  it("keeps a JSON error body in the task failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "项目不存在" }), { status: 404 })));
+    await expect(streamCompose("down", "1", { token: "t", signal: sig() })).rejects.toThrow(/请求目标不存在（404）：项目不存在/);
+  });
+
   it("resolves on a clean stream and forwards progress lines", async () => {
     const onProgress = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ stream: "ok" }) + "\n", { status: 200 })));

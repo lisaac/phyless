@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseImageRef, parseWWWAuthenticate, layerBlobUrl, resolveImage } from "./registryPull";
+import { parseImageRef, parseWWWAuthenticate, layerBlobUrl, registryResponseError, resolveImage } from "./registryPull";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -43,6 +43,21 @@ describe("layerBlobUrl", () => {
   it("wraps the registry blob URL in the worker proxy", () => {
     const u = layerBlobUrl("https://w.example/", "ghcr.io", "o/a", "sha256:abc");
     expect(u).toBe("https://w.example?url=" + encodeURIComponent("https://ghcr.io/v2/o/a/blobs/sha256:abc"));
+  });
+});
+
+describe("registry response errors", () => {
+  it("keeps rate-limit and not-found details actionable", async () => {
+    const limited = await registryResponseError(new Response(JSON.stringify({ errors: [{ message: "too many requests" }] }), {
+      status: 429, headers: { "Retry-After": "30" },
+    }), "镜像仓库请求");
+    const missing = await registryResponseError(new Response(JSON.stringify({ error: "manifest unknown" }), { status: 404 }), "镜像仓库请求");
+
+    expect(limited.message).toContain("429");
+    expect(limited.message).toContain("30 秒后重试");
+    expect(limited.message).toContain("too many requests");
+    expect(missing.message).toContain("镜像、标签或镜像层不存在（404）");
+    expect(missing.message).toContain("manifest unknown");
   });
 });
 

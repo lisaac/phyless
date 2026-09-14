@@ -3,7 +3,7 @@
 // queue wires note/progress/signal to a task's UI state.
 
 import { buildDockerLoadTar } from "../api/dockerTar";
-import { resolveImage, layerBlobUrl, authHeaderFromChallenge, type Creds, type ResolvedImage } from "../api/registryPull";
+import { resolveImage, blobUrl, proxiedGet, authHeaderFromChallenge, registryResponseError, type Creds, type ResolvedImage } from "../api/registryPull";
 import { streamTarToDaemon } from "../api/imageLoadStream";
 import { get, imageInspectUrl } from "../api/client";
 
@@ -54,18 +54,19 @@ export const defaultDeps: BrowserPullDeps = {
   },
   openLayer: async (img, index, workerUrl, signal, creds) => {
     const layer = img.layers[index];
-    const url = layerBlobUrl(workerUrl, img.registryHost, img.repository, layer.digest);
-    let resp = await fetch(url, { headers: img.authHeader ? { Authorization: img.authHeader } : {}, signal });
+    const target = blobUrl(img.registryHost, img.repository, layer.digest);
+    let resp = await proxiedGet(workerUrl, target, img.authHeader ? { Authorization: img.authHeader } : {}, signal);
     if (resp.status === 401) {
       // The manifest-phase token can expire before a large image finishes; get a
       // fresh one from the challenge and reuse it for the remaining layers.
       const wa = resp.headers.get("WWW-Authenticate");
       if (wa) {
         img.authHeader = await authHeaderFromChallenge(workerUrl, wa, creds, signal);
-        resp = await fetch(url, { headers: { Authorization: img.authHeader }, signal });
+        resp = await proxiedGet(workerUrl, target, { Authorization: img.authHeader }, signal);
       }
     }
-    if (!resp.ok || !resp.body) throw new Error(`下载镜像层失败（${resp.status}）`);
+    if (!resp.ok) throw await registryResponseError(resp, "下载镜像层");
+    if (!resp.body) throw new Error("下载镜像层失败：响应为空");
     return resp.body;
   },
 };
@@ -140,7 +141,8 @@ export async function streamPost(
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     signal: opts.signal,
   });
-  if (!resp.ok || !resp.body) throw new Error(`请求失败（${resp.status}）`);
+  if (!resp.ok) throw await streamResponseError(resp);
+  if (!resp.body) throw new Error("请求未返回进度流");
   const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   const consume = (line: string) => {
@@ -173,6 +175,22 @@ export async function streamPost(
   } finally {
     reader.releaseLock();
   }
+}
+
+async function streamResponseError(resp: Response): Promise<Error> {
+  const raw = await resp.text().catch(() => "");
+  let detail = raw.trim().slice(0, 4096);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new SyntaxError();
+    const body = parsed as Record<string, unknown>;
+    if (typeof body.error === "string") detail = body.error;
+    else if (typeof body.message === "string") detail = body.message;
+  } catch {
+    // Keep a useful plain-text backend error.
+  }
+  const prefix = resp.status === 401 ? "未授权" : resp.status === 404 ? "请求目标不存在" : resp.status === 429 ? "请求过于频繁" : "请求失败";
+  return new Error(`${prefix}（${resp.status}）${detail ? `：${detail}` : ""}`);
 }
 
 // Generic compose command streamer: POST /api/compose/<verb>, parse NDJSON,
