@@ -106,3 +106,9 @@ export async function login(username: string, password: string): Promise<string>
   setToken(out.token);
   return out.token;
 }
+
+export async function setup(password: string): Promise<string> {
+  const out = await request<{ token: string }>("POST", "/api/auth/setup", { password });
+  setToken(out.token);
+  return out.token;
+}

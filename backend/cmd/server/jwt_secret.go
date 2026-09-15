@@ -8,20 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const jwtSecretFile = "jwt-secret"
 
-func loadJWTSecret(dataDir, configured string) ([]byte, error) {
-	configured = strings.TrimSpace(configured)
-	if configured != "" {
-		if len(configured) < 32 {
-			return nil, errors.New("JWT_SECRET must contain at least 32 characters")
-		}
-		return []byte(configured), nil
-	}
-
+func loadJWTSecret(dataDir string) ([]byte, error) {
 	path := filepath.Join(dataDir, jwtSecretFile)
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() {
@@ -31,7 +22,10 @@ func loadJWTSecret(dataDir, configured string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		secret := strings.TrimSpace(string(data))
+		secret := string(data)
+		if len(secret) > 0 && secret[len(secret)-1] == '\n' {
+			secret = secret[:len(secret)-1]
+		}
 		if len(secret) < 32 {
 			return nil, fmt.Errorf("persisted JWT secret in %s is too short", path)
 		}

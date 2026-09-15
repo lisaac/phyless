@@ -7,9 +7,6 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: phyless:latest
     command: ["./phyless", "-C", "/data"]
-    environment:
-      JWT_SECRET: ${JWT_SECRET:-}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:
       - "8080:8080"
     volumes:

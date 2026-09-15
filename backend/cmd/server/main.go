@@ -35,16 +35,11 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatal(err)
 	}
-	jwtSecret, err := loadJWTSecret(dataDir, os.Getenv("JWT_SECRET"))
+	jwtSecret, err := loadJWTSecret(dataDir)
 	if err != nil {
 		log.Fatal(err)
 	}
 	s := store.New(filepath.Join(dataDir, "config.json"))
-
-	// Seed admin user if no users exist
-	if err := seedAdmin(s, os.Getenv("ADMIN_PASSWORD")); err != nil {
-		log.Fatal(err)
-	}
 
 	log.Println("phyless listening on :8080")
 	server := &http.Server{

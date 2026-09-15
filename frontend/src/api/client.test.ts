@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { request, ApiError, getToken, setToken, login, isApiNotFound } from "./client";
+import { request, ApiError, getToken, setToken, login, setup, isApiNotFound } from "./client";
 import { cancelDockerServerRequests } from "../stores/dockerServer";
 
 beforeEach(() => {
@@ -89,5 +89,14 @@ describe("login", () => {
     const t = await login("admin", "admin");
     expect(t).toBe("jwt123");
     expect(getToken()).toBe("jwt123");
+  });
+
+  it("stores the token issued during initial setup", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ token: "setup-jwt" }), { status: 200 }),
+    ));
+    const t = await setup("new-password");
+    expect(t).toBe("setup-jwt");
+    expect(getToken()).toBe("setup-jwt");
   });
 });
