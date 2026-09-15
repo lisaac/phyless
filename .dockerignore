@@ -1,4 +1,8 @@
-.git/
+.git/*
+!.git/HEAD
+!.git/packed-refs
+!.git/refs/
+!.git/refs/**
 frontend/node_modules
 frontend/dist
 backend/web/dist/*

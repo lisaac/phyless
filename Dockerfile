@@ -3,8 +3,12 @@ WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ .
-ARG GIT_COMMIT=unknown
-RUN GIT_COMMIT="$GIT_COMMIT" npm run build
+COPY .git/HEAD .git/packed-refs /tmp/git/
+COPY .git/refs/ /tmp/git/refs/
+ARG GIT_COMMIT
+RUN ref="$(sed -n 's/^ref: //p' /tmp/git/HEAD)"; \
+    hash="$(if [ -n "$ref" ]; then cat "/tmp/git/$ref" 2>/dev/null || awk -v ref="$ref" '$2 == ref { print $1; exit }' /tmp/git/packed-refs; else cat /tmp/git/HEAD; fi)"; \
+    GIT_COMMIT="${GIT_COMMIT:-${hash:-unknown}}" npm run build
 
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
