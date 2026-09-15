@@ -1,14 +1,20 @@
 import { createSignal } from "solid-js";
-import { login, get, setToken, getToken, ApiError } from "../api/client";
+import { login, setup, get, setToken, getToken, ApiError } from "../api/client";
 import { ROLE_LEVEL, type Role, type User } from "../types";
 
 const [currentUser, setCurrentUser] = createSignal<User | null>(null);
 export { currentUser };
 
 export async function doLogin(username: string, password: string): Promise<void> {
-  await login(username, password);
-  const me = await get<User>("/api/auth/me");
-  setCurrentUser(me);
+	await login(username, password);
+	const me = await get<User>("/api/auth/me");
+	setCurrentUser(me);
+}
+
+export async function doSetup(password: string): Promise<void> {
+	await setup(password);
+	const me = await get<User>("/api/auth/me");
+	setCurrentUser(me);
 }
 
 export function doLogout(): void {

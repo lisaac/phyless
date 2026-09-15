@@ -88,6 +88,8 @@ func (s *Server) routes() http.Handler {
 	r.Use(middleware.Recoverer)
 
 	// Public
+	r.Get("/api/auth/setup", s.handleSetupStatus)
+	r.Post("/api/auth/setup", s.handleSetup)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/logout", s.handleLogout)
 

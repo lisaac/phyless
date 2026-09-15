@@ -21,21 +21,20 @@
 
 ## 快速开始
 
-只需 Docker Engine，且宿主机的 `8080` 端口可用。在仓库根目录复制执行以下命令，并替换管理员密码：
+只需 Docker Engine，且宿主机的 `8080` 端口可用。在仓库根目录复制执行以下命令：
 
 ```bash
 docker build -t phyless:latest . && \
 docker volume create phyless-data && \
 docker run -d --name phyless --restart unless-stopped -p 8080:8080 \
-  -e ADMIN_PASSWORD='请替换为强密码' \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v phyless-data:/data \
   phyless:latest
 ```
 
-打开 `http://<服务器地址>:8080`，使用用户名 `admin` 和 `ADMIN_PASSWORD` 登录。
+打开 `http://<服务器地址>:8080`，首次进入时设置 `admin` 的初始密码，随后直接登录。
 
-未设置 `JWT_SECRET` 时，phyless 会在首次启动时生成随机密钥并保存到 `phyless-data` 卷。`ADMIN_PASSWORD` 只会在没有任何用户的首次启动时用于创建管理员；之后请在「设置 → 用户管理」中修改用户。
+phyless 会在首次启动时自动生成随机 JWT 密钥并保存到 `phyless-data` 卷；初始密码以 bcrypt 哈希保存。之后可在「设置 → 用户管理」中创建用户或修改密码。
 
 常用运维命令：
 
@@ -61,8 +60,6 @@ docker rm -f phyless # 删除容器不会删除 phyless-data 卷
 - 将服务发布到 `8080` 并设置 `unless-stopped` 重启策略。
 
 ```bash
-export JWT_SECRET="$(openssl rand -hex 32)"
-export ADMIN_PASSWORD='请替换为强密码'
 docker compose up -d --build
 ```
 
@@ -121,10 +118,10 @@ Worker 只处理 `GET`、`HEAD` 和 `OPTIONS`，会转发 Registry 拉取所需�
 ```bash
 (cd frontend && npm ci)
 ./build.sh
-ADMIN_PASSWORD='请替换为强密码' ./phyless -C ./data
+./phyless -C ./data
 ```
 
-未设置 `JWT_SECRET` 时，首次启动会在数据目录生成并以受限权限保存随机密钥；生产部署仍建议显式设置该变量。默认连接本机 Docker Socket，Web UI 地址为 `http://localhost:8080`。
+首次启动会在数据目录生成并以受限权限保存随机 JWT 密钥。默认连接本机 Docker Socket，Web UI 地址为 `http://localhost:8080`。
 
 运行本地检查：
 

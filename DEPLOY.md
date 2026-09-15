@@ -5,16 +5,16 @@ repository's `data/` directory and mounted at `/data` in the container.
 
 ## Start
 
-Set the initial credentials, then build and start the service:
+Build and start the service:
 
 ```bash
-export JWT_SECRET="$(openssl rand -hex 32)"
-export ADMIN_PASSWORD='choose-a-strong-password'
 docker compose -f compose.yaml up -d --build
 ```
 
-The web UI is available at `http://localhost:8080`. The Docker socket is mounted
-so the service can manage the local Docker daemon.
+The web UI is available at `http://localhost:8080`. On first visit, set the
+initial `admin` password; the service persists its generated JWT secret and the
+password hash under `data/`. The Docker socket is mounted so the service can
+manage the local Docker daemon.
 
 ## Stop and update
 

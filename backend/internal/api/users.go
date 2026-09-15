@@ -29,6 +29,11 @@ func userMutationStatus(err error) int {
 	}
 }
 
+func passwordHash(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(hash), err
+}
+
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.store.Read()
 	if err != nil {
@@ -63,7 +68,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username, password and a valid role are required")
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	hash, err := passwordHash(body.Password)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid password")
 		return
@@ -122,12 +127,12 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	var hash string
 	if body.Password != "" {
-		generated, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+		generated, err := passwordHash(body.Password)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid password")
 			return
 		}
-		hash = string(generated)
+		hash = generated
 	}
 	err := s.store.Update(func(cfg *store.Config) error {
 		for i, u := range cfg.Users {

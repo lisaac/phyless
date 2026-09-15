@@ -10,10 +10,13 @@ import type { User, Role } from "../../types";
 export const UsersPage: Component = () => {
   const store = createResourceStore<User>("/api/users");
   const [show, setShow] = createSignal(false);
+  const [editing, setEditing] = createSignal<User | null>(null);
+  const [newPassword, setNewPassword] = createSignal("");
   const [form, setForm] = createSignal<{ username: string; password: string; role: Role }>({
     username: "", password: "", role: "viewer",
   });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const closeEditor = () => { setEditing(null); setNewPassword(""); };
 
   onMount(() => store.refresh());
 
@@ -28,11 +31,19 @@ export const UsersPage: Component = () => {
     try { await queued("删除用户", "DELETE", `/api/users/${id}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
+  const changePassword = async () => {
+    const user = editing();
+    if (!user) return;
+    try {
+      await queued(`修改 ${user.username} 的密码`, "PUT", `/api/users/${user.id}`, { password: newPassword() });
+      closeEditor();
+    } catch (e) { toast.error((e as Error).message); }
+  };
 
   const columns: Column<User>[] = [
     { header: "用户名", cell: (u) => <span class="font-medium">{u.username}</span> },
     { header: "角色", cell: (u) => <span>{u.role}</span> },
-    { header: "操作", cell: (u) => <Button variant="danger" onClick={() => remove(u.id)}>删除</Button> },
+    { header: "操作", cell: (u) => <div class="flex gap-2"><Button onClick={() => setEditing(u)}>改密码</Button><Button variant="danger" onClick={() => remove(u.id)}>删除</Button></div> },
   ];
 
   return (
@@ -56,6 +67,11 @@ export const UsersPage: Component = () => {
           <Button onClick={() => setShow(false)}>取消</Button>
           <Button variant="primary" onClick={create}>创建</Button>
         </div>
+      </Modal>
+
+      <Modal open={!!editing()} onClose={closeEditor} title={`修改 ${editing()?.username ?? ""} 的密码`}>
+        <input class="mb-3 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" type="password" placeholder="新密码" value={newPassword()} onInput={(e) => setNewPassword(e.currentTarget.value)} />
+        <div class="flex justify-end gap-2"><Button onClick={closeEditor}>取消</Button><Button variant="primary" disabled={!newPassword()} onClick={changePassword}>保存</Button></div>
       </Modal>
     </div>
   );
