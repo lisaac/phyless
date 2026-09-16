@@ -1,0 +1,63 @@
+name: Build and publish demo
+
+on:
+  push:
+    branches: [gh-pages]
+    paths:
+      - demo/**
+      - .github/workflows/build-demo.yml
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Main branch commit to build
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out application source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref || 'main' }}
+          path: source
+
+      - name: Check out demo branch
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: pages
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: source/frontend/package-lock.json
+
+      - name: Check demo mocks
+        run: node pages/demo/smoke.test.mjs
+
+      - name: Build static demo
+        run: bash pages/demo/build.sh "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/phyless-demo-dist"
+
+      - name: Publish to gh-pages/docs
+        working-directory: pages
+        env:
+          SOURCE_REF: ${{ inputs.source_ref || 'main' }}
+        run: |
+          rm -rf docs
+          mkdir -p docs
+          cp -R "$RUNNER_TEMP/phyless-demo-dist/." docs/
+          touch docs/.nojekyll
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          if git diff --cached --quiet -- docs; then
+            exit 0
+          fi
+          git commit -m "Deploy demo for ${SOURCE_REF:0:7}"
+          git push origin HEAD:gh-pages
