@@ -1,0 +1,20 @@
+name: Publish demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - frontend/**
+      - .github/workflows/publish-demo.yml
+  workflow_dispatch:
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: lisaac/phyless/.github/workflows/build-demo.yml@gh-pages
+    with:
+      source_ref: ${{ github.sha }}
