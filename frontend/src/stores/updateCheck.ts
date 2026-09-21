@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { get, imageInspectUrl, request } from "../api/client";
-import { resolveImage, type Creds } from "../api/registryPull";
+import { resolveImage, matchesRemote, remoteDigests, type Creds, type RemoteDigests } from "../api/registryPull";
+import { upgradeImageRef, imagePlatform, envDifferingFromImage, type EnvCandidate } from "../api/inspect";
 import type { BrowserPullCallbacks } from "./browserPull";
 
 // "Is there a newer image?" results, keyed by container id. Server mode asks
@@ -55,6 +56,21 @@ export const UPDATE_LABEL: Record<UpdateStatus, string> = {
   update: "可升级", "local-newer": "待重建", latest: "已是最新", unsupported: "不支持", error: "检查失败",
 };
 
+// Earlier phyless upgrades copied the whole Config, including the previous
+// image's ENV, into the replacement. On such a container (marked by the pin
+// label) a variable differing from the current image may be a stale default
+// or a deliberate override — only the user can tell, so the upgrade dialog asks.
+export async function staleEnvCandidates(
+  id: string,
+  fetch: <T>(path: string) => Promise<T> = get,
+): Promise<EnvCandidate[]> {
+  type EnvInspect = { Image?: string; Config?: { Env?: string[] | null } };
+  const info = await fetch<EnvInspect>(`/api/containers/${encodeURIComponent(id)}/inspect`);
+  if (!info.Image) return [];
+  const image = await fetch<EnvInspect>(imageInspectUrl(info.Image));
+  return envDifferingFromImage(info.Config?.Env, image.Config?.Env);
+}
+
 // ── Runner (executed by taskQueue as a "update-check" task) ──────────────────
 
 export interface UpdateCheckParams {
@@ -69,43 +85,41 @@ type Inspect = { Id?: string; Image?: string; Config?: { Image?: string; Labels?
 type ImageInfo = { Id?: string; Os?: string; Architecture?: string; Variant?: string; RepoDigests?: string[] };
 
 export interface UpdateCheckDeps {
-  post: (body: unknown) => Promise<Omit<UpdateCheck, "checkedAt">[]>;
+  post: (body: unknown, signal: AbortSignal) => Promise<Omit<UpdateCheck, "checkedAt">[]>;
   inspectContainer: (id: string) => Promise<Inspect>;
   inspectImage: (ref: string) => Promise<ImageInfo | null>;
-  resolve: (ref: string, platform: string, workerUrl: string, creds: Creds | undefined, signal: AbortSignal) => Promise<{ config: string; manifest: string }>;
+  resolve: (ref: string, platform: string, workerUrl: string, creds: Creds | undefined, signal: AbortSignal) => Promise<RemoteDigests>;
 }
 
 export const defaultUpdateCheckDeps: UpdateCheckDeps = {
-  post: (body) => request("POST", "/api/containers/check-updates", body),
+  post: (body, signal) => request("POST", "/api/containers/check-updates", body, signal),
   inspectContainer: (id) => get<Inspect>(`/api/containers/${encodeURIComponent(id)}/inspect`),
   inspectImage: (ref) => get<ImageInfo>(imageInspectUrl(ref)).catch(() => null),
   resolve: async (ref, platform, workerUrl, creds, signal) => {
     // ponytail: resolveImage also fetches the (small) config blob; a manifest-only variant saves one request per image.
-    const img = await resolveImage(ref, platform, workerUrl, creds, signal);
-    return { config: `sha256:${img.config.hex}`, manifest: img.manifest.digest };
+    return remoteDigests(await resolveImage(ref, platform, workerUrl, creds, signal));
   },
 };
 
 const tagRef = (ref: string) => !!ref && !ref.startsWith("sha256:") && !ref.includes("@");
 
-// Browser-mode equivalent of the backend's matchesRemote. Images loaded by the
-// browser/proxy paths have no RepoDigests, so the config digest is the anchor.
-function sameImage(img: ImageInfo | null, r: { config: string; manifest: string }): boolean {
-  if (!img?.Id) return false;
-  if (img.Id === r.config || img.Id === r.manifest) return true;
-  return (img.RepoDigests ?? []).some((d) => d.endsWith(`@${r.manifest}`));
-}
 
 export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallbacks, deps: UpdateCheckDeps = defaultUpdateCheckDeps): Promise<void> {
   const aborted = () => { if (cb.signal.aborted) throw new Error("已取消"); };
   let results: Omit<UpdateCheck, "checkedAt">[];
   if (p.mode === "server") {
     cb.note(`服务端检查 ${p.ids.length} 个容器…`);
-    results = await deps.post({ ids: p.ids, ...p.pullOptions });
+    results = await deps.post({ ids: p.ids, ...p.pullOptions }, cb.signal);
   } else {
     if (!p.workerUrl?.trim()) throw new Error("未配置 CF worker 地址");
     results = [];
-    const remotes = new Map<string, Promise<{ config: string; manifest: string }>>();
+    const remotes = new Map<string, Promise<RemoteDigests>>();
+    // Containers commonly share images and tags; inspect each once.
+    const images = new Map<string, Promise<ImageInfo | null>>();
+    const inspectImage = (ref: string) => {
+      if (!images.has(ref)) images.set(ref, deps.inspectImage(ref));
+      return images.get(ref)!;
+    };
     for (const [i, id] of p.ids.entries()) {
       aborted();
       const r: Omit<UpdateCheck, "checkedAt"> = { id, ref: "", status: "error", local_id: "" };
@@ -114,16 +128,16 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
         const info = await deps.inspectContainer(id);
         r.id = info.Id || id;
         r.local_id = info.Image ?? "";
-        r.ref = info.Config?.Labels?.["io.phyless.upgrade-image-ref"] || info.Config?.Image || "";
+        r.ref = upgradeImageRef(info);
         if (!tagRef(r.ref) || r.ref === r.local_id) { r.status = "unsupported"; r.error = "镜像不是 registry tag 引用"; continue; }
-        const cur = await deps.inspectImage(r.local_id);
-        const platform = cur?.Os && cur.Architecture ? `${cur.Os}/${cur.Architecture}${cur.Variant ? `/${cur.Variant}` : ""}` : "";
+        const cur = await inspectImage(r.local_id);
+        const platform = imagePlatform(cur);
         const key = `${r.ref}|${platform}`;
         cb.note(`检查 ${i + 1}/${p.ids.length}：${r.ref}`);
         if (!remotes.has(key)) remotes.set(key, deps.resolve(r.ref, platform, p.workerUrl, p.creds, cb.signal));
-        const tag = await deps.inspectImage(r.ref);
+        const tag = await inspectImage(r.ref);
         const tagMoved = !!tag?.Id && tag.Id !== r.local_id;
-        let remote: { config: string; manifest: string };
+        let remote: RemoteDigests;
         try {
           remote = await remotes.get(key)!;
         } catch (e) {
@@ -132,7 +146,7 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
           throw e;
         }
         r.remote_id = remote.config;
-        r.status = sameImage(cur, remote) ? "latest" : tagMoved && sameImage(tag, remote) ? "local-newer" : "update";
+        r.status = matchesRemote(cur, remote) ? "latest" : tagMoved && matchesRemote(tag, remote) ? "local-newer" : "update";
       } catch (e) {
         aborted();
         r.status = "error";

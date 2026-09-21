@@ -38,25 +38,6 @@ type updateCheckResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// matchesRemote covers every way a local image can be "the same" as the
-// registry's: classic store (ID == config digest), containerd store (ID ==
-// manifest/index digest) and daemon pulls (RepoDigests). Images imported by
-// the proxy/browser paths have no RepoDigests, hence the config comparison.
-func matchesRemote(img image.InspectResponse, r docker.RemoteImage) bool {
-	if img.ID == "" {
-		return false
-	}
-	if (r.ConfigDigest != "" && img.ID == r.ConfigDigest) || (r.Digest != "" && img.ID == r.Digest) || (r.ManifestDigest != "" && img.ID == r.ManifestDigest) {
-		return true
-	}
-	for _, d := range img.RepoDigests {
-		if r.Digest != "" && strings.HasSuffix(d, "@"+r.Digest) {
-			return true
-		}
-	}
-	return false
-}
-
 func updateStatus(current, tag image.InspectResponse, tagErr error, remote docker.RemoteImage, remoteErr error) (string, string) {
 	tagMoved := tagErr == nil && tag.ID != "" && tag.ID != current.ID
 	if remoteErr != nil {
@@ -65,7 +46,7 @@ func updateStatus(current, tag image.InspectResponse, tagErr error, remote docke
 		}
 		return updateError, remoteErr.Error()
 	}
-	if matchesRemote(current, remote) {
+	if remote.Matches(current.ID, current.RepoDigests) {
 		return updateLatest, ""
 	}
 	// Only the registry digest is known (phyless itself could not reach the
@@ -76,7 +57,7 @@ func updateStatus(current, tag image.InspectResponse, tagErr error, remote docke
 		}
 		return updateError, "cannot compare: image has no registry digest and the registry is unreachable from phyless"
 	}
-	if tagMoved && matchesRemote(tag, remote) {
+	if tagMoved && remote.Matches(tag.ID, tag.RepoDigests) {
 		return updateLocalNewer, ""
 	}
 	return updateAvailable, ""
@@ -94,22 +75,16 @@ func upgradableRef(ref string) bool {
 	return isTag
 }
 
-func imagePlatform(img image.InspectResponse) string {
-	if img.Os == "" || img.Architecture == "" {
-		return ""
-	}
-	p := img.Os + "/" + img.Architecture
-	if img.Variant != "" {
-		p += "/" + img.Variant
-	}
-	return p
-}
-
 type updateCheckTarget struct {
 	result   updateCheckResult
 	current  image.InspectResponse
 	group    string
 	platform string
+}
+
+type imageLookup struct {
+	img image.InspectResponse
+	err error
 }
 
 type remoteGroup struct {
@@ -151,6 +126,16 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Containers commonly share images and tags; inspect each once.
+	images := map[string]imageLookup{}
+	inspectImage := func(ref string) (image.InspectResponse, error) {
+		if l, ok := images[ref]; ok {
+			return l.img, l.err
+		}
+		img, err := s.docker.ImageInspect(ctx, ref)
+		images[ref] = imageLookup{img, err}
+		return img, err
+	}
 	var daemonPlatform string
 	targets := make([]*updateCheckTarget, 0, len(ids))
 	groups := map[string]*remoteGroup{}
@@ -170,8 +155,8 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 			t.result.Error = "image is not referenced by a registry tag"
 			continue
 		}
-		t.current, _ = s.docker.ImageInspect(ctx, info.Image)
-		t.platform = imagePlatform(t.current)
+		t.current, _ = inspectImage(info.Image)
+		t.platform = dockercontainer.ImagePlatform(t.current)
 		if t.platform == "" {
 			if daemonPlatform == "" {
 				if sys, err := s.docker.Info(ctx); err == nil && sys.OSType != "" && sys.Architecture != "" {
@@ -192,6 +177,12 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxied := docker.HasPullProxy(ctx)
+	transport, err := docker.RequestTransport(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer transport.CloseIdleConnections()
 	sem := make(chan struct{}, updateCheckConcurrency)
 	var wg sync.WaitGroup
 	for _, g := range groups {
@@ -202,7 +193,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 			defer func() { <-sem }()
 			gctx, cancel := context.WithTimeout(ctx, updateCheckTimeout)
 			defer cancel()
-			g.remote, g.err = s.resolveRemote(gctx, g, body.RegistryIDs, proxied)
+			g.remote, g.err = s.resolveRemote(gctx, transport, g, body.RegistryIDs, proxied)
 		}(g)
 	}
 	wg.Wait()
@@ -210,7 +201,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	out := make([]updateCheckResult, 0, len(targets))
 	for _, t := range targets {
 		if g := groups[t.group]; t.group != "" && g != nil {
-			tag, tagErr := s.docker.ImageInspect(ctx, t.result.Ref)
+			tag, tagErr := inspectImage(t.result.Ref)
 			t.result.Status, t.result.Error = updateStatus(t.current, tag, tagErr, g.remote, g.err)
 			t.result.RemoteID = g.remote.ConfigDigest
 			if t.result.RemoteID == "" {
@@ -226,7 +217,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 // mirrors and daemon proxy settings apply exactly as they would to a pull.
 // Only images without RepoDigests (imported by the proxy/browser paths) need
 // the config digest, which the daemon's distribution API does not expose.
-func (s *Server) resolveRemote(ctx context.Context, g *remoteGroup, registryIDs []string, proxied bool) (docker.RemoteImage, error) {
+func (s *Server) resolveRemote(ctx context.Context, t *http.Transport, g *remoteGroup, registryIDs []string, proxied bool) (docker.RemoteImage, error) {
 	auth, err := s.registryAuthFromIDs(g.ref, registryIDs)
 	if err != nil {
 		return docker.RemoteImage{}, err
@@ -235,7 +226,7 @@ func (s *Server) resolveRemote(ctx context.Context, g *remoteGroup, registryIDs 
 		if g.platform == "" {
 			return docker.RemoteImage{}, errors.New("cannot determine image platform")
 		}
-		return docker.ResolveRemoteImage(ctx, g.ref, g.platform, auth)
+		return docker.ResolveRemoteImage(ctx, t, g.ref, g.platform, auth)
 	}
 	di, diErr := s.docker.DistributionInspect(ctx, g.ref, auth)
 	if diErr == nil && (!g.needConfig || g.platform == "") {
@@ -244,7 +235,7 @@ func (s *Server) resolveRemote(ctx context.Context, g *remoteGroup, registryIDs 
 	if g.platform != "" {
 		// Best effort: phyless may lack the daemon's registry access (mirrors,
 		// daemon proxy); the daemon's digest still decides for most images.
-		if r, err := docker.ResolveRemoteImage(ctx, g.ref, g.platform, auth); err == nil || diErr != nil {
+		if r, err := docker.ResolveRemoteImage(ctx, t, g.ref, g.platform, auth); err == nil || diErr != nil {
 			return r, err
 		}
 	}

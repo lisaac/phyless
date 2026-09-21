@@ -59,8 +59,12 @@ async function* tarEntries(input: BuildInput): AsyncGenerator<Uint8Array> {
   // In-memory blobs (config + raw manifest) and each streamed layer.
   yield* bytesEntry(configPath, input.configBytes);
   yield* bytesEntry(`blobs/sha256/${manifestHex}`, input.manifest.bytes);
+  const written = new Set<string>();
   for (let i = 0; i < input.layers.length; i++) {
     const layer = input.layers[i];
+    // A manifest may list one blob several times; download and store it once.
+    if (written.has(layer.hex)) continue;
+    written.add(layer.hex);
     const src = await input.openLayer(i);
     yield* streamEntry(`blobs/sha256/${layer.hex}`, layer.size, src);
   }

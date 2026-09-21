@@ -1,9 +1,8 @@
 import { Component, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady } from "../shared/PullOptions";
 import { enqueue } from "../../stores/taskQueue";
-import { toast } from "../shared/Toast";
 
 // Check-for-updates dialog: same pull options as the upgrade dialog, because
 // the check must reach the registry the same way the later pull will.
@@ -17,7 +16,7 @@ export const CheckUpdatesModal: Component<{
     const ts = props.targets ?? [];
     if (ts.length === 0) return;
     const browser = isBrowserDownload(pull.value);
-    if (browser && !pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+    if (!browserWorkerReady(pull.value)) return;
     const options = pull.payload();
     enqueue({
       title: `检查升级（${ts.length} 个容器）`,

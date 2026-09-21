@@ -23,7 +23,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	xproxy "golang.org/x/net/proxy"
@@ -254,24 +253,12 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 		return nil, err
 	}
 	metadataTransport := &metadataLimitTransport{inner: transport}
-	remoteOpts := []remote.Option{
-		remote.WithAuth(authnConfig),
-		remote.WithContext(pullCtx),
-		remote.WithPlatform(platform),
-		remote.WithTransport(metadataTransport),
-	}
-	desc, err := remote.Get(parsed, remoteOpts...)
+	desc, img, err := getImage(pullCtx, parsed, platform, authnConfig, metadataTransport)
 	if err != nil {
 		transport.CloseIdleConnections()
-		return nil, safePullError("registry request failed", err)
-	}
-	if desc.Size < 0 || desc.Size > maxMetadataSize {
-		transport.CloseIdleConnections()
-		return nil, safePullError("registry request failed", errors.New("image manifest is too large"))
-	}
-	img, err := desc.Image()
-	if err != nil {
-		transport.CloseIdleConnections()
+		if desc == nil {
+			return nil, safePullError("registry request failed", err)
+		}
 		return nil, safePullError("image platform selection failed", err)
 	}
 	manifest, err := img.Manifest()
@@ -296,7 +283,8 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 	// daemon already has this exact tag/config, return a normal progress stream
 	// without starting ImageLoad; this is the proxy equivalent of Docker's
 	// up-to-date check and avoids a needless import.
-	if localImageMatches(pullCtx, c.APIClient, tarTag(tag), expected) {
+	current := RemoteImage{Digest: desc.Digest.String(), ManifestDigest: expected.manifest.String(), ConfigDigest: expected.config.String()}
+	if localImageMatches(pullCtx, c.APIClient, tarTag(tag), current) {
 		transport.CloseIdleConnections()
 		return io.NopCloser(strings.NewReader(`{"status":"Image is up to date"}` + "\n")), nil
 	}
@@ -305,9 +293,9 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 	return startPullPipeline(ctx, pullCtx, cancel, c.APIClient, tag, img, expected, platform, transport)
 }
 
-func localImageMatches(ctx context.Context, apiClient dockerclient.APIClient, ref string, expected expectedImage) bool {
+func localImageMatches(ctx context.Context, apiClient dockerclient.APIClient, ref string, r RemoteImage) bool {
 	local, err := apiClient.ImageInspect(ctx, ref)
-	return err == nil && expected.matches(local.ID)
+	return err == nil && r.Matches(local.ID, local.RepoDigests)
 }
 
 func (c *Client) pullPlatform(ctx context.Context, raw string) (v1.Platform, error) {
@@ -438,7 +426,11 @@ type expectedImage struct {
 }
 
 func (e expectedImage) matches(id string) bool {
-	return strings.EqualFold(id, e.config.String()) || (e.manifest.Hex != "" && strings.EqualFold(id, e.manifest.String()))
+	r := RemoteImage{ConfigDigest: e.config.String()}
+	if e.manifest.Hex != "" {
+		r.ManifestDigest = e.manifest.String()
+	}
+	return r.Matches(id, nil)
 }
 
 func validateRemoteImage(img v1.Image, platform v1.Platform) (expectedImage, error) {
@@ -502,118 +494,15 @@ func supportedLayerMediaType(mt types.MediaType) bool {
 	}
 }
 
-type layerTracker struct {
-	mu      sync.Mutex
-	readers map[*trackedLayerReader]struct{}
-}
-
-func newLayerTracker() *layerTracker {
-	return &layerTracker{readers: make(map[*trackedLayerReader]struct{})}
-}
-
-func (t *layerTracker) add(r *trackedLayerReader) {
-	t.mu.Lock()
-	t.readers[r] = struct{}{}
-	t.mu.Unlock()
-}
-
-func (t *layerTracker) remove(r *trackedLayerReader) {
-	t.mu.Lock()
-	delete(t.readers, r)
-	t.mu.Unlock()
-}
-
-func (t *layerTracker) closeAll() error {
-	t.mu.Lock()
-	readers := make([]*trackedLayerReader, 0, len(t.readers))
-	for r := range t.readers {
-		readers = append(readers, r)
-	}
-	t.mu.Unlock()
-	var first error
-	for _, r := range readers {
-		if err := r.Close(); err != nil && first == nil {
-			first = err
-		}
-	}
-	return first
-}
-
-type trackedImage struct {
-	v1.Image
-	tracker    *layerTracker
-	layerSizes []int64
-}
-
-func (i *trackedImage) Layers() ([]v1.Layer, error) {
-	layers, err := i.Image.Layers()
-	if err != nil {
-		return nil, err
-	}
-	if len(layers) != len(i.layerSizes) {
-		return nil, errors.New("image layer count changed during tar generation")
-	}
-	wrapped := make([]v1.Layer, len(layers))
-	for n, layer := range layers {
-		wrapped[n] = &trackedLayer{Layer: layer, tracker: i.tracker, size: i.layerSizes[n]}
-	}
-	return wrapped, nil
-}
-
-type trackedLayer struct {
-	v1.Layer
-	tracker *layerTracker
-	size    int64
-}
-
-func (l *trackedLayer) Size() (int64, error) {
-	return l.size, nil
-}
-
-func (l *trackedLayer) Compressed() (io.ReadCloser, error) {
-	r, err := l.Layer.Compressed()
-	if err != nil {
-		return nil, err
-	}
-	tracked := &trackedLayerReader{ReadCloser: r, tracker: l.tracker}
-	l.tracker.add(tracked)
-	return tracked, nil
-}
-
-type trackedLayerReader struct {
-	io.ReadCloser
-	tracker *layerTracker
-	once    sync.Once
-	err     error
-}
-
-func (r *trackedLayerReader) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	if err != nil {
-		closeErr := r.Close()
-		if err == io.EOF && closeErr != nil {
-			return n, closeErr
-		}
-	}
-	return n, err
-}
-
-func (r *trackedLayerReader) Close() error {
-	r.once.Do(func() {
-		r.err = r.ReadCloser.Close()
-		r.tracker.remove(r)
-	})
-	return r.err
-}
-
-// writeImageTar emits the same layout the browser path builds (see
-// frontend/src/api/dockerTar.ts): an OCI image layout whose index.json points
+// writeImageTar emits the layout the browser path builds (see
+// frontend/src/api/dockerTar.ts, which also adds a legacy repositories file):
+// an OCI image layout whose index.json points
 // at the registry's manifest bytes verbatim, plus a docker-save manifest.json.
 // The classic image store reads manifest.json (image ID = config digest); the
 // containerd store imports the OCI layout as-is (image ID = the registry's
 // manifest digest). A plain docker-save tar would make containerd synthesize
 // a manifest whose digest matches nothing in the registry.
-func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) (err error) {
+func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) error {
 	manifest, err := img.Manifest()
 	if err != nil {
 		return err
@@ -650,22 +539,12 @@ func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) (err error) {
 	}
 	fullName = reference.TagNameOnly(fullName)
 
-	tracker := newLayerTracker()
-	defer func() {
-		if closeErr := tracker.closeAll(); err == nil {
-			err = closeErr
-		}
-	}()
-	layerSizes := make([]int64, len(manifest.Layers))
-	for n, layer := range manifest.Layers {
-		if layer.Size < 0 {
-			return errors.New("invalid image layer size")
-		}
-		layerSizes[n] = layer.Size
-	}
-	layers, err := (&trackedImage{Image: img, tracker: tracker, layerSizes: layerSizes}).Layers()
+	layers, err := img.Layers()
 	if err != nil {
 		return err
+	}
+	if len(layers) != len(manifest.Layers) {
+		return errors.New("image layer count changed during tar generation")
 	}
 
 	tw := tar.NewWriter(w)
@@ -684,9 +563,18 @@ func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) (err error) {
 		return err
 	}
 	layerPaths := make([]string, len(layers))
+	written := map[v1.Hash]bool{}
 	for n, layer := range layers {
 		desc := manifest.Layers[n]
+		if desc.Size < 0 {
+			return errors.New("invalid image layer size")
+		}
 		layerPaths[n] = blob(desc.Digest)
+		// A manifest may list one blob several times; fetch and store it once.
+		if written[desc.Digest] {
+			continue
+		}
+		written[desc.Digest] = true
 		if err := tw.WriteHeader(&tar.Header{Name: layerPaths[n], Mode: 0o644, Size: desc.Size, Typeflag: tar.TypeReg}); err != nil {
 			return err
 		}

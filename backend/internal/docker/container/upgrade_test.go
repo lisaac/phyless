@@ -802,3 +802,20 @@ func TestUpgradeEnvFromImageDropsChosenValues(t *testing.T) {
 		t.Fatalf("env = %v", c.createdConfig.Env)
 	}
 }
+
+func TestUpgradeEnvFromImageRecreatesEvenWhenCurrent(t *testing.T) {
+	c := newUpgradeClient()
+	c.newImage.ID = c.info.Image // already on the latest image
+	c.info.Config.Env = []string{"NGINX_VERSION=1.25"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{EnvFromImage: []string{"NGINX_VERSION"}}); err != nil {
+		t.Fatal(err)
+	}
+	if c.created != 1 || len(c.createdConfig.Env) != 0 {
+		t.Fatalf("created=%d env=%v", c.created, c.createdConfig.Env)
+	}
+	c2 := newUpgradeClient()
+	c2.newImage.ID = c2.info.Image
+	if _, err := Upgrade(context.Background(), c2, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{EnvFromImage: []string{"ABSENT"}}); err != nil || c2.created != 0 {
+		t.Fatalf("no-op env choice must not recreate: err=%v created=%d", err, c2.created)
+	}
+}

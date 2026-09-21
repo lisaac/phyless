@@ -94,14 +94,11 @@ func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 	if oldImage.Os == "" || oldImage.Architecture == "" {
 		return "", fmt.Errorf("原镜像平台信息缺失")
 	}
-	platform := platforms.Normalize(ocispec.Platform{OS: oldImage.Os, Architecture: oldImage.Architecture, Variant: oldImage.Variant})
+	platform := ociPlatform(oldImage)
 	if skipPull {
 		EmitStream(w, "使用已下载镜像 %s …", imageRef)
 	} else {
-		opts.Platform = oldImage.Os + "/" + oldImage.Architecture
-		if oldImage.Variant != "" {
-			opts.Platform += "/" + oldImage.Variant
-		}
+		opts.Platform = ImagePlatform(oldImage)
 		EmitStream(w, "正在拉取镜像 %s …", imageRef)
 		rc, err := cli.ImagePull(ctx, imageRef, opts)
 		if err != nil {
@@ -119,18 +116,26 @@ func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 	if err != nil {
 		return "", fmt.Errorf("无法检查新镜像: %w", err)
 	}
-	if newImg.ID == "" || !platforms.OnlyStrict(platform).Match(ocispec.Platform{OS: newImg.Os, Architecture: newImg.Architecture, Variant: newImg.Variant}) {
+	if newImg.ID == "" || !platforms.OnlyStrict(platform).Match(ociPlatform(newImg)) {
 		return "", fmt.Errorf("新镜像 ID 或平台信息不匹配，保留原容器")
 	}
 
 	EmitStream(w, "当前镜像 ID: %s ｜ 新镜像 ID: %s", shortID(info.Image), shortID(newImg.ID))
 
 	if newImg.ID == info.Image {
-		EmitStream(w, "✓ 已是最新版本，无需升级。")
-		return "", nil
+		if !slices.ContainsFunc(info.Config.Env, func(e string) bool {
+			key, _, _ := strings.Cut(e, "=")
+			return slices.Contains(uopts.EnvFromImage, key)
+		}) {
+			EmitStream(w, "✓ 已是最新版本，无需升级。")
+			return "", nil
+		}
+		// Same image, but the user asked to drop stale variables: that still
+		// needs a recreate.
+		EmitStream(w, "镜像已是最新，按所选环境变量重建容器…")
+	} else {
+		EmitStream(w, "检测到新版本，开始重建容器…")
 	}
-
-	EmitStream(w, "检测到新版本，开始重建容器…")
 	newID, stopped, err := replaceContainer(ctx, cli, w, replacement{
 		info: info, name: originalName, imageRef: imageRef, imageID: newImg.ID, oldImage: oldImage, platform: platform,
 		envFromImage: uopts.EnvFromImage,
@@ -485,10 +490,14 @@ func recreateDependent(ctx context.Context, cli client.APIClient, w io.Writer, d
 		imageRef:    UpgradeImageRef(dep),
 		imageID:     dep.Image,
 		oldImage:    img,
-		platform:    platforms.Normalize(ocispec.Platform{OS: img.Os, Architecture: img.Architecture, Variant: img.Variant}),
+		platform:    ociPlatform(img),
 		networkMode: mode,
 	})
 	return err
+}
+
+func ociPlatform(img image.InspectResponse) ocispec.Platform {
+	return platforms.Normalize(ocispec.Platform{OS: img.Os, Architecture: img.Architecture, Variant: img.Variant})
 }
 
 func shortHexID(s string) bool {

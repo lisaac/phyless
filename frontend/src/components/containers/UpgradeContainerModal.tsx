@@ -1,14 +1,13 @@
 import { Component, createEffect, createSignal, For, on, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady } from "../shared/PullOptions";
 import { confirmAction } from "../shared/ConfirmModal";
 import { LABEL_PROJECT } from "../compose/composeShared";
 import { enqueue } from "../../stores/taskQueue";
-import { updateCheckFor } from "../../stores/updateCheck";
+import { updateCheckFor, staleEnvCandidates } from "../../stores/updateCheck";
 import { UpdateBadge } from "./UpdateBadge";
-import { toast } from "../shared/Toast";
-import { get, imageInspectUrl } from "../../api/client";
+import { UPGRADE_IMAGE_REF_LABEL, type EnvCandidate } from "../../api/inspect";
 import { containerName } from "./containerActions";
 import type { ContainerSummary } from "../../types";
 
@@ -23,35 +22,6 @@ export const toUpgradeTarget = (c: ContainerSummary): UpgradeTarget =>
   ({ id: c.Id, name: containerName(c) || c.Id.slice(0, 8), imageId: c.ImageID, labels: c.Labels });
 
 const LABEL_SERVICE = "com.docker.compose.service";
-// Set by earlier phyless upgrades, which copied the whole Config — including
-// the previous image's ENV defaults — into the replacement.
-const LEGACY_UPGRADE_LABEL = "io.phyless.upgrade-image-ref";
-
-export interface EnvCandidate { key: string; current: string; image: string }
-
-const splitEnv = (e: string): [string, string] => {
-  const i = e.indexOf("=");
-  return i < 0 ? [e, ""] : [e.slice(0, i), e.slice(i + 1)];
-};
-
-type EnvInspect = { Image?: string; Config?: { Env?: string[] | null } };
-
-// Variables the current image also defines, but with another value. On a
-// container a previous phyless upgrade produced, these may be stale defaults of
-// an older image rather than deliberate overrides — only the user can tell.
-export async function staleEnvCandidates(
-  id: string,
-  fetch: <T>(path: string) => Promise<T> = get,
-): Promise<EnvCandidate[]> {
-  const info = await fetch<EnvInspect>(`/api/containers/${encodeURIComponent(id)}/inspect`);
-  if (!info.Image) return [];
-  const image = await fetch<EnvInspect>(imageInspectUrl(info.Image));
-  const imageEnv = new Map((image.Config?.Env ?? []).map(splitEnv));
-  return (info.Config?.Env ?? []).map(splitEnv)
-    .filter(([k, v]) => imageEnv.has(k) && imageEnv.get(k) !== v)
-    .map(([key, current]) => ({ key, current, image: imageEnv.get(key)! }));
-}
-
 // Upgrading one compose-managed container recreates it outside compose; the
 // user must acknowledge that before anything is queued.
 export function composeUpgradeWarning(targets: UpgradeTarget[]): string | null {
@@ -90,7 +60,7 @@ export const UpgradeContainerModal: Component<{
   createEffect(on(() => props.targets, (ts) => {
     setEnvCands({});
     setKeepEnv(new Set<string>());
-    for (const t of (ts ?? []).filter((t) => t.labels?.[LEGACY_UPGRADE_LABEL])) {
+    for (const t of (ts ?? []).filter((t) => t.labels?.[UPGRADE_IMAGE_REF_LABEL])) {
       staleEnvCandidates(t.id).then((c) => {
         if (c.length && props.targets === ts) setEnvCands((m) => ({ ...m, [t.id]: c }));
       }, () => { /* inspect failed: nothing to review */ });
@@ -108,7 +78,7 @@ export const UpgradeContainerModal: Component<{
     const ts = chosen();
     if (ts.length === 0) return;
     const browser = isBrowserDownload(pull.value);
-    if (browser && !pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+    if (!browserWorkerReady(pull.value)) return;
     const warning = composeUpgradeWarning(ts);
     if (warning && !await confirmAction(warning, {
       title: "升级 Compose 管理的容器",
@@ -116,22 +86,13 @@ export const UpgradeContainerModal: Component<{
     })) return;
     const options = pull.payload();
     for (const t of ts) {
-      const title = `升级 — ${t.name}`;
       const env = envFromImage(t.id);
-      const envBody = env.length ? { env_from_image: env } : {};
-      // The tag already points at a newer local image (possibly a local-only
+      // A local-newer tag already points at the newer image (possibly a local
       // build): rebuild from it instead of pulling, which could fail or undo it.
-      if (check(t)?.status === "local-newer") {
+      const localOnly = check(t)?.status === "local-newer";
+      if (browser && !localOnly) {
         enqueue({
-          title,
-          url: `/api/containers/${t.id}/upgrade`,
-          body: { pull_policy: "never", ...envBody },
-          key: t.id,
-          meta: { type: "upgrade", containerId: t.id },
-        });
-      } else if (browser) {
-        enqueue({
-          title,
+          title: `升级 — ${t.name}`,
           url: "",
           key: t.id,
           meta: {
@@ -140,15 +101,16 @@ export const UpgradeContainerModal: Component<{
           },
           secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
         });
-      } else {
-        enqueue({
-          title,
-          url: `/api/containers/${t.id}/upgrade`,
-          body: Object.keys(options).length + env.length > 0 ? { ...options, ...envBody } : undefined,
-          key: t.id,
-          meta: { type: "upgrade", containerId: t.id },
-        });
+        continue;
       }
+      const body = { ...(localOnly ? { pull_policy: "never" } : options), ...(env.length ? { env_from_image: env } : {}) };
+      enqueue({
+        title: `升级 — ${t.name}`,
+        url: `/api/containers/${t.id}/upgrade`,
+        body: Object.keys(body).length ? body : undefined,
+        key: t.id,
+        meta: { type: "upgrade", containerId: t.id },
+      });
     }
     close();
   };

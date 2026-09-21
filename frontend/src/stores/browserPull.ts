@@ -3,9 +3,10 @@
 // queue wires note/progress/signal to a task's UI state.
 
 import { buildDockerLoadTar } from "../api/dockerTar";
-import { resolveImage, blobUrl, proxiedGet, authHeaderFromChallenge, registryResponseError, type Creds, type ResolvedImage } from "../api/registryPull";
+import { resolveImage, matchesRemote, remoteDigests, blobUrl, proxiedGet, authHeaderFromChallenge, registryResponseError, type Creds, type ResolvedImage } from "../api/registryPull";
 import { streamTarToDaemon } from "../api/imageLoadStream";
 import { get, imageInspectUrl } from "../api/client";
+import { upgradeImageRef, imagePlatform } from "../api/inspect";
 
 export interface BrowserPullParams {
   ref: string;
@@ -25,7 +26,7 @@ export interface BrowserPullDeps {
   resolveImage: typeof resolveImage;
   buildDockerLoadTar: typeof buildDockerLoadTar;
   streamTarToDaemon: typeof streamTarToDaemon;
-  inspectLocalId: (ref: string) => Promise<string | null>;
+  inspectLocal: (ref: string) => Promise<{ Id?: string; RepoDigests?: string[] } | null>;
   // Daemon OS/arch (e.g. "linux/arm64"), used when the caller left platform blank.
   daemonPlatform: () => Promise<string>;
   openLayer: (img: ResolvedImage, index: number, workerUrl: string, signal: AbortSignal, creds?: Creds) => Promise<ReadableStream<Uint8Array>>;
@@ -35,10 +36,9 @@ export const defaultDeps: BrowserPullDeps = {
   resolveImage,
   buildDockerLoadTar,
   streamTarToDaemon,
-  inspectLocalId: async (ref) => {
+  inspectLocal: async (ref) => {
     try {
-      const info = await get<{ Id?: string }>(`/api/images/inspect?id=${encodeURIComponent(ref)}`);
-      return info?.Id ?? null;
+      return await get<{ Id?: string; RepoDigests?: string[] }>(imageInspectUrl(ref));
     } catch {
       return null; // not present locally (or inspect failed) — proceed to pull
     }
@@ -78,10 +78,9 @@ export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullC
   const img = await deps.resolveImage(params.ref, platform, params.workerUrl, params.creds, cb.signal);
   if (cb.signal.aborted) throw new Error("已取消");
 
-  const localId = await deps.inspectLocalId(img.repoTag);
+  const local = await deps.inspectLocal(img.repoTag);
   if (cb.signal.aborted) throw new Error("已取消");
-  // Classic image store: ID = config digest; containerd store: ID = manifest digest.
-  if (localId && (localId === `sha256:${img.config.hex}` || localId === img.manifest.digest)) {
+  if (matchesRemote(local, remoteDigests(img))) {
     cb.note("镜像已是最新，无需下载");
     return;
   }
@@ -317,12 +316,11 @@ type UpgradeInspect = {
 type ImageInspect = { Os?: string; Architecture?: string; Variant?: string };
 
 function upgradeTarget(info: UpgradeInspect, image: ImageInspect): { ref: string; platform: string } {
-  const ref = info.Config?.Labels?.["io.phyless.upgrade-image-ref"] || info.Config?.Image || "";
-  const os = image.Os || "";
-  const arch = image.Architecture || "";
+  const ref = upgradeImageRef(info);
+  const platform = imagePlatform(image);
   if (!ref.trim()) throw new Error("容器缺少可升级的镜像引用");
-  if (!os || !arch) throw new Error("原镜像平台信息缺失");
-  return { ref, platform: `${os}/${arch}${image.Variant ? `/${image.Variant}` : ""}` };
+  if (!platform) throw new Error("原镜像平台信息缺失");
+  return { ref, platform };
 }
 
 export interface BrowserUpgradeParams {

@@ -1,9 +1,8 @@
 import { Component, createSignal, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady } from "../shared/PullOptions";
 import { enqueue, isPending } from "../../stores/taskQueue";
-import { toast } from "../shared/Toast";
 import { VERB_LABEL, type ComposeVerb } from "./composeShared";
 
 export interface ComposeAction { id: string; name: string; verb: ComposeVerb; canBuild?: boolean; }
@@ -40,7 +39,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
     const t = props.target;
     if (!t) return;
     if (isBrowserDownload(pull.value)) {
-      if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+      if (!browserWorkerReady(pull.value)) return;
       if (t.verb === "pull" || t.verb === "update") {
         enqueue({
           title: `${VERB_LABEL[t.verb]} — ${t.name}`,

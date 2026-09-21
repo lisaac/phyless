@@ -399,6 +399,7 @@ func TestLocalImageMatchesExpectedConfig(t *testing.T) {
 	}{
 		{name: "same", id: "sha256:abc", want: true},
 		{name: "containerd store manifest digest", id: "sha256:0123", want: true},
+		{name: "containerd store daemon pull (index digest)", id: "sha256:idx", want: true},
 		{name: "different", id: "sha256:def", want: false},
 		{name: "inspect error", err: errors.New("not found"), want: false},
 	} {
@@ -406,9 +407,8 @@ func TestLocalImageMatchesExpectedConfig(t *testing.T) {
 			api := &pipelineAPIClient{inspect: func(context.Context, string) (image.InspectResponse, error) {
 				return image.InspectResponse{ID: tc.id}, tc.err
 			}}
-			if got := localImageMatches(context.Background(), api, "example.test/repo:tag", expectedImage{
-				config:   v1.Hash{Algorithm: "sha256", Hex: "abc"},
-				manifest: v1.Hash{Algorithm: "sha256", Hex: "0123"},
+			if got := localImageMatches(context.Background(), api, "example.test/repo:tag", RemoteImage{
+				Digest: "sha256:idx", ManifestDigest: "sha256:0123", ConfigDigest: "sha256:abc",
 			}); got != tc.want {
 				t.Fatalf("localImageMatches = %v, want %v", got, tc.want)
 			}
@@ -1056,3 +1056,45 @@ func mustURL(t *testing.T, raw string) url.URL {
 	}
 	return *u
 }
+
+func TestWriteImageTarStoresRepeatedLayerOnce(t *testing.T) {
+	layer := newCloseAwareTestLayer(t)
+	base, _ := newStaticTestImage(t, layer)
+	base.manifest.Layers = append(base.manifest.Layers, base.manifest.Layers[0])
+	base.rawManifest, _ = json.Marshal(base.manifest)
+	base.manifestHash, _, _ = v1.SHA256(bytes.NewReader(base.rawManifest))
+	tag, _ := name.NewTag("registry.example/repo:dup")
+	var buf bytes.Buffer
+	if err := writeImageTar(&buf, tag, dupLayerImage{base}); err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(&buf)
+	seen := map[string]int{}
+	var dm []struct{ Layers []string }
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[h.Name]++
+		if h.Name == "manifest.json" {
+			data, _ := io.ReadAll(tr)
+			_ = json.Unmarshal(data, &dm)
+		}
+	}
+	for name, n := range seen {
+		if n > 1 {
+			t.Fatalf("%s written %d times", name, n)
+		}
+	}
+	if len(dm) != 1 || len(dm[0].Layers) != 2 || dm[0].Layers[0] != dm[0].Layers[1] {
+		t.Fatalf("manifest.json layers = %+v", dm)
+	}
+}
+
+type dupLayerImage struct{ *staticTestImage }
+
+func (d dupLayerImage) Layers() ([]v1.Layer, error) { return []v1.Layer{d.layer, d.layer}, nil }

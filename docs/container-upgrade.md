@@ -45,7 +45,9 @@
 - 镜像 ID 等于 index 或平台 manifest 的 digest：containerd 镜像存储，包括浏览器导入的镜像；
 - RepoDigests 中包含远端 digest：daemon 拉取的镜像。
 
-同一 `ref|平台` 只请求一次，最多 4 个并发，每个 20 秒超时。registry 错误只返回 HTTP 状态码和错误码，不原样回显，避免泄露带凭据的代理地址。
+前端的 `matchesRemote`（`frontend/src/api/registryPull.ts`）和后端的 `RemoteImage.Matches` 是同一套规则，代理拉取前的"本地已是最新"判断也用它。
+
+同一 `ref|平台` 只请求一次，同一请求内镜像 inspect 结果复用，所有 registry 请求共用一个 transport（连接和 token 复用），最多 4 个并发，每个 20 秒超时。服务端模式取消检查任务会中断请求。registry 错误只返回 HTTP 状态码和错误码，不原样回显，避免泄露带凭据的代理地址。
 
 ## 接口
 
@@ -62,7 +64,7 @@ POST /api/containers/check-updates      （operator）
 
 ## 代理导入的 tar 格式
 
-服务端代理（`backend/internal/docker/image_pull.go` 的 `writeImageTar`）和浏览器代理（`frontend/src/api/dockerTar.ts`）生成相同结构的 tar：OCI image layout（`oci-layout`、`index.json`，`index.json` 指向**原样保留的 registry manifest**），同时附带 docker-save 格式的 `manifest.json`。
+服务端代理（`backend/internal/docker/image_pull.go` 的 `writeImageTar`）和浏览器代理（`frontend/src/api/dockerTar.ts`）生成相同结构的 tar：OCI image layout（`oci-layout`、`index.json`，`index.json` 指向**原样保留的 registry manifest**），同时附带 docker-save 格式的 `manifest.json`。manifest 中重复列出的层只下载、写入一次。
 
 - **classic 镜像存储**：读取 `manifest.json`，镜像 ID 等于 config digest；
 - **containerd 镜像存储**：原样导入 OCI layout，镜像 ID 等于 registry 的平台 manifest digest。`index.json` 带 `io.containerd.image.name` 注解，镜像名是完整规范名（如 `docker.io/library/nginx:1.27`）。
@@ -82,7 +84,7 @@ POST /api/containers/check-updates      （operator）
   - 用 `--entrypoint` 显式指定、且同时丢弃了镜像 CMD 的，保留入口点，避免把 CMD 恢复回来。
   - 已发布的端口始终保持暴露。
 - **`Config.Image`**：保持原写法（如 `nginx:latest`）。只有 tag 已不指向刚校验过的镜像时，才用镜像 ID 固定，并把原 tag 记在 label `io.phyless.upgrade-image-ref` 中，供下次升级使用。
-- **旧版升级残留的 ENV**：旧版 phyless 升级时，会把前一个镜像的 ENV 原样复制进新容器，这些值和"你特意覆盖的值"在数据上无法区分。对带 `io.phyless.upgrade-image-ref` 标签的容器，升级弹窗会列出"当前镜像也定义了、但值不同"的变量，默认勾选"改用新镜像的值"；你特意设置的变量取消勾选即可保留。勾选的变量通过升级接口的 `env_from_image` 传给后端，升级时去掉容器里的值，由新镜像提供（新镜像不再定义则移除）。通常只需确认一次：升级后这个标签会被移除，之后按新逻辑自动处理；如果当时 tag 已指向别的镜像、容器仍被固定，下次还会提示。
+- **旧版升级残留的 ENV**：旧版 phyless 升级时，会把前一个镜像的 ENV 原样复制进新容器，这些值和"你特意覆盖的值"在数据上无法区分。对带 `io.phyless.upgrade-image-ref` 标签的容器，升级弹窗会列出"当前镜像也定义了、但值不同"的变量，默认勾选"改用新镜像的值"；你特意设置的变量取消勾选即可保留。勾选的变量通过升级接口的 `env_from_image` 传给后端，升级时去掉容器里的值，由新镜像提供（新镜像不再定义则移除）。即使镜像已是最新，只要勾选的变量确实存在于容器中，也会按所选重建。通常只需确认一次：升级后这个标签会被移除，之后按新逻辑自动处理；如果当时 tag 已指向别的镜像、容器仍被固定，下次还会提示。
 - **Hostname**：等于容器短 ID（Docker 默认值）时清空。旧版 phyless 升级过的容器（带上述 label）继承了前一个容器的短 ID，也会一并清掉。
 - **网络**：
   - 保留所有网络、别名、静态 IP 和 IPAM 配置；
@@ -113,4 +115,3 @@ POST /api/containers/check-updates      （operator）
 - 升级后不会清理旧镜像。
 - 用旧式 `--link` 链接到本容器的其他容器不会被处理。
 - Compose 容器的 `com.docker.compose.image` 标签仍是旧值，之后执行 `compose up` 会重建该容器。
-- 服务端模式取消检查任务时，只会丢弃结果，不会中断正在进行的请求。

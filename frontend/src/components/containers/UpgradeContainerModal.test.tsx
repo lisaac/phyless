@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
-import { UpgradeContainerModal, composeUpgradeWarning, staleEnvCandidates } from "./UpgradeContainerModal";
+import { UpgradeContainerModal, composeUpgradeWarning } from "./UpgradeContainerModal";
+import { staleEnvCandidates } from "../../stores/updateCheck";
 
 vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn().mockResolvedValue([]), request: vi.fn(), imageInspectUrl: (id: string) => id }));
 vi.mock("../../stores/taskQueue", () => ({ enqueue: vi.fn(() => ({ done: Promise.resolve() })) }));

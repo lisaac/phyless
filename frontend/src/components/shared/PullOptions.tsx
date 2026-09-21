@@ -161,6 +161,14 @@ export function isBrowserDownload(value: PullOptionsValue): boolean {
   return value.downloadMode === "browser";
 }
 
+// Every pull entry point's submit guard: browser mode is unusable without a
+// worker. Toasts and returns false when it is missing.
+export function browserWorkerReady(value: PullOptionsValue): boolean {
+  if (!isBrowserDownload(value) || value.workerUrl?.trim()) return true;
+  toast.error("请先填写 CF worker 地址");
+  return false;
+}
+
 // Build a browser-pull task spec. Credentials go in `secret` (never persisted
 // to task history); ref/platform/workerUrl are non-sensitive and ride in meta.
 export function browserPullSpec(title: string, ref: string, key: string, value: PullOptionsValue): TaskSpec {

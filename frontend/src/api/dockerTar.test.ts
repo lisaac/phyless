@@ -138,6 +138,19 @@ describe("buildDockerLoadTar", () => {
     expect(fullImageName("localhost:5000/app:3")).toBe("localhost:5000/app:3");
   });
 
+  it("stores a layer listed twice only once", async () => {
+    const input = baseInput();
+    input.layers = [input.layers[0], input.layers[0]];
+    const opened: number[] = [];
+    const open = input.openLayer;
+    input.openLayer = (i) => { opened.push(i); return open(i); };
+    const entries = parseTar(await collect(buildDockerLoadTar(input)));
+    expect(entries.filter((e) => e.name === `blobs/sha256/${"a".repeat(64)}`)).toHaveLength(1);
+    expect(opened).toEqual([0]);
+    const manifest = JSON.parse(dec.decode(entries.find((e) => e.name === "manifest.json")!.content));
+    expect(manifest[0].Layers).toEqual([`blobs/sha256/${"a".repeat(64)}`, `blobs/sha256/${"a".repeat(64)}`]);
+  });
+
   it("terminates with two zero blocks", async () => {
     const buf = await collect(buildDockerLoadTar(baseInput()));
     expect(buf.subarray(buf.byteLength - 1024).every((b) => b === 0)).toBe(true);

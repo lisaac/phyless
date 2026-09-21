@@ -25,6 +25,7 @@ export interface Creds {
 
 export interface ResolvedImage {
   repoTag: string;
+  digest: string; // tag's top-level digest: the index for multi-arch images, else the manifest
   registryHost: string;
   repository: string;
   config: { hex: string; size: number; bytes: Uint8Array };
@@ -32,6 +33,22 @@ export interface ResolvedImage {
   manifest: { mediaType: string; digest: string; size: number; bytes: Uint8Array };
   platform: { os: string; architecture: string; variant?: string };
   authHeader: string | null;
+}
+
+// What the registry serves for a tag, as digests. matchesRemote is the TS twin
+// of the backend's RemoteImage.Matches — keep the rules identical.
+export interface RemoteDigests { digest: string; manifest: string; config: string }
+
+export const remoteDigests = (img: ResolvedImage): RemoteDigests =>
+  ({ digest: img.digest, manifest: img.manifest.digest, config: `sha256:${img.config.hex}` });
+
+/** Whether a local image is what the registry serves: classic store (ID =
+ *  config digest), containerd store (ID = index or platform manifest digest)
+ *  or a daemon pull (RepoDigests). Proxy/browser imports have no RepoDigests. */
+export function matchesRemote(local: { Id?: string; RepoDigests?: string[] } | null | undefined, r: RemoteDigests): boolean {
+  if (!local?.Id) return false;
+  if ([r.config, r.digest, r.manifest].some((d) => d && d.toLowerCase() === local.Id!.toLowerCase())) return true;
+  return !!r.digest && (local.RepoDigests ?? []).some((d) => d.endsWith(`@${r.digest}`));
 }
 
 export interface ParsedRef {
@@ -268,6 +285,7 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
   const manifestUrl = `https://${parsed.registryHost}/v2/${parsed.repository}/manifests/${parsed.tag}`;
   let resp = await authorizedGet(workerUrl, manifestUrl, MANIFEST_ACCEPT, creds, cache, signal);
   let raw = await readBounded(resp, MAX_META);
+  const topDigest = await sha256Digest(raw);
   let doc = JSON.parse(dec.decode(raw)) as {
     mediaType?: string;
     manifests?: PlatformDesc[];
@@ -307,6 +325,7 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
 
   return {
     repoTag: parsed.displayRef,
+    digest: topDigest,
     registryHost: parsed.registryHost,
     repository: parsed.repository,
     config: { hex: hexOf(doc.config.digest), size: doc.config.size, bytes: configBytes },

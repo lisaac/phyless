@@ -5,7 +5,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { confirmAction } from "../shared/ConfirmModal";
-import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
@@ -145,7 +145,7 @@ export const ImageListPage: Component = () => {
     const ref = pullRef().trim();
     if (!ref) return;
     if (isBrowserDownload(pull.value)) {
-      if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+      if (!browserWorkerReady(pull.value)) return;
       enqueue(browserPullSpec(`拉取 ${ref}`, ref, `image:${ref}`, pull.value));
     } else {
       enqueue({

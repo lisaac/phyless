@@ -49,7 +49,7 @@ export function setToken(t: string | null): void {
   else localStorage.setItem(TOKEN_KEY, t);
 }
 
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -64,7 +64,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  const res = await fetch(path, { method, headers, body: payload, signal: method === "GET" ? readController.signal : undefined });
+  const res = await fetch(path, { method, headers, body: payload, signal: signal ?? (method === "GET" ? readController.signal : undefined) });
   if (res.status === 401 && token === getToken()) {
     setToken(null);
     window.dispatchEvent(new CustomEvent("phyless:unauthorized"));

@@ -35,6 +35,30 @@ export function displayImage(image: string | undefined, labels?: Record<string, 
   return img;
 }
 
+type RefInspect = { Config?: { Image?: string; Labels?: Record<string, string> | null } | null };
+
+/** Registry reference an upgrade pulls: the remembered tag when Config.Image
+ *  is pinned to an ID, else Config.Image. Mirrors the backend's UpgradeImageRef. */
+export function upgradeImageRef(info: RefInspect): string {
+  return info.Config?.Labels?.[UPGRADE_IMAGE_REF_LABEL] || info.Config?.Image || "";
+}
+
+export interface EnvCandidate { key: string; current: string; image: string }
+
+/** Variables the image also defines, but with another value. */
+export function envDifferingFromImage(containerEnv: unknown, imageEnv: unknown): EnvCandidate[] {
+  const img = parseEnvArr(imageEnv);
+  return Object.entries(parseEnvArr(containerEnv))
+    .filter(([k, v]) => k in img && img[k] !== v)
+    .map(([key, current]) => ({ key, current, image: img[key] }));
+}
+
+/** "os/arch[/variant]" of an image-inspect result, "" if unknown. */
+export function imagePlatform(img: { Os?: string; Architecture?: string; Variant?: string } | null | undefined): string {
+  if (!img?.Os || !img.Architecture) return "";
+  return `${img.Os}/${img.Architecture}${img.Variant ? `/${img.Variant}` : ""}`;
+}
+
 export function inspectToRunCmd(container: any, image: any): string {
   const cfg = container?.Config ?? {};
   const img = image?.Config ?? {};

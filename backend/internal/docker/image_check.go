@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -23,9 +24,64 @@ type RemoteImage struct {
 	ConfigDigest   string
 }
 
-// ResolveRemoteImage reads manifests only — no config or layer blobs. It uses
-// the request's pull proxy when one is set, otherwise phyless' own network.
-func ResolveRemoteImage(ctx context.Context, ref, platform, registryAuth string) (RemoteImage, error) {
+// Matches reports whether a local image (ID + RepoDigests) is what the
+// registry serves, for every way Docker records that: classic store (ID ==
+// config digest), containerd store (ID == index or platform manifest digest,
+// the latter for OCI-layout imports) and daemon pulls (RepoDigests). Images
+// imported through the proxy/browser paths have no RepoDigests.
+func (r RemoteImage) Matches(id string, repoDigests []string) bool {
+	if id == "" {
+		return false
+	}
+	for _, d := range []string{r.ConfigDigest, r.Digest, r.ManifestDigest} {
+		if d != "" && strings.EqualFold(id, d) {
+			return true
+		}
+	}
+	for _, d := range repoDigests {
+		if r.Digest != "" && strings.HasSuffix(d, "@"+r.Digest) {
+			return true
+		}
+	}
+	return false
+}
+
+// RequestTransport is the registry transport for ctx: the request's pull
+// proxy, or phyless's own network. Share one per request so connections and
+// registry tokens are reused; close idle connections when done.
+func RequestTransport(ctx context.Context) (*http.Transport, error) {
+	if cfg, ok := pullProxyFromContext(ctx); ok {
+		return proxyTransport(cfg)
+	}
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("default HTTP transport is not configurable")
+	}
+	return base.Clone(), nil
+}
+
+// getImage is the manifest-only registry lookup shared by proxied pulls and
+// update checks: the tag's descriptor (index or manifest) and the platform
+// image under it. desc is nil when the registry request itself failed.
+func getImage(ctx context.Context, ref name.Reference, platform v1.Platform, auth authn.Authenticator, rt *metadataLimitTransport) (*remote.Descriptor, v1.Image, error) {
+	desc, err := remote.Get(ref,
+		remote.WithAuth(auth),
+		remote.WithContext(ctx),
+		remote.WithPlatform(platform),
+		remote.WithTransport(rt),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if desc.Size < 0 || desc.Size > maxMetadataSize {
+		return nil, nil, errors.New("image manifest is too large")
+	}
+	img, err := desc.Image()
+	return desc, img, err
+}
+
+// ResolveRemoteImage reads manifests only — no config or layer blobs.
+func ResolveRemoteImage(ctx context.Context, t *http.Transport, ref, platform, registryAuth string) (RemoteImage, error) {
 	parsed, err := name.ParseReference(ref)
 	if err != nil {
 		return RemoteImage{}, errors.New("invalid image reference")
@@ -38,27 +94,7 @@ func ResolveRemoteImage(ctx context.Context, ref, platform, registryAuth string)
 	if err != nil {
 		return RemoteImage{}, err
 	}
-	var t *http.Transport
-	if cfg, ok := pullProxyFromContext(ctx); ok {
-		if t, err = proxyTransport(cfg); err != nil {
-			return RemoteImage{}, err
-		}
-	} else if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		t = base.Clone()
-	} else {
-		return RemoteImage{}, errors.New("default HTTP transport is not configurable")
-	}
-	defer t.CloseIdleConnections()
-	desc, err := remote.Get(parsed,
-		remote.WithAuth(auth),
-		remote.WithContext(ctx),
-		remote.WithPlatform(normalizePullPlatform(*p)),
-		remote.WithTransport(&metadataLimitTransport{inner: t}),
-	)
-	if err != nil {
-		return RemoteImage{}, registryCheckError(err)
-	}
-	img, err := desc.Image()
+	desc, img, err := getImage(ctx, parsed, normalizePullPlatform(*p), auth, &metadataLimitTransport{inner: t})
 	if err != nil {
 		return RemoteImage{}, registryCheckError(err)
 	}

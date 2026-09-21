@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
 import { Button } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
@@ -175,7 +175,7 @@ export const CreateContainerModal: Component<{
     const title = `创建 ${form().name || image}`;
     const body = formToPayload(form());
     if (isBrowserDownload(pull.value)) {
-      if (!pull.value.workerUrl?.trim()) { toast.error("请先填写 CF worker 地址"); return; }
+      if (!browserWorkerReady(pull.value)) return;
       const spec = browserPullSpec(title, image, form().name ? `container:${form().name}` : `container:${image}`, pull.value);
       enqueue({
         ...spec,

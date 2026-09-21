@@ -442,6 +442,18 @@ func UpgradeImageRef(info container.InspectResponse) string {
 	return info.Config.Image
 }
 
+// ImagePlatform is the image's platform as "os/arch[/variant]", "" if unknown.
+func ImagePlatform(img image.InspectResponse) string {
+	if img.Os == "" || img.Architecture == "" {
+		return ""
+	}
+	p := img.Os + "/" + img.Architecture
+	if img.Variant != "" {
+		p += "/" + img.Variant
+	}
+	return p
+}
+
 func shortID(s string) string {
 	if len(s) > 19 {
 		return s[:19]
