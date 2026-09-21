@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDockerLoadTar, tarHeader, type BuildInput } from "./dockerTar";
+import { buildDockerLoadTar, fullImageName, tarHeader, type BuildInput } from "./dockerTar";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -124,6 +124,18 @@ describe("buildDockerLoadTar", () => {
 
     const repositories = JSON.parse(dec.decode(entries[7].content));
     expect(repositories).toEqual({ nginx: { "1.27": "c".repeat(64) } });
+  });
+
+  it("names the image for containerd with the normalized reference", async () => {
+    const entries = parseTar(await collect(buildDockerLoadTar(baseInput())));
+    const index = JSON.parse(dec.decode(entries[5].content));
+    expect(index.manifests[0].annotations).toEqual({
+      "io.containerd.image.name": "docker.io/library/nginx:1.27",
+      "org.opencontainers.image.ref.name": "1.27",
+    });
+    expect(fullImageName("ghcr.io/me/app:1")).toBe("ghcr.io/me/app:1");
+    expect(fullImageName("me/app:2")).toBe("docker.io/me/app:2");
+    expect(fullImageName("localhost:5000/app:3")).toBe("localhost:5000/app:3");
   });
 
   it("terminates with two zero blocks", async () => {

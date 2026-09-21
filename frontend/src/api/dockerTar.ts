@@ -81,7 +81,11 @@ async function* tarEntries(input: BuildInput): AsyncGenerator<Uint8Array> {
         mediaType: input.manifest.mediaType,
         digest: input.manifest.digest,
         size: input.manifest.size,
-        ...(input.repoTag ? { annotations: { "org.opencontainers.image.ref.name": tagOf(input.repoTag) } } : {}),
+        // containerd names the image from io.containerd.image.name; ref.name alone is only the tag.
+        ...(input.repoTag ? { annotations: {
+          "io.containerd.image.name": fullImageName(input.repoTag),
+          "org.opencontainers.image.ref.name": tagOf(input.repoTag),
+        } } : {}),
         platform: {
           os: input.platform.os,
           architecture: input.platform.architecture,
@@ -159,6 +163,15 @@ function tagOf(repoTag: string): string {
   const slash = repoTag.lastIndexOf("/");
   const colon = repoTag.lastIndexOf(":");
   return colon > slash ? repoTag.slice(colon + 1) : "latest";
+}
+
+// "nginx:1.27" → "docker.io/library/nginx:1.27" (Docker's normalized form).
+export function fullImageName(repoTag: string): string {
+  const repo = repoOf(repoTag);
+  const first = repo.split("/")[0];
+  const hasHost = repo.includes("/") && (first.includes(".") || first.includes(":") || first === "localhost");
+  if (hasHost) return `${repo}:${tagOf(repoTag)}`;
+  return `docker.io/${repo.includes("/") ? repo : `library/${repo}`}:${tagOf(repoTag)}`;
 }
 
 function repoOf(repoTag: string): string {

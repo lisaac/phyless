@@ -28,7 +28,16 @@ import (
 // original is discarded. A var so tests can shorten it.
 var upgradeSettleTime = 5 * time.Second
 
-func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, skipPull bool) (string, error) {
+// UpgradeOptions carries user decisions the config diff cannot make itself.
+type UpgradeOptions struct {
+	// EnvFromImage names variables whose current value should be dropped so the
+	// new image supplies it (or it disappears if the image no longer sets it).
+	// Used for values an older phyless froze from a previous image, which are
+	// indistinguishable from deliberate overrides.
+	EnvFromImage []string
+}
+
+func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, skipPull bool, uopts UpgradeOptions) (string, error) {
 	info, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return "", err
@@ -124,6 +133,7 @@ func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 	EmitStream(w, "检测到新版本，开始重建容器…")
 	newID, stopped, err := replaceContainer(ctx, cli, w, replacement{
 		info: info, name: originalName, imageRef: imageRef, imageID: newImg.ID, oldImage: oldImage, platform: platform,
+		envFromImage: uopts.EnvFromImage,
 	})
 	if err != nil {
 		if stopped {
@@ -154,7 +164,8 @@ type replacement struct {
 	platform ocispec.Platform
 	// networkMode overrides HostConfig.NetworkMode; used to re-point containers
 	// that shared the upgraded container's network namespace.
-	networkMode container.NetworkMode
+	networkMode  container.NetworkMode
+	envFromImage []string
 }
 
 // replaceContainer swaps a container for one built from the same settings on
@@ -173,6 +184,10 @@ func replaceContainer(ctx context.Context, cli client.APIClient, w io.Writer, r 
 		return "", stopped, err
 	}
 	cfg := restoreConfig(r.info, r.oldImage)
+	cfg.Env = slices.DeleteFunc(cfg.Env, func(e string) bool {
+		key, _, _ := strings.Cut(e, "=")
+		return slices.Contains(r.envFromImage, key)
+	})
 	// Keep Config.Image as the user wrote it while that tag still resolves to
 	// the verified image; otherwise pin the ID and remember the tag in a label.
 	delete(cfg.Labels, upgradeImageRefLabel)

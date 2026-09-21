@@ -233,7 +233,7 @@ func TestUpgradeFailureKeepsOrRestoresOriginal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newUpgradeClient()
 			tt.configure(c)
-			_, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{})
+			_, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("error = %v", err)
 			}
@@ -250,7 +250,7 @@ func TestUpgradeFailureKeepsOrRestoresOriginal(t *testing.T) {
 func TestUpgradeAlreadyStoppedKeepsStoppedState(t *testing.T) {
 	c := newUpgradeClient()
 	c.info.State.Running = false
-	newID, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{})
+	newID, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestUpgradeAlreadyStoppedKeepsStoppedState(t *testing.T) {
 
 func TestUpgradeWithoutPullUsesLoadedImage(t *testing.T) {
 	c := newUpgradeClient()
-	newID, err := UpgradeWithoutPull(context.Background(), c, "old-container", io.Discard)
+	newID, err := UpgradeWithoutPull(context.Background(), c, "old-container", io.Discard, UpgradeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestUpgradeCancellationBeforeMutation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := newUpgradeClient()
 	c.pullHook = cancel
-	_, err := Upgrade(ctx, c, "old-container", io.Discard, image.PullOptions{})
+	_, err := Upgrade(ctx, c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want cancellation", err)
 	}
@@ -294,7 +294,7 @@ func TestUpgradeCancellationAfterCreateCleansReplacement(t *testing.T) {
 	}}
 	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
 	c.createHook = cancel
-	_, err := Upgrade(ctx, c, "old-container", io.Discard, image.PullOptions{})
+	_, err := Upgrade(ctx, c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want cancellation", err)
 	}
@@ -325,7 +325,7 @@ func TestUpgradeRejectsUnsafeModesBeforePull(t *testing.T) {
 			} else {
 				c.info.State = nil
 			}
-			_, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{})
+			_, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 			if err == nil || c.createdConfig != nil || len(c.stopCalls) != 0 {
 				t.Fatalf("unsafe upgrade was mutated: err=%v create=%v stop=%v", err, c.createdConfig, c.stopCalls)
 			}
@@ -381,7 +381,7 @@ func TestUpgradePreservesMacvlanAddress(t *testing.T) {
 		"macvlan-net": {IPAddress: "10.0.0.2"},
 	}}
 	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	ep := c.createdNetworkConfig.EndpointsConfig["macvlan-net"]
@@ -400,7 +400,7 @@ func TestUpgradePreservesMacvlanMixedIPFamilies(t *testing.T) {
 		},
 	}}
 	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	ipam := c.createdNetworkConfig.EndpointsConfig["macvlan-net"].IPAMConfig
@@ -415,7 +415,7 @@ func TestUpgradeDoesNotPinDynamicBridgeAddress(t *testing.T) {
 		"app-net": {IPAddress: "10.0.0.2"},
 	}}
 	c.networks["app-net"] = network.Inspect{Driver: "bridge"}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if ep := c.createdNetworkConfig.EndpointsConfig["app-net"]; ep == nil || ep.IPAMConfig != nil {
@@ -429,7 +429,7 @@ func TestUpgradePreservesStaticUserDefinedAddress(t *testing.T) {
 	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
 		"app-net": {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: "10.0.0.2"}},
 	}}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	ep := c.createdNetworkConfig.EndpointsConfig["app-net"]
@@ -445,7 +445,7 @@ func TestUpgradeRestoresMacvlanAddressOnStartFailure(t *testing.T) {
 		"macvlan-net": {IPAddress: "10.0.0.2"},
 	}}
 	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err == nil {
 		t.Fatal("expected replacement start failure")
 	}
 	if len(c.networkDisconnects) != 1 || len(c.networkConnects) != 1 {
@@ -466,7 +466,7 @@ func TestUpgradeContainerNetworkModeClearsConflictingOptions(t *testing.T) {
 	c.info.HostConfig.ExtraHosts = []string{"host:127.0.0.1"}
 	c.info.HostConfig.PortBindings = nat.PortMap{"80/tcp": {{HostPort: "8080"}}}
 	c.info.HostConfig.PublishAllPorts = true
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if c.createdConfig.Hostname != "" || len(c.createdConfig.ExposedPorts) != 0 || c.createdConfig.MacAddress != "" {
@@ -483,7 +483,7 @@ func TestUpgradeContainerNetworkModeClearsConflictingOptions(t *testing.T) {
 func TestUpgradeAlreadyCurrentDoesNotMutate(t *testing.T) {
 	c := newUpgradeClient()
 	c.newImage.ID = "old"
-	newID, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{})
+	newID, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestUpgradeAlreadyCurrentDoesNotMutate(t *testing.T) {
 
 func TestUpgradeKeepsOriginalImageReferenceForNextPull(t *testing.T) {
 	c := newUpgradeClient()
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := UpgradeImageRef(container.InspectResponse{Config: c.createdConfig}); got != "example/app:latest" {
@@ -510,7 +510,7 @@ func TestUpgradePinsImageWhenTagMoved(t *testing.T) {
 	// The tag keeps resolving to the old image (e.g. retagged in between): the
 	// replacement must still run the verified image, so pin it by ID.
 	c.tagMoved = true
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if c.createdConfig.Image != "new" || c.createdConfig.Labels[upgradeImageRefLabel] != "example/app:latest" {
@@ -544,7 +544,7 @@ func TestUpgradeDropsOldImageDefaults(t *testing.T) {
 		ExposedPorts: nat.PortSet{"80/tcp": {}},
 	}
 	c.info.HostConfig.PortBindings = nat.PortMap{"8080/tcp": {{HostPort: "8080"}}}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	got := c.createdConfig
@@ -576,7 +576,7 @@ func TestUpgradeKeepsCustomCmdWithImageEntrypoint(t *testing.T) {
 	c.oldImage.Config = &dockerspec.DockerOCIImageConfig{ImageConfig: ocispec.ImageConfig{Entrypoint: []string{"/entry"}, Cmd: []string{"serve"}}}
 	c.info.Config.Entrypoint = []string{"/entry"}
 	c.info.Config.Cmd = []string{"worker", "--fast"}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if c.createdConfig.Entrypoint != nil || strings.Join(c.createdConfig.Cmd, " ") != "worker --fast" {
@@ -587,7 +587,7 @@ func TestUpgradeKeepsCustomCmdWithImageEntrypoint(t *testing.T) {
 func TestUpgradeRollsBackCrashingReplacement(t *testing.T) {
 	c := newUpgradeClient()
 	c.newState = &container.State{Running: false, ExitCode: 1}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err == nil {
 		t.Fatal("expected crash rollback")
 	}
 	// replacement removed, original restarted, no name switch.
@@ -606,7 +606,7 @@ func TestUpgradeOldDaemonConnectsExtraNetworksBeforeStart(t *testing.T) {
 	}}
 	c.networks["front"] = network.Inspect{Driver: "bridge"}
 	c.networks["back"] = network.Inspect{Driver: "bridge"}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.createdNetworkConfig.EndpointsConfig) != 1 || c.createdNetworkConfig.EndpointsConfig["front"] == nil {
@@ -626,7 +626,7 @@ func TestUpgradeKeepsMacvlanMAC(t *testing.T) {
 		"macvlan-net": {IPAddress: "10.0.0.2", MacAddress: "02:00:00:00:00:02"},
 	}}
 	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if mac := c.createdNetworkConfig.EndpointsConfig["macvlan-net"].MacAddress; mac != "02:00:00:00:00:02" {
@@ -647,7 +647,7 @@ func TestUpgradeRecreatesNetworkDependents(t *testing.T) {
 		},
 		Config: &container.Config{Image: "old"},
 	}}
-	newID, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{})
+	newID, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +660,7 @@ func TestUpgradeRemovalFailureKeepsSwitchedContainer(t *testing.T) {
 	c := newUpgradeClient()
 	c.removeErrorID = "old-container"
 	var progress bytes.Buffer
-	newID, err := Upgrade(context.Background(), c, "old-container", &progress, image.PullOptions{})
+	newID, err := Upgrade(context.Background(), c, "old-container", &progress, image.PullOptions{}, UpgradeOptions{})
 	if err != nil || newID != "new-container" {
 		t.Fatalf("upgrade = %q, %v", newID, err)
 	}
@@ -681,7 +681,7 @@ func TestUpgradeRemovalFailureKeepsSwitchedContainer(t *testing.T) {
 func TestUpgradePlatformMismatchDoesNotMutate(t *testing.T) {
 	c := newUpgradeClient()
 	c.newImage.Architecture = "amd64"
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err == nil {
 		t.Fatal("expected platform mismatch")
 	}
 	if len(c.stopCalls) != 0 || c.createdConfig != nil {
@@ -703,11 +703,11 @@ func TestUpgradeRejectsConcurrentSameContainer(t *testing.T) {
 	}
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{})
+		_, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{})
 		firstDone <- err
 	}()
 	<-started
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil || !strings.Contains(err.Error(), "already in progress") {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err == nil || !strings.Contains(err.Error(), "already in progress") {
 		t.Fatalf("second upgrade error = %v", err)
 	}
 	close(release)
@@ -734,7 +734,7 @@ func TestUpgradeRollbackRestartsDependents(t *testing.T) {
 	c := newUpgradeClient()
 	withDependent(c, true)
 	c.startError = true
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err == nil {
 		t.Fatal("expected failure")
 	}
 	if strings.Join(c.restartCalls, ",") != "dep" {
@@ -747,7 +747,7 @@ func TestUpgradeRejectsWhenDependentBusy(t *testing.T) {
 	withDependent(c, true)
 	release, _ := tryUpgradeOperation("dep")
 	defer release()
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil || !strings.Contains(err.Error(), "qbit") {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err == nil || !strings.Contains(err.Error(), "qbit") {
 		t.Fatalf("err = %v", err)
 	}
 	if c.created != 0 {
@@ -759,7 +759,7 @@ func TestUpgradeStoppedMainRecreatesDependentStopped(t *testing.T) {
 	c := newUpgradeClient()
 	c.info.State.Running = false
 	withDependent(c, true)
-	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if c.created != 2 || len(c.startCalls) != 0 {
@@ -789,5 +789,16 @@ func TestRestoreConfigClearsLegacyPredecessorHostname(t *testing.T) {
 	info.Config.Labels = nil
 	if cfg := restoreConfig(info, image.InspectResponse{}); cfg.Hostname != "0123456789ab" {
 		t.Fatalf("user hostname dropped: %q", cfg.Hostname)
+	}
+}
+
+func TestUpgradeEnvFromImageDropsChosenValues(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.Config.Env = []string{"NGINX_VERSION=1.25", "TZ=Asia/Shanghai"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}, UpgradeOptions{EnvFromImage: []string{"NGINX_VERSION"}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(c.createdConfig.Env, ",") != "TZ=Asia/Shanghai" {
+		t.Fatalf("env = %v", c.createdConfig.Env)
 	}
 }

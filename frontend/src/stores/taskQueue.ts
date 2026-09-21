@@ -141,6 +141,7 @@ const DETAIL_LABELS: Record<string, string> = {
   proxy_url: "拉取代理", registry_id: "镜像仓库", registry_ids: "镜像仓库",
   ca_pem: "CA 证书", cert_pem: "客户端证书", key_pem: "客户端私钥",
   workerUrl: "下载代理", canBuild: "包含构建",
+  env_from_image: "改用镜像值的变量", envFromImage: "改用镜像值的变量",
 };
 const HIDDEN_KEYS = /^(password|passwd|secret|token|authorization|auth|credentials?|registry_auth|(?:ca|cert|key)_pem)$/i;
 const ENV_KEYS = /^(env|environment)$/i;
@@ -357,6 +358,7 @@ function startBrowserAction(id: string) {
     }, cb)
     : runBrowserUpgrade({
       id: String(t.meta?.containerId ?? ""),
+      envFromImage: Array.isArray(t.meta?.envFromImage) ? t.meta.envFromImage : undefined,
       workerUrl: String(t.meta?.workerUrl ?? ""),
       token: getToken() ?? "",
       creds: t.secret?.creds,

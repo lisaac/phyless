@@ -473,11 +473,15 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 		}
 		s.auditFromCtx(r, "container.upgrade", id, result)
 	}()
-	var body requestPullOptions
+	var body struct {
+		requestPullOptions
+		EnvFromImage []string `json:"env_from_image,omitempty"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	uopts := dockercontainer.UpgradeOptions{EnvFromImage: body.EnvFromImage}
 	if body.PullPolicy != "" && body.PullPolicy != "never" {
 		writeError(w, http.StatusBadRequest, "invalid pull_policy: upgrade only accepts never")
 		return
@@ -501,7 +505,7 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("X-Accel-Buffering", "no")
 	var newID string
 	if body.PullPolicy == "never" {
-		newID, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, id, w)
+		newID, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, id, w, uopts)
 	} else {
 		encoded, authErr := s.registryAuthForImage(imageRef, body.RegistryID)
 		if len(body.RegistryIDs) > 0 {
@@ -511,7 +515,7 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, authErr.Error())
 			return
 		}
-		newID, err = dockercontainer.Upgrade(ctx, s.docker, id, w, image.PullOptions{RegistryAuth: encoded})
+		newID, err = dockercontainer.Upgrade(ctx, s.docker, id, w, image.PullOptions{RegistryAuth: encoded}, uopts)
 	}
 	if err != nil {
 		dockercontainer.EmitError(w, err)

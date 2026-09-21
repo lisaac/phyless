@@ -55,7 +55,19 @@ POST /api/containers/check-updates      （operator）
 → [{ "id", "ref", "status", "local_id", "remote_id", "error" }]
 ```
 
-`ids` 为空时检查全部容器。升级仍使用 `POST /api/containers/{id}/upgrade`：`pull_policy: "never"` 表示不拉取，直接用本地镜像。
+`ids` 为空时检查全部容器。升级仍使用 `POST /api/containers/{id}/upgrade`：
+
+- `pull_policy: "never"`：不拉取，直接用本地镜像；
+- `env_from_image: ["KEY", …]`：这些变量改用新镜像的值（见下文"旧版升级残留的 ENV"）。
+
+## 代理导入的 tar 格式
+
+服务端代理（`backend/internal/docker/image_pull.go` 的 `writeImageTar`）和浏览器代理（`frontend/src/api/dockerTar.ts`）生成相同结构的 tar：OCI image layout（`oci-layout`、`index.json`，`index.json` 指向**原样保留的 registry manifest**），同时附带 docker-save 格式的 `manifest.json`。
+
+- **classic 镜像存储**：读取 `manifest.json`，镜像 ID 等于 config digest；
+- **containerd 镜像存储**：原样导入 OCI layout，镜像 ID 等于 registry 的平台 manifest digest。`index.json` 带 `io.containerd.image.name` 注解，镜像名是完整规范名（如 `docker.io/library/nginx:1.27`）。
+
+如果只给 docker-save 格式，containerd 会自己合成一份 manifest，得到的 ID 与 registry 对不上：导入后的校验会失败，检查升级也会一直显示可升级。因此导入校验（`verifyLoaded`）和"本地已是最新"判断都同时接受 config digest 和 manifest digest。
 
 ## 升级时如何还原配置
 
@@ -70,6 +82,7 @@ POST /api/containers/check-updates      （operator）
   - 用 `--entrypoint` 显式指定、且同时丢弃了镜像 CMD 的，保留入口点，避免把 CMD 恢复回来。
   - 已发布的端口始终保持暴露。
 - **`Config.Image`**：保持原写法（如 `nginx:latest`）。只有 tag 已不指向刚校验过的镜像时，才用镜像 ID 固定，并把原 tag 记在 label `io.phyless.upgrade-image-ref` 中，供下次升级使用。
+- **旧版升级残留的 ENV**：旧版 phyless 升级时，会把前一个镜像的 ENV 原样复制进新容器，这些值和"你特意覆盖的值"在数据上无法区分。对带 `io.phyless.upgrade-image-ref` 标签的容器，升级弹窗会列出"当前镜像也定义了、但值不同"的变量，默认勾选"改用新镜像的值"；你特意设置的变量取消勾选即可保留。勾选的变量通过升级接口的 `env_from_image` 传给后端，升级时去掉容器里的值，由新镜像提供（新镜像不再定义则移除）。通常只需确认一次：升级后这个标签会被移除，之后按新逻辑自动处理；如果当时 tag 已指向别的镜像、容器仍被固定，下次还会提示。
 - **Hostname**：等于容器短 ID（Docker 默认值）时清空。旧版 phyless 升级过的容器（带上述 label）继承了前一个容器的短 ID，也会一并清掉。
 - **网络**：
   - 保留所有网络、别名、静态 IP 和 IPAM 配置；
@@ -96,8 +109,7 @@ POST /api/containers/check-updates      （operator）
 
 ## 已知限制
 
-- 旧版 phyless 升级过的容器，已经把前一个镜像的 ENV 固化进配置，无法自动识别。例如 `NGINX_VERSION` 这类值需要手动检查一次。
-- 在 containerd 镜像存储下，经**服务端代理**导入的镜像（docker-save 格式）ID 与 registry 的 digest 都不一致，检查可能一直显示"可升级"，升级时会提示已是最新。
+- 在开启 containerd 镜像存储的 daemon 上，OCI 格式导入还需要实机验证，可运行 `PHYLESS_IMAGE_PULL_ACCEPTANCE=1 go test ./backend/internal/docker -run Acceptance`。本次修改前用服务端代理导入的镜像，ID 仍是合成 manifest 的 digest，需要重新拉取一次才能被正确识别。
 - 升级后不会清理旧镜像。
 - 用旧式 `--link` 链接到本容器的其他容器不会被处理。
 - Compose 容器的 `com.docker.compose.image` 标签仍是旧值，之后执行 `compose up` 会重建该容器。

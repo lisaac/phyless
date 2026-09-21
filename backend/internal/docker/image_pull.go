@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/containerd/platforms"
+	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/registry"
 	dockerclient "github.com/docker/docker/client"
@@ -22,7 +24,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	xproxy "golang.org/x/net/proxy"
@@ -295,7 +296,7 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 	// daemon already has this exact tag/config, return a normal progress stream
 	// without starting ImageLoad; this is the proxy equivalent of Docker's
 	// up-to-date check and avoids a needless import.
-	if localImageMatches(pullCtx, c.APIClient, tarTag(tag), expected.config.String()) {
+	if localImageMatches(pullCtx, c.APIClient, tarTag(tag), expected) {
 		transport.CloseIdleConnections()
 		return io.NopCloser(strings.NewReader(`{"status":"Image is up to date"}` + "\n")), nil
 	}
@@ -304,9 +305,9 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 	return startPullPipeline(ctx, pullCtx, cancel, c.APIClient, tag, img, expected, platform, transport)
 }
 
-func localImageMatches(ctx context.Context, apiClient dockerclient.APIClient, ref, expectedID string) bool {
+func localImageMatches(ctx context.Context, apiClient dockerclient.APIClient, ref string, expected expectedImage) bool {
 	local, err := apiClient.ImageInspect(ctx, ref)
-	return err == nil && strings.EqualFold(local.ID, expectedID)
+	return err == nil && expected.matches(local.ID)
 }
 
 func (c *Client) pullPlatform(ctx context.Context, raw string) (v1.Platform, error) {
@@ -428,8 +429,16 @@ func RegistryHost(raw string) (string, error) {
 	return host, nil
 }
 
+// expectedImage is the loaded image's acceptable ID: the config digest under
+// Docker's classic store, the (verbatim) platform manifest digest under the
+// containerd image store.
 type expectedImage struct {
-	config v1.Hash
+	config   v1.Hash
+	manifest v1.Hash
+}
+
+func (e expectedImage) matches(id string) bool {
+	return strings.EqualFold(id, e.config.String()) || (e.manifest.Hex != "" && strings.EqualFold(id, e.manifest.String()))
 }
 
 func validateRemoteImage(img v1.Image, platform v1.Platform) (expectedImage, error) {
@@ -477,7 +486,11 @@ func validateRemoteImage(img v1.Image, platform v1.Platform) (expectedImage, err
 	if err != nil || configName != configDigest {
 		return expectedImage{}, errors.New("image config ID mismatch")
 	}
-	return expectedImage{config: configDigest}, nil
+	manifestDigest, err := img.Digest()
+	if err != nil {
+		return expectedImage{}, errors.New("image manifest digest unavailable")
+	}
+	return expectedImage{config: configDigest, manifest: manifestDigest}, nil
 }
 
 func supportedLayerMediaType(mt types.MediaType) bool {
@@ -593,7 +606,14 @@ func (r *trackedLayerReader) Close() error {
 	return r.err
 }
 
-func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) error {
+// writeImageTar emits the same layout the browser path builds (see
+// frontend/src/api/dockerTar.ts): an OCI image layout whose index.json points
+// at the registry's manifest bytes verbatim, plus a docker-save manifest.json.
+// The classic image store reads manifest.json (image ID = config digest); the
+// containerd store imports the OCI layout as-is (image ID = the registry's
+// manifest digest). A plain docker-save tar would make containerd synthesize
+// a manifest whose digest matches nothing in the registry.
+func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) (err error) {
 	manifest, err := img.Manifest()
 	if err != nil {
 		return err
@@ -601,6 +621,41 @@ func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) error {
 	if manifest == nil {
 		return errors.New("image manifest is unavailable")
 	}
+	rawManifest, err := img.RawManifest()
+	if err != nil {
+		return err
+	}
+	manifestDigest, err := img.Digest()
+	if err != nil {
+		return err
+	}
+	if sum, _, err := v1.SHA256(bytes.NewReader(rawManifest)); err != nil || sum != manifestDigest {
+		return errors.New("image manifest digest mismatch")
+	}
+	mediaType, err := img.MediaType()
+	if err != nil {
+		return err
+	}
+	rawConfig, err := img.RawConfigFile()
+	if err != nil {
+		return err
+	}
+	configFile, err := img.ConfigFile()
+	if err != nil {
+		return err
+	}
+	fullName, err := reference.ParseNormalizedNamed(tarTag(tag))
+	if err != nil {
+		return errors.New("invalid image reference")
+	}
+	fullName = reference.TagNameOnly(fullName)
+
+	tracker := newLayerTracker()
+	defer func() {
+		if closeErr := tracker.closeAll(); err == nil {
+			err = closeErr
+		}
+	}()
 	layerSizes := make([]int64, len(manifest.Layers))
 	for n, layer := range manifest.Layers {
 		if layer.Size < 0 {
@@ -608,13 +663,88 @@ func writeImageTar(w io.Writer, tag name.Tag, img v1.Image) error {
 		}
 		layerSizes[n] = layer.Size
 	}
-	tracker := newLayerTracker()
-	wrapped := &trackedImage{Image: img, tracker: tracker, layerSizes: layerSizes}
-	err = tarball.Write(tag, wrapped, w)
-	if closeErr := tracker.closeAll(); err == nil {
-		err = closeErr
+	layers, err := (&trackedImage{Image: img, tracker: tracker, layerSizes: layerSizes}).Layers()
+	if err != nil {
+		return err
 	}
-	return err
+
+	tw := tar.NewWriter(w)
+	blob := func(h v1.Hash) string { return "blobs/sha256/" + h.Hex }
+	writeBytes := func(path string, data []byte) error {
+		if err := tw.WriteHeader(&tar.Header{Name: path, Mode: 0o644, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			return err
+		}
+		_, err := tw.Write(data)
+		return err
+	}
+	if err := writeBytes(blob(manifest.Config.Digest), rawConfig); err != nil {
+		return err
+	}
+	if err := writeBytes(blob(manifestDigest), rawManifest); err != nil {
+		return err
+	}
+	layerPaths := make([]string, len(layers))
+	for n, layer := range layers {
+		desc := manifest.Layers[n]
+		layerPaths[n] = blob(desc.Digest)
+		if err := tw.WriteHeader(&tar.Header{Name: layerPaths[n], Mode: 0o644, Size: desc.Size, Typeflag: tar.TypeReg}); err != nil {
+			return err
+		}
+		rc, err := layer.Compressed()
+		if err != nil {
+			return err
+		}
+		copied, err := io.Copy(tw, io.LimitReader(rc, desc.Size+1))
+		closeErr := rc.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if copied != desc.Size {
+			return fmt.Errorf("image layer size mismatch: got %d bytes, want %d", copied, desc.Size)
+		}
+	}
+
+	platform := configFile.Platform()
+	index := map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     types.OCIImageIndex,
+		"manifests": []map[string]any{{
+			"mediaType": mediaType,
+			"digest":    manifestDigest.String(),
+			"size":      len(rawManifest),
+			"annotations": map[string]string{
+				// containerd names the image from this; ref.name alone is just the tag.
+				"io.containerd.image.name":          fullName.String(),
+				"org.opencontainers.image.ref.name": tag.TagStr(),
+			},
+			"platform": platform,
+		}},
+	}
+	dockerManifest := []map[string]any{{
+		"Config":   blob(manifest.Config.Digest),
+		"RepoTags": []string{tarTag(tag)},
+		"Layers":   layerPaths,
+	}}
+	for _, entry := range []struct {
+		path string
+		v    any
+	}{
+		{"oci-layout", map[string]string{"imageLayoutVersion": "1.0.0"}},
+		{"index.json", index},
+		{"manifest.json", dockerManifest},
+	} {
+		data, err := json.Marshal(entry.v)
+		if err != nil {
+			return err
+		}
+		if err := writeBytes(entry.path, data); err != nil {
+			return err
+		}
+	}
+	return tw.Close()
 }
 
 type pullPipeline struct {
@@ -825,8 +955,8 @@ func verifyLoaded(ctx context.Context, apiClient dockerclient.APIClient, tag nam
 	if err != nil {
 		return errors.New("cannot inspect loaded image")
 	}
-	if !strings.EqualFold(loaded.ID, expected.config.String()) {
-		return errors.New("loaded image config ID does not match downloaded config")
+	if !expected.matches(loaded.ID) {
+		return errors.New("loaded image ID does not match downloaded image")
 	}
 	if !hasLoadedTag(loaded.RepoTags, tag) {
 		return errors.New("loaded image tag does not match requested tag")

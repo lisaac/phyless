@@ -452,14 +452,14 @@ func shortID(s string) string {
 // Upgrade pulls the latest image, compares it with the running container's image,
 // and recreates the container only when a newer image is available.
 // Returns the new container ID, or "" if already up to date.
-func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions) (string, error) {
-	return upgrade(ctx, cli, containerID, w, opts, false)
+func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, uopts UpgradeOptions) (string, error) {
+	return upgrade(ctx, cli, containerID, w, opts, false, uopts)
 }
 
 // UpgradeWithoutPull performs the same guarded upgrade using an image that a
 // caller has already loaded into the daemon (for example browser-pull).
-func UpgradeWithoutPull(ctx context.Context, cli client.APIClient, containerID string, w io.Writer) (string, error) {
-	return upgrade(ctx, cli, containerID, w, image.PullOptions{}, true)
+func UpgradeWithoutPull(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, uopts UpgradeOptions) (string, error) {
+	return upgrade(ctx, cli, containerID, w, image.PullOptions{}, true, uopts)
 }
 
 func cloneHostConfig(info container.InspectResponse) *container.HostConfig {

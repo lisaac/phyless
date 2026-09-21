@@ -80,7 +80,8 @@ export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullC
 
   const localId = await deps.inspectLocalId(img.repoTag);
   if (cb.signal.aborted) throw new Error("已取消");
-  if (localId && localId === `sha256:${img.config.hex}`) {
+  // Classic image store: ID = config digest; containerd store: ID = manifest digest.
+  if (localId && (localId === `sha256:${img.config.hex}` || localId === img.manifest.digest)) {
     cb.note("镜像已是最新，无需下载");
     return;
   }
@@ -326,6 +327,7 @@ function upgradeTarget(info: UpgradeInspect, image: ImageInspect): { ref: string
 
 export interface BrowserUpgradeParams {
   id: string;
+  envFromImage?: string[];
   workerUrl: string;
   token: string;
   creds?: Creds;
@@ -360,7 +362,7 @@ export async function runBrowserUpgrade(
   await runBrowserAction({
     pull: { ref: target.ref, platform: target.platform, workerUrl: params.workerUrl, token: params.token, creds: params.creds },
     path: `/api/containers/${encodeURIComponent(params.id)}/upgrade`,
-    body: { pull_policy: "never" },
+    body: { pull_policy: "never", ...(params.envFromImage?.length ? { env_from_image: params.envFromImage } : {}) },
     note: "升级容器（使用本地镜像）…",
   }, cb, deps);
 }

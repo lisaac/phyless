@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -9,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -232,6 +235,67 @@ func TestWriteImageTarClosesLayerReaders(t *testing.T) {
 	}
 }
 
+// The tar must carry the registry manifest verbatim behind an OCI layout so
+// the containerd image store keeps its digest as the image ID.
+func TestWriteImageTarKeepsRegistryManifest(t *testing.T) {
+	img, _ := newStaticTestImage(t, newCloseAwareTestLayer(t))
+	tag, err := name.NewTag("nginx:1.27")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := writeImageTar(&buf, tag, img); err != nil {
+		t.Fatal(err)
+	}
+	rawManifest, _ := img.RawManifest()
+	digest, _ := img.Digest()
+	cfgName, _ := img.ConfigName()
+	files := map[string][]byte{}
+	tr := tar.NewReader(&buf)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[h.Name], _ = io.ReadAll(tr)
+	}
+	if !bytes.Equal(files["blobs/sha256/"+digest.Hex], rawManifest) {
+		t.Fatal("manifest blob is not the registry's bytes")
+	}
+	if _, ok := files["blobs/sha256/"+cfgName.Hex]; !ok || files["oci-layout"] == nil {
+		t.Fatalf("missing config blob or oci-layout: %v", slices.Collect(maps.Keys(files)))
+	}
+	var index struct {
+		Manifests []struct {
+			Digest      string            `json:"digest"`
+			Annotations map[string]string `json:"annotations"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(files["index.json"], &index); err != nil || len(index.Manifests) != 1 {
+		t.Fatalf("index.json = %s (%v)", files["index.json"], err)
+	}
+	m := index.Manifests[0]
+	if m.Digest != digest.String() || m.Annotations["io.containerd.image.name"] != "docker.io/library/nginx:1.27" || m.Annotations["org.opencontainers.image.ref.name"] != "1.27" {
+		t.Fatalf("index entry = %+v", m)
+	}
+	var dm []struct {
+		Config   string
+		RepoTags []string
+		Layers   []string
+	}
+	if err := json.Unmarshal(files["manifest.json"], &dm); err != nil || len(dm) != 1 || dm[0].Config != "blobs/sha256/"+cfgName.Hex || dm[0].RepoTags[0] != "nginx:1.27" {
+		t.Fatalf("manifest.json = %s (%v)", files["manifest.json"], err)
+	}
+	for _, l := range dm[0].Layers {
+		if _, ok := files[l]; !ok {
+			t.Fatalf("layer %s missing", l)
+		}
+	}
+}
+
 func (l *hangingHTTPTestLayer) Digest() (v1.Hash, error) { return l.digest, nil }
 func (l *hangingHTTPTestLayer) DiffID() (v1.Hash, error) { return l.diffID, nil }
 func (l *hangingHTTPTestLayer) Size() (int64, error)     { return 1, nil }
@@ -334,6 +398,7 @@ func TestLocalImageMatchesExpectedConfig(t *testing.T) {
 		want bool
 	}{
 		{name: "same", id: "sha256:abc", want: true},
+		{name: "containerd store manifest digest", id: "sha256:0123", want: true},
 		{name: "different", id: "sha256:def", want: false},
 		{name: "inspect error", err: errors.New("not found"), want: false},
 	} {
@@ -341,7 +406,10 @@ func TestLocalImageMatchesExpectedConfig(t *testing.T) {
 			api := &pipelineAPIClient{inspect: func(context.Context, string) (image.InspectResponse, error) {
 				return image.InspectResponse{ID: tc.id}, tc.err
 			}}
-			if got := localImageMatches(context.Background(), api, "example.test/repo:tag", "sha256:abc"); got != tc.want {
+			if got := localImageMatches(context.Background(), api, "example.test/repo:tag", expectedImage{
+				config:   v1.Hash{Algorithm: "sha256", Hex: "abc"},
+				manifest: v1.Hash{Algorithm: "sha256", Hex: "0123"},
+			}); got != tc.want {
 				t.Fatalf("localImageMatches = %v, want %v", got, tc.want)
 			}
 		})

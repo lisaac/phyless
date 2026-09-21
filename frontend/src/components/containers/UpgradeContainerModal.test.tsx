@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
-import { UpgradeContainerModal, composeUpgradeWarning } from "./UpgradeContainerModal";
+import { UpgradeContainerModal, composeUpgradeWarning, staleEnvCandidates } from "./UpgradeContainerModal";
 
 vi.mock("../../api/client", () => ({ getToken: () => "token", get: vi.fn().mockResolvedValue([]), request: vi.fn(), imageInspectUrl: (id: string) => id }));
 vi.mock("../../stores/taskQueue", () => ({ enqueue: vi.fn(() => ({ done: Promise.resolve() })) }));
@@ -81,5 +81,37 @@ describe("composeUpgradeWarning", () => {
     expect(w).toContain("web-1（myapp）");
     expect(w).not.toContain("plain");
     expect(composeUpgradeWarning([{ id: "a", name: "plain" }])).toBeNull();
+  });
+});
+
+const legacyInspect = (path: string) => Promise.resolve(path.includes("/inspect")
+  ? { Image: "sha256:b", Config: { Env: ["PATH=/bin", "NGINX_VERSION=1.25", "TZ=UTC", "EXTRA=1"] } }
+  : { Config: { Env: ["PATH=/bin", "NGINX_VERSION=1.26", "TZ=Asia/Shanghai"] } });
+
+describe("staleEnvCandidates", () => {
+  it("lists variables the image defines with a different value", async () => {
+    const got = await staleEnvCandidates("c1", legacyInspect as never);
+    expect(got).toEqual([
+      { key: "NGINX_VERSION", current: "1.25", image: "1.26" },
+      { key: "TZ", current: "UTC", image: "Asia/Shanghai" },
+    ]);
+  });
+});
+
+describe("UpgradeContainerModal stale env", () => {
+  it("sends reviewed variables as env_from_image, minus the ones kept", async () => {
+    const { enqueue } = await import("../../stores/taskQueue");
+    const { get } = await import("../../api/client");
+    vi.mocked(get).mockImplementation(legacyInspect as never);
+    const onClose = vi.fn();
+    render(() => <UpgradeContainerModal
+      targets={[{ id: "old1", name: "web", labels: { "io.phyless.upgrade-image-ref": "nginx:latest" } }]}
+      onClose={onClose} />);
+    const tz = await screen.findByText("TZ");
+    fireEvent.click(tz); // keep TZ: it was set on purpose
+    fireEvent.click(screen.getByRole("button", { name: "升级" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ body: { env_from_image: ["NGINX_VERSION"] } }));
+    vi.mocked(get).mockResolvedValue([]);
   });
 });
