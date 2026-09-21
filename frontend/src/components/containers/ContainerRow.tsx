@@ -10,6 +10,9 @@ import { FileBrowser } from "../shared/FileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { get, getToken } from "../../api/client";
+import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
+import { UpdateBadge } from "./UpdateBadge";
+import { toUpgradeTarget, type UpgradeTarget } from "./UpgradeContainerModal";
 import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary, FileEntry } from "../../types";
 
@@ -26,7 +29,7 @@ export const ContainerRow: Component<{
   act: (id: string, verb: string, name?: string) => void | Promise<unknown>;
   onViewCmd: (target: { id: string; name: string }) => void;
   onConsole?: (target: { id: string; name: string }) => void;
-  onUpgrade?: (target: { id: string; name: string }) => void;
+  onUpgrade?: (target: UpgradeTarget) => void;
 }> = (p) => {
   const navigate = useNavigate();
   const c = () => p.c;
@@ -37,6 +40,7 @@ export const ContainerRow: Component<{
   const running = () => c().State === "running" || c().State === "restarting";
   const paused = () => c().State === "paused";
   const browsable = () => c().State !== "removing";
+  const update = () => updateCheckFor(c().Id, c().ImageID);
 
   const rowBg = () => {
     const s = c().State;
@@ -139,7 +143,10 @@ export const ContainerRow: Component<{
             {name() || <span class="text-zinc-400">(unnamed)</span>}
           </a>
         </div>
-        <div class="max-w-[10rem] truncate text-[11px] text-zinc-400" title={c().Image}>{displayImage(c().Image, c().Labels)}</div>
+        <div class="flex max-w-[12rem] items-center gap-1">
+          <span class="min-w-0 truncate text-[11px] text-zinc-400" title={c().Image}>{displayImage(c().Image, c().Labels)}</span>
+          <UpdateBadge check={update()} />
+        </div>
         <div class="mt-0.5 text-[11px] text-zinc-400">
           {fmtContainerStatus(c().State, c().Status)}
           {" · 创建 "}{fmtRelTime(c().Created)}
@@ -159,7 +166,11 @@ export const ContainerRow: Component<{
             </Show>
 
             <Show when={p.onUpgrade}>
-              <IBtn title="升级（拉取镜像并替换容器）" onClick={() => p.onUpgrade?.({ id: c().Id, name: name() || c().Id.slice(0, 8) })}>↑</IBtn>
+              <IBtn
+                title={isUpgradable(update()) ? "有新镜像：升级（拉取镜像并替换容器）" : "升级（拉取镜像并替换容器）"}
+                accent={isUpgradable(update())}
+                onClick={() => p.onUpgrade?.(toUpgradeTarget(c()))}
+              >↑</IBtn>
             </Show>
 
             <span class="mx-0.5 text-zinc-400">│</span>

@@ -6,7 +6,10 @@ import { get, getToken, imageInspectUrl, isApiNotFound } from "../../api/client"
 import { enqueue, queued, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { createContainerActions } from "./containerActions";
 import { toast } from "../shared/Toast";
-import { UpgradeContainerModal } from "./UpgradeContainerModal";
+import { UpgradeContainerModal, type UpgradeTarget } from "./UpgradeContainerModal";
+import { CheckUpdatesModal } from "./CheckUpdatesModal";
+import { UpdateBadge } from "./UpdateBadge";
+import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { CreateContainerModal } from "./CreateContainerModal";
@@ -160,7 +163,8 @@ export const ContainerDetailPage: Component = () => {
   const [showCmdModal, setShowCmdModal] = createSignal(false);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
-  const [upgradeTarget, setUpgradeTarget] = createSignal<{ id: string; name: string } | null>(null);
+  const [upgradeTargets, setUpgradeTargets] = createSignal<UpgradeTarget[] | null>(null);
+  const [checkTargets, setCheckTargets] = createSignal<{ id: string; name: string }[] | null>(null);
 
   // React to queued tasks on this container finishing (while mounted): refetch
   // after any of them; after a successful upgrade or delete, move to the new
@@ -193,6 +197,7 @@ export const ContainerDetailPage: Component = () => {
   const state = () => inspect()?.State?.Status ?? "unknown";
   const running = () => state() === "running";
   const paused = () => state() === "paused";
+  const update = () => updateCheckFor(id(), inspect()?.Image);
 
   // Upgrade the tab strip's placeholder ("容器 abc12345") to the real name once known.
   // This page isn't remounted when switching between two containers (same
@@ -352,8 +357,18 @@ export const ContainerDetailPage: Component = () => {
             <Show when={inspect()?.State?.Health?.Status}>
               {(h) => <span class="text-xs text-zinc-400">· {h()}</span>}
             </Show>
+            <UpdateBadge check={update()} />
           </div>
-          <p class="mt-0.5 font-mono text-[11px] text-zinc-400">{cfg().Image}</p>
+          <p class="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-zinc-400">
+            {cfg().Image}
+            <Show when={hasRole("operator")}>
+              <button
+                class="font-sans text-[11px] text-zinc-500 transition-colors hover:text-zinc-200"
+                title="检查该容器的镜像是否有新版本"
+                onClick={() => setCheckTargets([{ id: id(), name: name() }])}
+              >↻ 检查升级</button>
+            </Show>
+          </p>
         </div>
 
         {/* Action strip — boxed the same way ComposeDetailPage's action row is
@@ -376,7 +391,11 @@ export const ContainerDetailPage: Component = () => {
             <Btn onClick={() => {
               window.open(`/api/containers/${id()}/export?token=${encodeURIComponent(getToken() ?? "")}`, "_blank");
             }}>↓ 导出 tar</Btn>
-            <Btn onClick={() => setUpgradeTarget({ id: id(), name: name() })}>↑ 升级</Btn>
+            <Btn
+              accent={isUpgradable(update())}
+              title={isUpgradable(update()) ? "有新镜像可升级" : undefined}
+              onClick={() => setUpgradeTargets([{ id: id(), name: name(), imageId: inspect()?.Image, labels: cfg().Labels }])}
+            >↑ 升级</Btn>
             <Btn onClick={() => void openCmdModal()}>
               <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
             </Btn>
@@ -746,7 +765,8 @@ export const ContainerDetailPage: Component = () => {
       {/* ── Copy a file/dir to another container ─────────────────────────── */}
       <CopyToContainerModal source={copySource()} onClose={() => setCopySource(null)} />
 
-      <UpgradeContainerModal target={upgradeTarget()} onClose={() => setUpgradeTarget(null)} />
+      <UpgradeContainerModal targets={upgradeTargets()} onClose={() => setUpgradeTargets(null)} />
+      <CheckUpdatesModal targets={checkTargets()} onClose={() => setCheckTargets(null)} />
 
       {/* ── Download progress — non-blocking floating card ───────────────── */}
       <DownloadStatusWidget task={download} />

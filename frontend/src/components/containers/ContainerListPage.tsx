@@ -8,7 +8,9 @@ import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { ViewCmdModal } from "./ViewCmdModal";
 import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
-import { UpgradeContainerModal } from "./UpgradeContainerModal";
+import { UpgradeContainerModal, toUpgradeTarget, type UpgradeTarget } from "./UpgradeContainerModal";
+import { CheckUpdatesModal } from "./CheckUpdatesModal";
+import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
 import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
@@ -22,14 +24,18 @@ const DEFAULT_BULK_RUN = "docker run -d --name my-container nginx:latest";
 export const ContainerListPage: Component = () => {
   const store = createResourceStore<ContainerSummary>("/api/containers");
   const { isP, act } = createContainerActions();
-  const view = createListView(store.items, (c) =>
+  const upgradable = (c: ContainerSummary) => isUpgradable(updateCheckFor(c.Id, c.ImageID));
+  const upgradableCount = () => store.items().filter(upgradable).length;
+  const [onlyUpgradable, setOnlyUpgradable] = createSignal(false);
+  const view = createListView(() => onlyUpgradable() ? store.items().filter(upgradable) : store.items(), (c) =>
     `${c.Names.join(" ")} ${c.Image} ${c.Id} ${c.Status}`);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [showCreate, setShowCreate] = createSignal(false);
   const [showImport, setShowImport] = createSignal(false);
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
-  const [upgradeTarget, setUpgradeTarget] = createSignal<{ id: string; name: string } | null>(null);
+  const [upgradeTargets, setUpgradeTargets] = createSignal<UpgradeTarget[] | null>(null);
+  const [checkTargets, setCheckTargets] = createSignal<{ id: string; name: string }[] | null>(null);
   // Bulk Run/Compose no longer opens a separate read-only viewer — it feeds
   // the same CreateContainerModal used for "+新建容器", which detects (from
   // the compose.yaml content itself) whether this is one service or many
@@ -60,6 +66,17 @@ export const ContainerListPage: Component = () => {
       return inspectToRunCmd(container, image);
     }));
     setBulkRunText(cmds.join("\n\n"));
+  };
+
+  // Selection-scoped like Run/Compose: nothing selected → check every container.
+  const openCheck = () => {
+    const sel = selected();
+    const pool = sel.size ? store.items().filter((c) => sel.has(c.Id)) : store.items();
+    setCheckTargets(pool.map((c) => ({ id: c.Id, name: containerName(c) || c.Id.slice(0, 8) })));
+  };
+  const openBulkUpgrade = () => {
+    const sel = selected();
+    setUpgradeTargets(store.items().filter((c) => sel.has(c.Id)).map(toUpgradeTarget));
   };
 
   const n = () => selected().size;
@@ -112,6 +129,23 @@ export const ContainerListPage: Component = () => {
           <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
         </Btn>
 
+        <Show when={hasRole("operator")}>
+          <span class="text-zinc-400">│</span>
+          <Btn title={n() > 0 ? "检查选中容器是否有新镜像" : "检查全部容器是否有新镜像"} onClick={openCheck}>↻ 检查升级</Btn>
+          <Btn title="升级选中容器" disabled={n() === 0} onClick={openBulkUpgrade}>↑ 升级选中</Btn>
+        </Show>
+        <Show when={upgradableCount() > 0 || onlyUpgradable()}>
+          <button
+            class={`border px-1.5 py-0.5 text-[11px] transition-colors ${onlyUpgradable()
+              ? "border-amber-500 bg-amber-500/20 text-amber-300"
+              : "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"}`}
+            title={onlyUpgradable() ? "显示全部容器" : "只显示可升级的容器"}
+            onClick={() => { setOnlyUpgradable((v) => !v); setSelected(new Set<string>()); }}
+          >
+            可升级 {upgradableCount()}{onlyUpgradable() ? " ✕" : ""}
+          </button>
+        </Show>
+
         <Show when={n() > 0}>
           <button class="ml-auto text-zinc-400 hover:text-zinc-400" onClick={() => setSelected(new Set())}>
             清除
@@ -138,7 +172,7 @@ export const ContainerListPage: Component = () => {
                 act={act}
                 onViewCmd={setRunTarget}
                 onConsole={setConsoleTarget}
-                onUpgrade={setUpgradeTarget}
+                onUpgrade={(t) => setUpgradeTargets([t])}
               />
             )}
           </For>
@@ -155,7 +189,8 @@ export const ContainerListPage: Component = () => {
       {/* ── Run/Compose modal (per-row Compose button — single container only) ── */}
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
-      <UpgradeContainerModal target={upgradeTarget()} onClose={() => setUpgradeTarget(null)} />
+      <UpgradeContainerModal targets={upgradeTargets()} onClose={() => setUpgradeTargets(null)} />
+      <CheckUpdatesModal targets={checkTargets()} onClose={() => setCheckTargets(null)} />
 
       {/* ── Create container modal ───────────────────────────────────────────── */}
       <CreateContainerModal

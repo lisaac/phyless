@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, setToken } from "../api/client";
 import { runBrowserPull, runBrowserPullCompose, runBrowserCreate, runBrowserUpgrade, runComposeUpdate, type BrowserPullCallbacks } from "./browserPull";
+import { runUpdateCheck } from "./updateCheck";
 import { toast } from "../components/shared/Toast";
 
 // Global queue for every server-mutating request (pull/upgrade/compose/
@@ -179,7 +180,7 @@ function taskDetails(spec: TaskSpec): TaskDetail[] {
     ? spec.body as Record<string, unknown> : {};
   const facts: Record<string, unknown> = { ...body, ...spec.meta };
   for (const [key, raw] of Object.entries(facts)) {
-    if (key === "type" || key === "verb" || key === "action" || key === "containerId" || key === "composeId") continue;
+    if (key === "type" || key === "verb" || key === "action" || key === "containerId" || key === "composeId" || key === "checkIds") continue;
     const value = safeDetailValue(key, raw);
     if (value !== undefined) details.push({ label: DETAIL_LABELS[key] ?? key, value });
   }
@@ -396,6 +397,16 @@ function start(id: string) {
   if (t.meta?.type === "browser-pull-compose") { startBrowserPullCompose(id); return; }
   if (t.meta?.type === "browser-pull-action") { startBrowserAction(id); return; }
   if (t.meta?.type === "compose-update") { startComposeUpdate(id); return; }
+  if (t.meta?.type === "update-check") {
+    startBrowserTask(id, (cb) => runUpdateCheck({
+      ids: Array.isArray(t.meta?.checkIds) ? t.meta.checkIds : [],
+      mode: t.meta?.mode === "browser" ? "browser" : "server",
+      pullOptions: (t.body as Record<string, unknown> | undefined) ?? undefined,
+      workerUrl: String(t.meta?.workerUrl ?? ""),
+      creds: t.secret?.creds,
+    }, cb));
+    return;
+  }
   const { url, body, file, method } = t;
   const layerMap = new Map<string, LayerProgress>();
   let buf = "";

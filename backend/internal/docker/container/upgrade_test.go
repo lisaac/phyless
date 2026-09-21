@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -42,7 +44,23 @@ type upgradeClient struct {
 	pullCalls            int
 	createHook           func()
 	networks             map[string]network.Inspect
+	apiVersion           string
+	listed               []container.Summary
+	others               map[string]container.InspectResponse
+	newState             *container.State
+	created              int
+	tagMoved             bool
+	createdImages        map[string]string
+	createdHostConfigs   []*container.HostConfig
+	restartCalls         []string
 }
+
+func (c *upgradeClient) ContainerRestart(_ context.Context, id string, _ container.StopOptions) error {
+	c.restartCalls = append(c.restartCalls, id)
+	return nil
+}
+
+func init() { upgradeSettleTime = 0 }
 
 func newUpgradeClient() *upgradeClient {
 	return &upgradeClient{
@@ -62,12 +80,42 @@ func newUpgradeClient() *upgradeClient {
 	}
 }
 
-func (c *upgradeClient) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
+func (c *upgradeClient) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+	if strings.HasPrefix(id, "new-container") {
+		state := c.newState
+		if state == nil {
+			state = &container.State{Running: true}
+		}
+		return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: id, Image: c.createdImages[id], State: state}}, nil
+	}
+	if other, ok := c.others[id]; ok {
+		return other, nil
+	}
 	return c.info, nil
 }
 
-func (c *upgradeClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
-	return c.oldImage, nil
+// The container's own image ID resolves to the old image; any tag resolves to
+// the freshly pulled one.
+func (c *upgradeClient) ImageInspect(_ context.Context, ref string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+	if ref == c.oldImage.ID || (c.tagMoved && ref == "example/app:latest") {
+		return c.oldImage, nil
+	}
+	return c.newImage, nil
+}
+
+func (c *upgradeClient) ClientVersion() string {
+	if c.apiVersion == "" {
+		return "1.47"
+	}
+	return c.apiVersion
+}
+
+func (c *upgradeClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
+	return c.listed, nil
+}
+
+func (c *upgradeClient) ContainerLogs(context.Context, string, container.LogsOptions) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func (c *upgradeClient) ImageInspectWithRaw(context.Context, string) (image.InspectResponse, []byte, error) {
@@ -109,10 +157,24 @@ func (c *upgradeClient) ContainerCreate(_ context.Context, cfg *container.Config
 	c.createdHostConfig = hostCfg
 	c.createdNetworkConfig = networking
 	c.createdName = name
+	c.createdHostConfigs = append(c.createdHostConfigs, hostCfg)
 	if c.createHook != nil {
 		c.createHook()
 	}
-	return container.CreateResponse{ID: "new-container"}, nil
+	c.created++
+	id := "new-container"
+	if c.created > 1 {
+		id = fmt.Sprintf("new-container-%d", c.created)
+	}
+	img, _ := c.ImageInspect(context.Background(), cfg.Image)
+	if cfg.Image == c.oldImage.ID || strings.HasPrefix(cfg.Image, "sha256:") || cfg.Image == c.newImage.ID {
+		img.ID = cfg.Image
+	}
+	if c.createdImages == nil {
+		c.createdImages = map[string]string{}
+	}
+	c.createdImages[id] = img.ID
+	return container.CreateResponse{ID: id}, nil
 }
 
 func (c *upgradeClient) ContainerStart(_ context.Context, id string, _ container.StartOptions) error {
@@ -137,7 +199,7 @@ func (c *upgradeClient) NetworkDisconnect(_ context.Context, name, _ string, _ b
 
 func (c *upgradeClient) NetworkConnect(_ context.Context, name, _ string, endpoint *network.EndpointSettings) error {
 	c.networkConnects = append(c.networkConnects, name)
-	if endpoint == nil || endpoint.IPAMConfig == nil || endpoint.IPAMConfig.IPv4Address != "10.0.0.2" {
+	if name == "macvlan-net" && (endpoint == nil || endpoint.IPAMConfig == nil || endpoint.IPAMConfig.IPv4Address != "10.0.0.2") {
 		return errors.New("unexpected endpoint config")
 	}
 	return nil
@@ -178,8 +240,8 @@ func TestUpgradeFailureKeepsOrRestoresOriginal(t *testing.T) {
 			if len(c.stopCalls) != tt.wantStop || len(c.startCalls) != tt.wantStarts+tt.wantOldStart || len(c.removeCalls) != tt.wantRemove || len(c.renameCalls) != tt.wantRenames {
 				t.Fatalf("stop=%d start=%v remove=%d rename=%d", len(c.stopCalls), c.startCalls, len(c.removeCalls), len(c.renameCalls))
 			}
-			if c.createdConfig != nil && c.createdConfig.Image != "new" {
-				t.Fatalf("replacement image = %q, want pinned ID", c.createdConfig.Image)
+			if c.createdConfig != nil && c.createdConfig.Image != "example/app:latest" {
+				t.Fatalf("replacement image = %q, want original tag", c.createdConfig.Image)
 			}
 		})
 	}
@@ -203,7 +265,7 @@ func TestUpgradeWithoutPullUsesLoadedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newID != "new-container" || c.createdConfig == nil || c.createdConfig.Image != "new" {
+	if newID != "new-container" || c.createdConfig == nil || c.createdConfig.Image != "example/app:latest" {
 		t.Fatalf("new=%q config=%#v", newID, c.createdConfig)
 	}
 	if c.pullCalls != 0 {
@@ -363,6 +425,7 @@ func TestUpgradeDoesNotPinDynamicBridgeAddress(t *testing.T) {
 
 func TestUpgradePreservesStaticUserDefinedAddress(t *testing.T) {
 	c := newUpgradeClient()
+	c.networks["app-net"] = network.Inspect{Driver: "bridge"}
 	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
 		"app-net": {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: "10.0.0.2"}},
 	}}
@@ -437,8 +500,159 @@ func TestUpgradeKeepsOriginalImageReferenceForNextPull(t *testing.T) {
 	if got := UpgradeImageRef(container.InspectResponse{Config: c.createdConfig}); got != "example/app:latest" {
 		t.Fatalf("next image reference = %q", got)
 	}
-	if c.createdConfig.Labels[upgradeImageRefLabel] != "example/app:latest" {
-		t.Fatalf("image reference label = %q", c.createdConfig.Labels[upgradeImageRefLabel])
+	if _, ok := c.createdConfig.Labels[upgradeImageRefLabel]; ok {
+		t.Fatalf("tag still resolves to the new image; no pin label expected: %v", c.createdConfig.Labels)
+	}
+}
+
+func TestUpgradePinsImageWhenTagMoved(t *testing.T) {
+	c := newUpgradeClient()
+	// The tag keeps resolving to the old image (e.g. retagged in between): the
+	// replacement must still run the verified image, so pin it by ID.
+	c.tagMoved = true
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if c.createdConfig.Image != "new" || c.createdConfig.Labels[upgradeImageRefLabel] != "example/app:latest" {
+		t.Fatalf("image=%q labels=%v", c.createdConfig.Image, c.createdConfig.Labels)
+	}
+}
+
+func TestUpgradeDropsOldImageDefaults(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.ID = "0123456789abcdef"
+	c.oldImage.Config = &dockerspec.DockerOCIImageConfig{ImageConfig: ocispec.ImageConfig{
+		Env:          []string{"PATH=/usr/bin", "APP_VERSION=1.0"},
+		Entrypoint:   []string{"/entry"},
+		Cmd:          []string{"serve"},
+		WorkingDir:   "/app",
+		User:         "app",
+		Labels:       map[string]string{"org.opencontainers.image.version": "1.0", "shared": "image"},
+		Volumes:      map[string]struct{}{"/data": {}},
+		ExposedPorts: map[string]struct{}{"80/tcp": {}},
+	}}
+	c.info.Config = &container.Config{
+		Image:        "example/app:latest",
+		Hostname:     "0123456789ab",
+		Env:          []string{"PATH=/usr/bin", "APP_VERSION=1.0", "TZ=Asia/Shanghai"},
+		Entrypoint:   []string{"/entry"},
+		Cmd:          []string{"serve"},
+		WorkingDir:   "/app",
+		User:         "1000",
+		Labels:       map[string]string{"org.opencontainers.image.version": "1.0", "shared": "mine", "com.docker.compose.project": "p"},
+		Volumes:      map[string]struct{}{"/data": {}},
+		ExposedPorts: nat.PortSet{"80/tcp": {}},
+	}
+	c.info.HostConfig.PortBindings = nat.PortMap{"8080/tcp": {{HostPort: "8080"}}}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got := c.createdConfig
+	if strings.Join(got.Env, ",") != "TZ=Asia/Shanghai" {
+		t.Errorf("env = %v", got.Env)
+	}
+	if got.Entrypoint != nil || got.Cmd != nil || got.WorkingDir != "" || got.Hostname != "" {
+		t.Errorf("image defaults kept: entry=%v cmd=%v wd=%q host=%q", got.Entrypoint, got.Cmd, got.WorkingDir, got.Hostname)
+	}
+	if got.User != "1000" {
+		t.Errorf("explicit user lost: %q", got.User)
+	}
+	if _, ok := got.Labels["org.opencontainers.image.version"]; ok || got.Labels["shared"] != "mine" || got.Labels["com.docker.compose.project"] != "p" {
+		t.Errorf("labels = %v", got.Labels)
+	}
+	if len(got.Volumes) != 0 {
+		t.Errorf("volumes = %v", got.Volumes)
+	}
+	if _, ok := got.ExposedPorts["80/tcp"]; ok {
+		t.Errorf("image-exposed port kept: %v", got.ExposedPorts)
+	}
+	if _, ok := got.ExposedPorts["8080/tcp"]; !ok {
+		t.Errorf("published port not exposed: %v", got.ExposedPorts)
+	}
+}
+
+func TestUpgradeKeepsCustomCmdWithImageEntrypoint(t *testing.T) {
+	c := newUpgradeClient()
+	c.oldImage.Config = &dockerspec.DockerOCIImageConfig{ImageConfig: ocispec.ImageConfig{Entrypoint: []string{"/entry"}, Cmd: []string{"serve"}}}
+	c.info.Config.Entrypoint = []string{"/entry"}
+	c.info.Config.Cmd = []string{"worker", "--fast"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if c.createdConfig.Entrypoint != nil || strings.Join(c.createdConfig.Cmd, " ") != "worker --fast" {
+		t.Fatalf("entry=%v cmd=%v", c.createdConfig.Entrypoint, c.createdConfig.Cmd)
+	}
+}
+
+func TestUpgradeRollsBackCrashingReplacement(t *testing.T) {
+	c := newUpgradeClient()
+	c.newState = &container.State{Running: false, ExitCode: 1}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
+		t.Fatal("expected crash rollback")
+	}
+	// replacement removed, original restarted, no name switch.
+	if len(c.renameCalls) != 0 || len(c.removeCalls) != 1 || c.removeCalls[0] != "new-container" || c.startCalls[len(c.startCalls)-1] != "old-container" {
+		t.Fatalf("rename=%v remove=%v start=%v", c.renameCalls, c.removeCalls, c.startCalls)
+	}
+}
+
+func TestUpgradeOldDaemonConnectsExtraNetworksBeforeStart(t *testing.T) {
+	c := newUpgradeClient()
+	c.apiVersion = "1.43"
+	c.info.HostConfig.NetworkMode = "front"
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"front": {Aliases: []string{"web", "old-containe"}},
+		"back":  {},
+	}}
+	c.networks["front"] = network.Inspect{Driver: "bridge"}
+	c.networks["back"] = network.Inspect{Driver: "bridge"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.createdNetworkConfig.EndpointsConfig) != 1 || c.createdNetworkConfig.EndpointsConfig["front"] == nil {
+		t.Fatalf("create endpoints = %v", c.createdNetworkConfig.EndpointsConfig)
+	}
+	if strings.Join(c.networkConnects, ",") != "back" {
+		t.Fatalf("connects = %v", c.networkConnects)
+	}
+	if a := c.createdNetworkConfig.EndpointsConfig["front"].Aliases; strings.Join(a, ",") != "web" {
+		t.Fatalf("old short-ID alias kept: %v", a)
+	}
+}
+
+func TestUpgradeKeepsMacvlanMAC(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"macvlan-net": {IPAddress: "10.0.0.2", MacAddress: "02:00:00:00:00:02"},
+	}}
+	c.networks["macvlan-net"] = network.Inspect{Driver: "macvlan"}
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if mac := c.createdNetworkConfig.EndpointsConfig["macvlan-net"].MacAddress; mac != "02:00:00:00:00:02" {
+		t.Fatalf("mac = %q", mac)
+	}
+}
+
+func TestUpgradeRecreatesNetworkDependents(t *testing.T) {
+	c := newUpgradeClient()
+	c.listed = []container.Summary{{ID: "dep", HostConfig: struct {
+		NetworkMode string            `json:",omitempty"`
+		Annotations map[string]string `json:",omitempty"`
+	}{NetworkMode: "container:old-container"}}}
+	c.others = map[string]container.InspectResponse{"dep": {
+		ContainerJSONBase: &container.ContainerJSONBase{
+			ID: "dep", Image: "old", Name: "/qbit", State: &container.State{Running: true},
+			HostConfig: &container.HostConfig{NetworkMode: "container:old-container"},
+		},
+		Config: &container.Config{Image: "old"},
+	}}
+	newID, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.createdHostConfigs) != 2 || c.createdHostConfigs[1].NetworkMode != container.NetworkMode("container:"+newID) {
+		t.Fatalf("dependent not re-pointed: %d creates", len(c.createdHostConfigs))
 	}
 }
 
@@ -499,5 +713,81 @@ func TestUpgradeRejectsConcurrentSameContainer(t *testing.T) {
 	close(release)
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func withDependent(c *upgradeClient, running bool) {
+	c.listed = []container.Summary{{ID: "dep", HostConfig: struct {
+		NetworkMode string            `json:",omitempty"`
+		Annotations map[string]string `json:",omitempty"`
+	}{NetworkMode: "container:old-container"}}}
+	c.others = map[string]container.InspectResponse{"dep": {
+		ContainerJSONBase: &container.ContainerJSONBase{
+			ID: "dep", Image: "old", Name: "/qbit", State: &container.State{Running: running},
+			HostConfig: &container.HostConfig{NetworkMode: "container:old-container"},
+		},
+		Config: &container.Config{Image: "old"},
+	}}
+}
+
+func TestUpgradeRollbackRestartsDependents(t *testing.T) {
+	c := newUpgradeClient()
+	withDependent(c, true)
+	c.startError = true
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil {
+		t.Fatal("expected failure")
+	}
+	if strings.Join(c.restartCalls, ",") != "dep" {
+		t.Fatalf("dependent not reattached after rollback: %v", c.restartCalls)
+	}
+}
+
+func TestUpgradeRejectsWhenDependentBusy(t *testing.T) {
+	c := newUpgradeClient()
+	withDependent(c, true)
+	release, _ := tryUpgradeOperation("dep")
+	defer release()
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err == nil || !strings.Contains(err.Error(), "qbit") {
+		t.Fatalf("err = %v", err)
+	}
+	if c.created != 0 {
+		t.Fatal("mutated despite busy dependent")
+	}
+}
+
+func TestUpgradeStoppedMainRecreatesDependentStopped(t *testing.T) {
+	c := newUpgradeClient()
+	c.info.State.Running = false
+	withDependent(c, true)
+	if _, err := Upgrade(context.Background(), c, "old-container", io.Discard, image.PullOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if c.created != 2 || len(c.startCalls) != 0 {
+		t.Fatalf("created=%d starts=%v", c.created, c.startCalls)
+	}
+}
+
+func TestRestoreConfigKeepsEntrypointThatDroppedImageCmd(t *testing.T) {
+	info := container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{ID: "0123456789abcdef"},
+		Config:            &container.Config{Entrypoint: []string{"/entry"}},
+	}
+	img := image.InspectResponse{Config: &dockerspec.DockerOCIImageConfig{ImageConfig: ocispec.ImageConfig{Entrypoint: []string{"/entry"}, Cmd: []string{"serve"}}}}
+	if cfg := restoreConfig(info, img); len(cfg.Entrypoint) != 1 || cfg.Cmd != nil {
+		t.Fatalf("entry=%v cmd=%v", cfg.Entrypoint, cfg.Cmd)
+	}
+}
+
+func TestRestoreConfigClearsLegacyPredecessorHostname(t *testing.T) {
+	info := container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{ID: "ffffffffffff0000"},
+		Config:            &container.Config{Hostname: "0123456789ab", Labels: map[string]string{upgradeImageRefLabel: "app:1"}},
+	}
+	if cfg := restoreConfig(info, image.InspectResponse{}); cfg.Hostname != "" {
+		t.Fatalf("hostname = %q", cfg.Hostname)
+	}
+	info.Config.Labels = nil
+	if cfg := restoreConfig(info, image.InspectResponse{}); cfg.Hostname != "0123456789ab" {
+		t.Fatalf("user hostname dropped: %q", cfg.Hostname)
 	}
 }

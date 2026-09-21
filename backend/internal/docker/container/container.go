@@ -9,15 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/containerd/platforms"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -26,8 +25,6 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"phyless/backend/internal/docker"
 )
 
 // ErrUploadTooLarge is returned before any Docker API call when an upload
@@ -419,7 +416,7 @@ func Duplicate(ctx context.Context, cli client.APIClient, sourceID, newName stri
 	if hasStaticNetworkAddress(info) {
 		return "", fmt.Errorf("cannot safely duplicate a container with a static network address")
 	}
-	cfg := *info.Config
+	cfg := restoreConfig(info, image.InspectResponse{}) // same image: only drop the source's default hostname
 	hostCfg := cloneHostConfig(info)
 	sanitizeContainerNetworkMode(&cfg, hostCfg)
 	resp, err := cli.ContainerCreate(ctx, &cfg, hostCfg, networkingConfig(info), nil, newName)
@@ -463,163 +460,6 @@ func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 // caller has already loaded into the daemon (for example browser-pull).
 func UpgradeWithoutPull(ctx context.Context, cli client.APIClient, containerID string, w io.Writer) (string, error) {
 	return upgrade(ctx, cli, containerID, w, image.PullOptions{}, true)
-}
-
-func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, skipPull bool) (string, error) {
-	info, err := cli.ContainerInspect(ctx, containerID)
-	if err != nil {
-		return "", err
-	}
-	actualID := info.ID
-	if actualID == "" {
-		actualID = containerID
-	}
-	release, ok := tryUpgradeOperation(actualID)
-	if !ok {
-		return "", fmt.Errorf("container upgrade already in progress")
-	}
-	defer release()
-
-	if info.Config == nil {
-		return "", fmt.Errorf("container has no config")
-	}
-	if info.HostConfig != nil && info.HostConfig.AutoRemove {
-		return "", fmt.Errorf("cannot safely upgrade an AutoRemove container")
-	}
-	if err := validateUpgradeState(info); err != nil {
-		return "", err
-	}
-	if hasUnsupportedStaticNetworkAddress(info) {
-		return "", fmt.Errorf("cannot safely upgrade a container with a static address on a predefined network")
-	}
-	originalName := strings.TrimPrefix(info.Name, "/")
-	if originalName == "" {
-		return "", fmt.Errorf("container has no name")
-	}
-	imageRef := UpgradeImageRef(info)
-	if imageRef == "" {
-		return "", fmt.Errorf("container has no image reference")
-	}
-	newNetworking, err := upgradeNetworkingConfig(ctx, cli, info)
-	if err != nil {
-		return "", err
-	}
-
-	oldImage, err := cli.ImageInspect(ctx, info.Image)
-	if err != nil {
-		return "", fmt.Errorf("无法检查原镜像平台: %w", err)
-	}
-	if oldImage.Os == "" || oldImage.Architecture == "" {
-		return "", fmt.Errorf("原镜像平台信息缺失")
-	}
-	platform := platforms.Normalize(ocispec.Platform{OS: oldImage.Os, Architecture: oldImage.Architecture, Variant: oldImage.Variant})
-	if skipPull {
-		EmitStream(w, "使用已下载镜像 %s …", imageRef)
-	} else {
-		opts.Platform = oldImage.Os + "/" + oldImage.Architecture
-		if oldImage.Variant != "" {
-			opts.Platform += "/" + oldImage.Variant
-		}
-		EmitStream(w, "正在拉取镜像 %s …", imageRef)
-		rc, err := cli.ImagePull(ctx, imageRef, opts)
-		if err != nil {
-			return "", fmt.Errorf("pull 失败: %w", err)
-		}
-		if rc == nil {
-			return "", fmt.Errorf("pull 失败: Docker returned an empty progress stream")
-		}
-		if err := docker.ConsumeProgress(ctx, w, rc); err != nil {
-			return "", fmt.Errorf("pull 失败: %w", err)
-		}
-	}
-
-	newImg, _, err := cli.ImageInspectWithRaw(ctx, imageRef)
-	if err != nil {
-		return "", fmt.Errorf("无法检查新镜像: %w", err)
-	}
-	if newImg.ID == "" || !platforms.OnlyStrict(platform).Match(ocispec.Platform{OS: newImg.Os, Architecture: newImg.Architecture, Variant: newImg.Variant}) {
-		return "", fmt.Errorf("新镜像 ID 或平台信息不匹配，保留原容器")
-	}
-
-	EmitStream(w, "当前镜像 ID: %s ｜ 新镜像 ID: %s", shortID(info.Image), shortID(newImg.ID))
-
-	if newImg.ID == info.Image {
-		EmitStream(w, "✓ 已是最新版本，无需升级。")
-		return "", nil
-	}
-
-	EmitStream(w, "检测到新版本，开始重建容器…")
-
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	newCfg := *info.Config
-	newCfg.Image = newImg.ID // pin this replacement to the image pulled above
-	newCfg.Labels = maps.Clone(info.Config.Labels)
-	if newCfg.Labels == nil {
-		newCfg.Labels = make(map[string]string)
-	}
-	if _, exists := newCfg.Labels[upgradeImageRefLabel]; !exists {
-		newCfg.Labels[upgradeImageRefLabel] = imageRef
-	}
-	hostCfg := cloneHostConfig(info)
-	sanitizeContainerNetworkMode(&newCfg, hostCfg)
-	newName := "phyless-upgrade-" + shortID(actualID)
-	oldRunning := info.State != nil && info.State.Running
-	resp, err := cli.ContainerCreate(ctx, &newCfg, hostCfg, newNetworking, &platform, newName)
-	if err != nil {
-		if resp.ID != "" {
-			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, nil, fmt.Errorf("创建容器失败: %w", err))
-		}
-		return "", fmt.Errorf("创建容器失败: %w", err)
-	}
-	if resp.ID == "" {
-		return "", fmt.Errorf("创建容器失败: Docker returned an empty container ID")
-	}
-	var restoreNetworking *network.NetworkingConfig
-	if err := ctx.Err(); err != nil {
-		return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, nil, err)
-	}
-	if oldRunning {
-		if err := cli.ContainerStop(ctx, actualID, container.StopOptions{}); err != nil && !errdefs.IsNotModified(err) {
-			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, nil, fmt.Errorf("停止容器失败: %w", err))
-		}
-		restoreNetworking = newNetworking
-		if err := ctx.Err(); err != nil {
-			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, restoreNetworking, err)
-		}
-	}
-	if oldRunning {
-		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-			return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, restoreNetworking, fmt.Errorf("启动容器失败: %w", err))
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, restoreNetworking, err)
-	}
-	backupName := newName + "-old"
-	if err := cli.ContainerRename(ctx, actualID, backupName); err != nil {
-		return "", rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, restoreNetworking, fmt.Errorf("暂存原容器名称失败: %w", err))
-	}
-	if err := ctx.Err(); err != nil {
-		nameErr := restoreUpgradeName(ctx, cli, actualID, originalName)
-		cleanupErr := rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, restoreNetworking, err)
-		return "", errors.Join(cleanupErr, nameErr)
-	}
-	if err := cli.ContainerRename(ctx, resp.ID, originalName); err != nil {
-		rollbackErr := restoreUpgradeName(ctx, cli, actualID, originalName)
-		cleanupErr := rollbackUpgrade(ctx, cli, actualID, resp.ID, oldRunning, restoreNetworking, fmt.Errorf("切换新容器名称失败: %w", err))
-		return "", errors.Join(cleanupErr, rollbackErr)
-	}
-	cleanupCtx, cancel := upgradeCleanupContext(ctx)
-	removeErr := cli.ContainerRemove(cleanupCtx, actualID, container.RemoveOptions{Force: true})
-	cancel()
-	if removeErr != nil && !errdefs.IsNotFound(removeErr) {
-		EmitStream(w, "⚠ 升级已切换成功，但旧容器清理失败（备份名称: %s）：%v", backupName, removeErr)
-	}
-
-	EmitDone(w, resp.ID, "✓ 升级完成，新容器 ID: %s", shortID(resp.ID))
-	return resp.ID, nil
 }
 
 func cloneHostConfig(info container.InspectResponse) *container.HostConfig {
@@ -719,23 +559,25 @@ func upgradeNetworkingConfig(ctx context.Context, cli client.APIClient, info con
 	if info.HostConfig != nil && info.HostConfig.NetworkMode.IsContainer() {
 		return nil, nil
 	}
-	preserveAddresses := make(map[string]bool)
+	drivers := make(map[string]string)
 	if info.NetworkSettings != nil {
 		for name, endpoint := range info.NetworkSettings.Networks {
-			if endpoint == nil || !container.NetworkMode(name).IsUserDefined() || !endpointHasDynamicAddress(endpoint) {
+			if endpoint == nil || !container.NetworkMode(name).IsUserDefined() {
 				continue
 			}
 			networkInfo, err := cli.NetworkInspect(ctx, name, network.InspectOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("无法检查网络 %s: %w", name, err)
 			}
-			preserveAddresses[name] = networkInfo.Driver == "macvlan" || networkInfo.Driver == "ipvlan"
+			drivers[name] = networkInfo.Driver
 		}
 	}
-	return buildNetworkingConfig(info, preserveAddresses), nil
+	return buildNetworkingConfig(info, drivers), nil
 }
 
-func buildNetworkingConfig(info container.InspectResponse, preserveAddresses map[string]bool) *network.NetworkingConfig {
+// drivers maps user-defined network names to their driver; macvlan/ipvlan
+// endpoints keep their dynamic address (LAN-visible), macvlan also its MAC.
+func buildNetworkingConfig(info container.InspectResponse, drivers map[string]string) *network.NetworkingConfig {
 	if info.NetworkSettings == nil || len(info.NetworkSettings.Networks) == 0 {
 		return nil
 	}
@@ -756,7 +598,10 @@ func buildNetworkingConfig(info container.InspectResponse, preserveAddresses map
 		ep.GlobalIPv6PrefixLen = 0
 		ep.MacAddress = ""
 		ep.DNSNames = nil
-		if preserveAddresses[name] {
+		if drivers[name] == "macvlan" {
+			ep.MacAddress = endpoint.MacAddress // DHCP reservations / ARP caches on the LAN key on it
+		}
+		if drivers[name] == "macvlan" || drivers[name] == "ipvlan" {
 			ipam := ep.IPAMConfig
 			if ipam == nil {
 				ipam = &network.EndpointIPAMConfig{}
@@ -775,6 +620,9 @@ func buildNetworkingConfig(info container.InspectResponse, preserveAddresses map
 		}
 		if !container.NetworkMode(name).IsUserDefined() {
 			ep.Aliases = nil
+		} else if len(info.ID) >= 12 {
+			// Older daemons list the short container ID as an alias; it belongs to the old container.
+			ep.Aliases = slices.DeleteFunc(slices.Clone(ep.Aliases), func(a string) bool { return a == info.ID[:12] })
 		}
 		endpoints[name] = ep
 	}
@@ -783,14 +631,6 @@ func buildNetworkingConfig(info container.InspectResponse, preserveAddresses map
 
 func endpointHasConfiguredAddress(endpoint *network.EndpointSettings) bool {
 	return endpoint != nil && endpoint.IPAMConfig != nil && (endpoint.IPAMConfig.IPv4Address != "" || endpoint.IPAMConfig.IPv6Address != "" || len(endpoint.IPAMConfig.LinkLocalIPs) > 0)
-}
-
-func endpointHasDynamicAddress(endpoint *network.EndpointSettings) bool {
-	if endpoint == nil {
-		return false
-	}
-	return (endpoint.IPAddress != "" && (endpoint.IPAMConfig == nil || endpoint.IPAMConfig.IPv4Address == "")) ||
-		(endpoint.GlobalIPv6Address != "" && (endpoint.IPAMConfig == nil || endpoint.IPAMConfig.IPv6Address == ""))
 }
 
 func hasStaticNetworkAddress(info container.InspectResponse) bool {

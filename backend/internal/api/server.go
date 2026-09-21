@@ -349,6 +349,7 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Post("/api/containers/{id}/rename", s.handleContainerRename)
 	r.Post("/api/containers/{id}/duplicate", s.handleContainerDuplicate)
 	r.Post("/api/containers/{id}/upgrade", s.handleContainerUpgrade)
+	r.Post("/api/containers/check-updates", s.handleCheckUpdates)
 	r.Put("/api/containers/{id}/resources", s.handleContainerUpdateResources)
 	r.Post("/api/containers/import", s.handleContainerImport)
 	r.Post("/api/containers/{id}/files/upload", s.handleContainerUploadFile)

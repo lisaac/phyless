@@ -504,6 +504,9 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 		newID, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, id, w)
 	} else {
 		encoded, authErr := s.registryAuthForImage(imageRef, body.RegistryID)
+		if len(body.RegistryIDs) > 0 {
+			encoded, authErr = s.registryAuthFromIDs(imageRef, body.RegistryIDs)
+		}
 		if authErr != nil {
 			writeError(w, http.StatusBadRequest, authErr.Error())
 			return

@@ -11,7 +11,7 @@
 - 拉取镜像时可以随时切换代理，不需要重启 Docker daemon。
 - Docker daemon 无法直连镜像仓库时，可以使用浏览器代理拉取镜像（需要 Cloudflare Worker）。
 - `docker run` 命令和 `compose.yaml` 可以互相转换，迁移服务更方便。
-- 容器和 Compose 项目都支持一键升级。
+- 容器和 Compose 项目都支持一键升级；容器可批量检查是否有新镜像，升级时保留原配置并在失败时自动回滚（见 [docs/container-upgrade.md](docs/container-upgrade.md)）。
 - Compose 项目可视化管理：查看状态、编辑配置，并执行启动、停止、重启、构建、拉取和更新。
 
 ## 能做什么

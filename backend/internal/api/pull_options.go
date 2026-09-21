@@ -115,3 +115,29 @@ func (s *Server) registryAuthForImage(ref, id string) (string, error) {
 	}
 	return registry.EncodeAuthConfig(config)
 }
+
+// registryAuthFromIDs picks, from several selected accounts, the one whose host
+// matches ref. No match means an anonymous request, so one multi-select can
+// serve a batch of images from different registries.
+func (s *Server) registryAuthFromIDs(ref string, ids []string) (string, error) {
+	if len(ids) == 0 {
+		return "", nil
+	}
+	named, err := reference.ParseNormalizedNamed(ref)
+	if err != nil {
+		return "", fmt.Errorf("invalid image reference")
+	}
+	configs, err := s.composeRegistryAuth(ids)
+	if err != nil {
+		return "", err
+	}
+	host, err := docker.RegistryHost(reference.Domain(named))
+	if err != nil {
+		return "", err
+	}
+	config, ok := configs[host]
+	if !ok {
+		return "", nil
+	}
+	return registry.EncodeAuthConfig(config)
+}
