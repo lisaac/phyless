@@ -229,12 +229,11 @@ func TestComposeOperationValidationBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	// up/build with a proxy are allowed: base images are pre-pulled through the
-	// proxy before an offline build. Only pull (no build step) stays rejected.
-	if err := validateComposeOperation(proxied, "up", project); err != nil {
-		t.Fatalf("proxy up validation = %v, want nil", err)
-	}
-	if err := validateComposeOperation(proxied, "pull", project); err == nil || !strings.Contains(err.Error(), "pull proxy") {
-		t.Fatalf("proxy pull validation = %v", err)
+	// proxy before an offline build; pull skips build services (IgnoreBuildable).
+	for _, op := range []string{"up", "build", "pull"} {
+		if err := validateComposeOperation(proxied, op, project); err != nil {
+			t.Fatalf("proxy %s validation = %v, want nil", op, err)
+		}
 	}
 	if err := validateComposeOperation(context.Background(), "up", &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
 		"provider": {Name: "provider", Provider: &composetypes.ServiceProviderConfig{Type: "terraform"}},

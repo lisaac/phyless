@@ -946,7 +946,10 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 					// goroutines without a lock. Keep this one operation serial until
 					// an upstream release fixes that race; Up retains normal parallelism.
 					service.MaxConcurrency(1)
-					err = service.Compose().Pull(ctx, project, composeapi.PullOptions{})
+					// Build services are handled by the follow-up build step (see
+					// runComposeUpdate); pulling their image tag here is meaningless
+					// and unsupported through the pull proxy.
+					err = service.Compose().Pull(ctx, project, composeapi.PullOptions{IgnoreBuildable: true})
 				case "restart":
 					err = service.Compose().Restart(ctx, projectName, composeapi.RestartOptions{Project: project})
 				default:
@@ -1118,11 +1121,7 @@ func validateComposeOperation(ctx context.Context, operation string, project *co
 			continue
 		}
 		// up/build pre-pull FROM base images through the proxy before an offline
-		// build (see prePullBuildBases). pull has no build step to feed, so a
-		// proxied pull of a build service stays unsupported.
-		if operation == "pull" && phyDocker.HasPullProxy(ctx) {
-			return fmt.Errorf("compose pull with a pull proxy is not supported for service %q because it has a build configuration", name)
-		}
+		// build (see prePullBuildBases); pull skips build services (IgnoreBuildable).
 		if remote := unsupportedComposeReference(service.Build.Context); remote != "" {
 			return fmt.Errorf("compose service %q uses unsupported remote build context %q", name, remote)
 		}
