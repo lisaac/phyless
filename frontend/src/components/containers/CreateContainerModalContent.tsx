@@ -1,7 +1,7 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
-import { Button } from "../shared/Button";
+import { Button, Chip } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
 import { get, imageInspectUrl } from "../../api/client";
@@ -309,14 +309,7 @@ export const CreateContainerModal: Component<{
       <div class="flex flex-wrap gap-1">
         <For each={opts}>
           {(o) => (
-            <button type="button"
-              class={`px-2 py-1 text-xs transition-colors ${
-                form()[k] === o.value
-                  ? "bg-indigo-600 text-white"
-                  : "border border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-200"
-              }`}
-              onClick={() => set(k, o.value as never)}
-            >{o.label}</button>
+            <Chip active={form()[k] === o.value} onClick={() => set(k, o.value as never)}>{o.label}</Chip>
           )}
         </For>
       </div>
@@ -324,14 +317,7 @@ export const CreateContainerModal: Component<{
   );
 
   const tog = (label: string, k: "privileged" | "readonly_rootfs" | "publish_all" | "interactive" | "tty" | "auto_remove" | "init" | "no_healthcheck", warn = false) => (
-    <button type="button"
-      class={`px-2 py-1 text-xs transition-colors ${
-        form()[k]
-          ? warn ? "bg-amber-600 text-white" : "bg-indigo-600 text-white"
-          : "border border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-200"
-      }`}
-      onClick={() => set(k, !form()[k] as never)}
-    >{label}</button>
+    <Chip active={!!form()[k]} warn={warn} onClick={() => set(k, !form()[k] as never)}>{label}</Chip>
   );
 
   const SectionLabel = (p: { children: string }) => (

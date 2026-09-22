@@ -1,9 +1,10 @@
 import { Component, createSignal, Show, For } from "solid-js";
+import { Chip } from "./Button";
 
 // Shared by events/container-logs/compose-logs: preset (实时/1h/24h/7d) or a
 // custom range, reported as unix-seconds since/until (undefined = unbounded,
 // i.e. "live"). Callers turn this into their own wsUrl via appendTimeRange.
-type Preset = "live" | "1h" | "24h" | "7d" | "custom";
+export type Preset = "live" | "1h" | "24h" | "7d" | "custom";
 const PRESETS: { key: Preset; label: string }[] = [
   { key: "live", label: "实时" },
   { key: "1h", label: "最近 1 小时" },
@@ -36,17 +37,24 @@ export function appendTimeRange(base: string, range: TimeRange): string {
   return base + (base.includes("?") ? "&" : "?") + qs;
 }
 
-export const TimeRangePicker: Component<{ onChange: (range: TimeRange) => void }> = (props) => {
-  const [preset, setPreset] = createSignal<Preset>("live");
+/** Range for a non-custom preset, computed from now. */
+export function presetRange(p: Exclude<Preset, "custom">): TimeRange {
+  const now = Math.floor(Date.now() / 1000);
+  if (p === "1h") return { since: now - 3600 };
+  if (p === "24h") return { since: now - 86400 };
+  if (p === "7d") return { since: now - 7 * 86400 };
+  return {};
+}
+
+// `initial` only sets the highlighted chip — the caller seeds its own range
+// signal with presetRange(initial) so the first connection is already right.
+export const TimeRangePicker: Component<{ onChange: (range: TimeRange) => void; initial?: Preset }> = (props) => {
+  const [preset, setPreset] = createSignal<Preset>(props.initial ?? "live");
   const [sinceInput, setSinceInput] = createSignal("");
   const [untilInput, setUntilInput] = createSignal("");
 
   const apply = (p: Preset, sinceStr: string, untilStr: string) => {
-    if (p === "live") { props.onChange({}); return; }
-    const now = Math.floor(Date.now() / 1000);
-    if (p === "1h") { props.onChange({ since: now - 3600 }); return; }
-    if (p === "24h") { props.onChange({ since: now - 86400 }); return; }
-    if (p === "7d") { props.onChange({ since: now - 7 * 86400 }); return; }
+    if (p !== "custom") { props.onChange(presetRange(p)); return; }
     props.onChange({ since: toUnix(sinceStr), until: toUnix(untilStr) });
   };
 
@@ -56,14 +64,7 @@ export const TimeRangePicker: Component<{ onChange: (range: TimeRange) => void }
     <div class="flex flex-wrap items-center gap-1.5">
       <For each={PRESETS}>
         {(p) => (
-          <button
-            class={`px-2.5 py-1 text-xs transition-colors ${
-              preset() === p.key
-                ? "bg-indigo-600 text-white"
-                : "border border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-200"
-            }`}
-            onClick={() => selectPreset(p.key)}
-          >{p.label}</button>
+          <Chip active={preset() === p.key} onClick={() => selectPreset(p.key)}>{p.label}</Chip>
         )}
       </For>
       <Show when={preset() === "custom"}>

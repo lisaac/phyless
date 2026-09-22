@@ -8,6 +8,7 @@ import { IBtn, Ico } from "../shared/ActionButton";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
+import { confirmAction } from "../shared/ConfirmModal";
 import { hasRole } from "../../stores/auth";
 import { midPath } from "../containers/containerActions";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
@@ -42,6 +43,7 @@ export const VolumeListPage: Component = () => {
     catch (e) { toast.error((e as Error).message); }
   };
   const remove = async (n: string) => {
+    if (!await confirmAction(`确定删除存储卷 ${n}？卷内数据将永久丢失。`, { title: "删除存储卷", confirmText: "删除", danger: true })) return;
     try { await queued(`删除卷 ${n}`, "DELETE", `/api/volumes/${encodeURIComponent(n)}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };

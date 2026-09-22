@@ -271,26 +271,14 @@ func streamJSONFrames(conn *websocket.Conn, src io.Reader) (int, error) {
 	return count, scanner.Err()
 }
 
-// formatEvent renders one docker event as a single readable log line instead
-// of raw JSON — shared/LogsView.tsx (reused for the events page) just pipes
-// through whatever text arrives, so the formatting has to happen here where
-// the typed events.Message fields are actually available.
-func formatEvent(e events.Message) string {
-	ts := time.Unix(e.Time, 0).Format("2006-01-02 15:04:05")
-	name := e.Actor.Attributes["name"]
-	if name == "" {
-		name = e.Actor.ID
-		if len(name) > 12 {
-			name = name[:12]
-		}
-	}
-	line := fmt.Sprintf("%s  %-10s %-12s %s", ts, e.Type, e.Action, name)
-	if e.Type == events.ContainerEventType {
-		if image := e.Actor.Attributes["image"]; image != "" {
-			line += "  (" + image + ")"
-		}
-	}
-	return line
+// eventLine is one docker event as sent to the events page (one JSON object
+// per message) — the page renders, colors and filters it client-side.
+type eventLine struct {
+	Time   int64             `json:"time"`
+	Type   string            `json:"type"`
+	Action string            `json:"action"`
+	ID     string            `json:"id"`
+	Attrs  map[string]string `json:"attrs,omitempty"`
 }
 
 // Events streams Docker daemon events over WebSocket. since/until (unix
@@ -320,7 +308,11 @@ func Events(cli client.APIClient) http.HandlerFunc {
 					eventCh = nil
 					continue
 				}
-				if err := WriteMessage(conn, websocket.TextMessage, []byte(formatEvent(e)+"\n")); err != nil {
+				line, err := json.Marshal(eventLine{e.Time, string(e.Type), string(e.Action), e.Actor.ID, e.Actor.Attributes})
+				if err != nil {
+					continue
+				}
+				if err := WriteMessage(conn, websocket.TextMessage, line); err != nil {
 					return
 				}
 			case streamErr, ok := <-errCh:

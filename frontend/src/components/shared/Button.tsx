@@ -22,3 +22,16 @@ export const Button: Component<
     </button>
   );
 };
+
+/** Toggle/segment chip — time-range presets, radio groups, filter toggles. */
+export const Chip: Component<{ active: boolean; warn?: boolean; onClick: () => void; children: JSX.Element }> = (props) => (
+  <button
+    type="button"
+    class={`px-2.5 py-1 text-xs transition-colors ${
+      props.active
+        ? props.warn ? "bg-amber-600 text-white" : "bg-indigo-600 text-white"
+        : "border border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-200"
+    }`}
+    onClick={() => props.onClick()}
+  >{props.children}</button>
+);
