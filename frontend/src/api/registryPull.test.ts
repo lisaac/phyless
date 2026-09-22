@@ -172,3 +172,12 @@ it("cancels chunked metadata before buffering an oversized response", async () =
   expect(cancel).toHaveBeenCalledOnce();
   expect(chunks).toBeLessThanOrEqual(18);
 });
+
+it("cancels an authentication challenge body before abandoning it", async () => {
+  const cancel = vi.fn();
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ cancel }), {
+    status: 401, headers: { "WWW-Authenticate": 'Basic realm="registry"' },
+  })));
+  await expect(resolveImage("nginx:latest", "linux/amd64", "https://w.example")).rejects.toThrow("需要登录凭据");
+  expect(cancel).toHaveBeenCalledOnce();
+});

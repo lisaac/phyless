@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	ctr "phyless/backend/internal/docker/container"
 )
 
@@ -229,7 +230,11 @@ func (m *Manager) discard(ctx context.Context, s *session) error {
 }
 
 func (m *Manager) remove(ctx context.Context, containerID string) error {
-	return m.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	err := m.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // session returns the ready session for an image, building it if needed.

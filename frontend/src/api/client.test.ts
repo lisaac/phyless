@@ -113,3 +113,20 @@ it("joins a local GET cancellation signal to Docker server cancellation and disp
   expect(local.signal.aborted).toBe(false);
   expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
 });
+
+it("does not persist credentials from a cancelled authentication response", async () => {
+  for (const authenticate of [
+    (signal: AbortSignal) => login("admin", "password", signal),
+    (signal: AbortSignal) => setup("password", signal),
+  ]) {
+    let finish!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; })));
+    const controller = new AbortController();
+    const pending = authenticate(controller.signal);
+    controller.abort();
+    setToken("new-session");
+    finish(new Response(JSON.stringify({ token: "stale-session" })));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(getToken()).toBe("new-session");
+  }
+});

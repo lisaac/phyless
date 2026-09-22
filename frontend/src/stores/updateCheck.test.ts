@@ -60,3 +60,17 @@ it("does not claim an update when the current image cannot be inspected", async 
   expect(updateCheckFor("a")?.status).toBe("error");
   expect(d.resolve).not.toHaveBeenCalled();
 });
+
+it("observes registry rejection immediately instead of leaving it unhandled during tag inspection", async () => {
+  const d = deps();
+  let finishTag!: (value: typeof images[string]) => void;
+  d.inspectImage = vi.fn(async (ref) => ref === "nginx:latest"
+    ? new Promise<(typeof images)[string]>((resolve) => { finishTag = resolve; }) : images[ref] ?? null);
+  d.resolve = vi.fn(async () => { throw new Error("offline"); });
+  const pending = runUpdateCheck({ ids: ["a"], mode: "browser", workerUrl: "https://w" }, cb(), d);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(d.resolve).not.toHaveBeenCalled();
+  finishTag(images["nginx:latest"]);
+  await pending;
+  expect(updateCheckFor("a")?.status).toBe("error");
+});

@@ -86,15 +86,15 @@ type ImageInfo = { Id?: string; Os?: string; Architecture?: string; Variant?: st
 
 export interface UpdateCheckDeps {
   post: (body: unknown, signal: AbortSignal) => Promise<Omit<UpdateCheck, "checkedAt">[]>;
-  inspectContainer: (id: string) => Promise<Inspect>;
-  inspectImage: (ref: string) => Promise<ImageInfo | null>;
+  inspectContainer: (id: string, signal: AbortSignal) => Promise<Inspect>;
+  inspectImage: (ref: string, signal: AbortSignal) => Promise<ImageInfo | null>;
   resolve: (ref: string, platform: string, workerUrl: string, creds: Creds | undefined, signal: AbortSignal) => Promise<RemoteDigests>;
 }
 
 export const defaultUpdateCheckDeps: UpdateCheckDeps = {
   post: (body, signal) => request("POST", "/api/containers/check-updates", body, signal),
-  inspectContainer: (id) => get<Inspect>(`/api/containers/${encodeURIComponent(id)}/inspect`),
-  inspectImage: (ref) => get<ImageInfo>(imageInspectUrl(ref)).catch(() => null),
+  inspectContainer: (id, signal) => get<Inspect>(`/api/containers/${encodeURIComponent(id)}/inspect`, signal),
+  inspectImage: (ref, signal) => get<ImageInfo>(imageInspectUrl(ref), signal).catch(() => null),
   resolve: async (ref, platform, workerUrl, creds, signal) => {
     // ponytail: resolveImage also fetches the (small) config blob; a manifest-only variant saves one request per image.
     return remoteDigests(await resolveImage(ref, platform, workerUrl, creds, signal));
@@ -117,7 +117,7 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
     // Containers commonly share images and tags; inspect each once.
     const images = new Map<string, Promise<ImageInfo | null>>();
     const inspectImage = (ref: string) => {
-      if (!images.has(ref)) images.set(ref, deps.inspectImage(ref));
+      if (!images.has(ref)) images.set(ref, deps.inspectImage(ref, cb.signal));
       return images.get(ref)!;
     };
     for (const [i, id] of p.ids.entries()) {
@@ -125,7 +125,7 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
       const r: Omit<UpdateCheck, "checkedAt"> = { id, ref: "", status: "error", local_id: "" };
       results.push(r);
       try {
-        const info = await deps.inspectContainer(id);
+        const info = await deps.inspectContainer(id, cb.signal);
         r.id = info.Id || id;
         r.local_id = info.Image ?? "";
         r.ref = upgradeImageRef(info);
@@ -135,11 +135,11 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
         const platform = imagePlatform(cur);
         const key = `${r.ref}|${platform}`;
         cb.note(`检查 ${i + 1}/${p.ids.length}：${r.ref}`);
-        if (!remotes.has(key)) remotes.set(key, deps.resolve(r.ref, platform, p.workerUrl, p.creds, cb.signal));
         const tag = await inspectImage(r.ref);
         const tagMoved = !!tag?.Id && tag.Id !== r.local_id;
         let remote: RemoteDigests;
         try {
+          if (!remotes.has(key)) remotes.set(key, deps.resolve(r.ref, platform, p.workerUrl, p.creds, cb.signal));
           remote = await remotes.get(key)!;
         } catch (e) {
           aborted();

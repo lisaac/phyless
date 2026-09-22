@@ -273,3 +273,30 @@ it("keeps queued tasks reachable until cancelled or completed", async () => {
   q.cancel(task.id);
   expect((await task.done).status).toBe("cancelled");
 });
+
+it("redacts proxy credentials from details, stored metadata and completion events", async () => {
+  const q = await load();
+  const proxy = "http://user:private-password@proxy.example:8080/?token=private-query";
+  const { done } = q.enqueue({ title: "pull", url: "/pull", body: { proxy_url: proxy }, meta: { workerUrl: proxy } });
+  expect(FakeXHR.requests[0].sent).toContain("private-password"); // the actual request remains intact
+  for (const text of [JSON.stringify(q.tasks.list[0].details), localStorage.getItem("phyless_tasks")!]) {
+    expect(text).not.toContain("private-password");
+    expect(text).not.toContain("private-query");
+    expect(text).toContain("proxy.example");
+  }
+  FakeXHR.requests[0].finish("");
+  const finished = JSON.stringify(await done);
+  expect(finished).not.toContain("private-password");
+  expect(finished).not.toContain("private-query");
+});
+
+it("settles synchronous transport failures and allows subsequent tasks to run", async () => {
+  const q = await load();
+  const open = vi.spyOn(FakeXHR.prototype, "open").mockImplementationOnce(() => { throw new Error("invalid URL"); });
+  const failed = q.enqueue({ title: "bad", url: "/bad", key: "same" });
+  await expect(failed.done).resolves.toMatchObject({ status: "error", error: "invalid URL" });
+  const next = q.enqueue({ title: "next", url: "/next", key: "same" });
+  FakeXHR.requests[1].finish("");
+  await expect(next.done).resolves.toMatchObject({ status: "done" });
+  open.mockRestore();
+});

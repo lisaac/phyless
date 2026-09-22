@@ -6,19 +6,27 @@ import { ROLE_LEVEL, type Role, type User } from "../types";
 const [currentUser, setCurrentUser] = createSignal<User | null>(null);
 export { currentUser };
 
-export async function doLogin(username: string, password: string): Promise<void> {
-	await login(username, password);
-	const me = await get<User>("/api/auth/me");
-	setCurrentUser(me);
+let loginAttempt: AbortController | undefined;
+
+async function establishSession(authenticate: (signal: AbortSignal) => Promise<string>): Promise<void> {
+  loginAttempt?.abort();
+  const attempt = new AbortController();
+  loginAttempt = attempt;
+  await authenticate(attempt.signal);
+  attempt.signal.throwIfAborted();
+  const me = await get<User>("/api/auth/me", attempt.signal);
+  attempt.signal.throwIfAborted();
+  setCurrentUser(me);
 }
 
-export async function doSetup(password: string): Promise<void> {
-	await setup(password);
-	const me = await get<User>("/api/auth/me");
-	setCurrentUser(me);
-}
+export const doLogin = (username: string, password: string): Promise<void> =>
+  establishSession((signal) => login(username, password, signal));
+
+export const doSetup = (password: string): Promise<void> =>
+  establishSession((signal) => setup(password, signal));
 
 export function doLogout(): void {
+  loginAttempt?.abort();
   setToken(null);
   setCurrentUser(null);
   cancelPendingReads();
@@ -30,7 +38,7 @@ export async function loadSession(): Promise<void> {
   if (!token) return;
   try {
     const me = await get<User>("/api/auth/me");
-    setCurrentUser(me);
+    if (getToken() === token) setCurrentUser(me);
   } catch (e) {
     // A transient 5xx/network error must leave the token available for a
     // later retry. The request helper already handles a current-token 401;

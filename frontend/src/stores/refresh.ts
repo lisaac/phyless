@@ -6,7 +6,11 @@ import { createSignal } from "solid-js";
 export const REFRESH_EVENT = "phyless:refresh";
 const STORAGE_KEY = "phyless_refresh";
 
-const clampSeconds = (n: unknown) => Math.max(1, Math.floor(Number(n)) || 5);
+function clampSeconds(n: unknown): number {
+  const value = Number(n);
+  // setInterval uses signed 32-bit milliseconds; overflow otherwise becomes a tight loop.
+  return Number.isFinite(value) ? Math.min(2_147_483, Math.max(1, Math.floor(value) || 5)) : 5;
+}
 
 function load(): { on: boolean; seconds: number } {
   try {

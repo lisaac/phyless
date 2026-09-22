@@ -54,3 +54,26 @@ it("cancels pending reads and writes when logging out", () => {
   expect(reads).toHaveBeenCalledOnce();
   expect(writes).toHaveBeenCalledOnce();
 });
+
+it("does not restore a logged-out session from a late profile response", async () => {
+  setTokenForTest("old");
+  let finish!: (user: unknown) => void;
+  vi.spyOn(client, "get").mockImplementation(() => new Promise((resolve) => { finish = resolve; }) as never);
+  const pending = loadSession();
+  doLogout();
+  finish({ id: "old", username: "old", role: "admin" });
+  await pending;
+  expect(currentUser()).toBeNull();
+});
+
+it("rejects a late login profile after logout", async () => {
+  vi.spyOn(client, "login").mockResolvedValue("tok");
+  let finish!: (user: unknown) => void;
+  vi.spyOn(client, "get").mockImplementation(() => new Promise((resolve) => { finish = resolve; }) as never);
+  const pending = doLogin("admin", "password");
+  await Promise.resolve();
+  doLogout();
+  finish({ id: "old", username: "old", role: "admin" });
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(currentUser()).toBeNull();
+});

@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -471,5 +472,25 @@ func TestIndexEntryLimit(t *testing.T) {
 	<-done
 	if err == nil {
 		t.Fatal("expected index entry limit")
+	}
+}
+
+type missingHelperClient struct{ *fakeClient }
+
+func (*missingHelperClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
+	return errdefs.NotFound(errors.New("helper already removed"))
+}
+
+func TestMissingHelperDoesNotPoisonCacheEviction(t *testing.T) {
+	m := New(&missingHelperClient{sampleClient(t)})
+	m.max = 1
+	if _, err := m.List(context.Background(), imgID, "/"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ListContainer(context.Background(), "other", "/"); err != nil {
+		t.Fatalf("missing helper blocked eviction: %v", err)
+	}
+	if _, found := m.sessions["image:"+imgID]; found {
+		t.Fatal("stale index retained")
 	}
 }

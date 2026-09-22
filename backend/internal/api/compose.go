@@ -94,7 +94,10 @@ type buildCapabilityCache struct {
 	inflight map[string]struct{}
 }
 
+const buildCacheTTL = 30 * time.Second
+
 type buildCacheEntry struct {
+	checkedAt time.Time
 	signature string
 	canBuild  bool
 }
@@ -666,14 +669,13 @@ func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) b
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.inflight, p.ID); c.mu.Unlock() }()
 
-	// ponytail: signature covers the top-level compose files only, not included
-	// or .env files; build-presence rarely depends on those. Widen the stat set
-	// if a stale Build button on an include/env edit ever bites.
+	// ponytail: mtime handles top-level edits immediately; a 30s TTL bounds
+	// staleness for include/.env dependencies without maintaining a second parser.
 	sig := composeFileSignature(p)
 	c.mu.Lock()
 	entry, ok := c.entries[p.ID]
 	c.mu.Unlock()
-	if ok && sig != "" && entry.signature == sig {
+	if ok && sig != "" && entry.signature == sig && time.Since(entry.checkedAt) < buildCacheTTL {
 		return entry.canBuild
 	}
 
@@ -682,7 +684,7 @@ func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) b
 		return canBuild // A cancelled load is not a cached negative result.
 	}
 	c.mu.Lock()
-	c.entries[p.ID] = buildCacheEntry{signature: sig, canBuild: canBuild}
+	c.entries[p.ID] = buildCacheEntry{signature: sig, canBuild: canBuild, checkedAt: time.Now()}
 	c.mu.Unlock()
 	return canBuild
 }

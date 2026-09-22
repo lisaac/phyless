@@ -26,9 +26,9 @@ export interface BrowserPullDeps {
   resolveImage: typeof resolveImage;
   buildDockerLoadTar: typeof buildDockerLoadTar;
   streamTarToDaemon: typeof streamTarToDaemon;
-  inspectLocal: (ref: string) => Promise<{ Id?: string; RepoDigests?: string[] } | null>;
+  inspectLocal: (ref: string, signal: AbortSignal) => Promise<{ Id?: string; RepoDigests?: string[] } | null>;
   // Daemon OS/arch (e.g. "linux/arm64"), used when the caller left platform blank.
-  daemonPlatform: () => Promise<string>;
+  daemonPlatform: (signal: AbortSignal) => Promise<string>;
   openLayer: (img: ResolvedImage, index: number, workerUrl: string, signal: AbortSignal, creds?: Creds) => Promise<ReadableStream<Uint8Array>>;
 }
 
@@ -36,16 +36,16 @@ export const defaultDeps: BrowserPullDeps = {
   resolveImage,
   buildDockerLoadTar,
   streamTarToDaemon,
-  inspectLocal: async (ref) => {
+  inspectLocal: async (ref, signal) => {
     try {
-      return await get<{ Id?: string; RepoDigests?: string[] }>(imageInspectUrl(ref));
+      return await get<{ Id?: string; RepoDigests?: string[] }>(imageInspectUrl(ref), signal);
     } catch {
       return null; // not present locally (or inspect failed) — proceed to pull
     }
   },
-  daemonPlatform: async () => {
+  daemonPlatform: async (signal) => {
     try {
-      const p = await get<{ os?: string; architecture?: string }>("/api/system/platform");
+      const p = await get<{ os?: string; architecture?: string }>("/api/system/platform", signal);
       if (p?.os && p?.architecture) return `${p.os}/${p.architecture}`;
     } catch {
       /* fall back below */
@@ -61,6 +61,7 @@ export const defaultDeps: BrowserPullDeps = {
       // fresh one from the challenge and reuse it for the remaining layers.
       const wa = resp.headers.get("WWW-Authenticate");
       if (wa) {
+        await resp.body?.cancel();
         img.authHeader = await authHeaderFromChallenge(workerUrl, wa, creds, signal);
         resp = await proxiedGet(workerUrl, target, { Authorization: img.authHeader }, signal);
       }
@@ -74,11 +75,12 @@ export const defaultDeps: BrowserPullDeps = {
 export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullCallbacks, deps: BrowserPullDeps = defaultDeps): Promise<void> {
   if (cb.signal.aborted) throw new Error("已取消");
   cb.note("解析镜像信息…");
-  const platform = params.platform?.trim() || (await deps.daemonPlatform());
+  const platform = params.platform?.trim() || (await deps.daemonPlatform(cb.signal));
+  cb.signal.throwIfAborted();
   const img = await deps.resolveImage(params.ref, platform, params.workerUrl, params.creds, cb.signal);
   if (cb.signal.aborted) throw new Error("已取消");
 
-  const local = await deps.inspectLocal(img.repoTag);
+  const local = await deps.inspectLocal(img.repoTag, cb.signal);
   if (cb.signal.aborted) throw new Error("已取消");
   if (matchesRemote(local, remoteDigests(img))) {
     cb.note("镜像已是最新，无需下载");
@@ -115,7 +117,7 @@ export interface BrowserPullComposeParams {
 }
 
 export interface BrowserPullComposeDeps {
-  fetchPlan: (id: string) => Promise<ComposePullPlan>;
+  fetchPlan: (id: string, signal: AbortSignal) => Promise<ComposePullPlan>;
   runBrowserPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>;
   // Runs `compose up` with pull_policy=never so the daemon uses the just-loaded
   // local images and never reaches out to the registry.
@@ -223,7 +225,7 @@ export async function preloadComposeImages(
 }
 
 export const defaultComposeDeps: BrowserPullComposeDeps = {
-  fetchPlan: (id) => get<ComposePullPlan>(`/api/compose/pull-plan?id=${encodeURIComponent(id)}`),
+  fetchPlan: (id, signal) => get<ComposePullPlan>(`/api/compose/pull-plan?id=${encodeURIComponent(id)}`, signal),
   runBrowserPull: (params, cb) => runBrowserPull(params, cb),
   composeUp: (id, token, onProgress, signal) => streamCompose("up", id, { body: { pull_policy: "never" }, token, onProgress, signal }),
   composeBuild: (id, token, onProgress, signal) => streamCompose("build", id, { token, onProgress, signal }),
@@ -235,7 +237,7 @@ export async function runBrowserPullCompose(
   deps: BrowserPullComposeDeps = defaultComposeDeps,
 ): Promise<void> {
   cb.note("解析 Compose 项目镜像…");
-  const plan = await deps.fetchPlan(params.id);
+  const plan = await deps.fetchPlan(params.id, cb.signal);
   if (cb.signal.aborted) throw new Error("已取消");
   if (params.mode === "build") {
     await preloadComposeImages(plan.build_bases ?? [], { workerUrl: params.workerUrl, token: params.token, creds: params.creds }, cb, deps.runBrowserPull);
@@ -333,15 +335,15 @@ export interface BrowserUpgradeParams {
 }
 
 export interface BrowserUpgradeDeps {
-  inspectContainer: (id: string) => Promise<UpgradeInspect>;
-  inspectImage: (id: string) => Promise<ImageInspect>;
+  inspectContainer: (id: string, signal: AbortSignal) => Promise<UpgradeInspect>;
+  inspectImage: (id: string, signal: AbortSignal) => Promise<ImageInspect>;
   runBrowserPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>;
   streamPost: typeof streamPost;
 }
 
 export const defaultUpgradeDeps: BrowserUpgradeDeps = {
-  inspectContainer: (id) => get<UpgradeInspect>(`/api/containers/${encodeURIComponent(id)}/inspect`),
-  inspectImage: (id) => get<ImageInspect>(imageInspectUrl(id)),
+  inspectContainer: (id, signal) => get<UpgradeInspect>(`/api/containers/${encodeURIComponent(id)}/inspect`, signal),
+  inspectImage: (id, signal) => get<ImageInspect>(imageInspectUrl(id), signal),
   ...defaultActionDeps,
 };
 
@@ -351,11 +353,11 @@ export async function runBrowserUpgrade(
   deps: BrowserUpgradeDeps = defaultUpgradeDeps,
 ): Promise<void> {
   cb.note("读取容器镜像信息…");
-  const info = await deps.inspectContainer(params.id);
+  const info = await deps.inspectContainer(params.id, cb.signal);
   if (cb.signal.aborted) throw new Error("已取消");
   const imageID = info.Image?.trim();
   if (!imageID) throw new Error("容器缺少可升级的镜像引用");
-  const image = await deps.inspectImage(imageID);
+  const image = await deps.inspectImage(imageID, cb.signal);
   if (cb.signal.aborted) throw new Error("已取消");
   const target = upgradeTarget(info, image);
   await runBrowserAction({
@@ -382,13 +384,13 @@ export interface ComposeUpdateParams {
 }
 
 export interface ComposeUpdateDeps {
-  fetchPlan: (id: string) => Promise<ComposePullPlan>;
+  fetchPlan: (id: string, signal: AbortSignal) => Promise<ComposePullPlan>;
   runBrowserPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>;
   streamCompose: typeof streamCompose;
 }
 
 export const defaultUpdateDeps: ComposeUpdateDeps = {
-  fetchPlan: (id) => get<ComposePullPlan>(`/api/compose/pull-plan?id=${encodeURIComponent(id)}`),
+  fetchPlan: (id, signal) => get<ComposePullPlan>(`/api/compose/pull-plan?id=${encodeURIComponent(id)}`, signal),
   runBrowserPull: (params, cb) => runBrowserPull(params, cb),
   streamCompose,
 };
@@ -404,7 +406,7 @@ export async function runComposeUpdate(
 
   if (params.canBuild || params.mode === "browser") {
     cb.note("解析 Compose 项目镜像…");
-    plan = await deps.fetchPlan(id);
+    plan = await deps.fetchPlan(id, signal);
     if (signal.aborted) throw new Error("已取消");
     if (params.mode === "browser") {
       const blocked = plan.rejected.filter((r) => r.reason !== "build");

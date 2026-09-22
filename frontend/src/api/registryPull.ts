@@ -189,6 +189,7 @@ async function authorizedGet(
   if (resp.status === 401) {
     const wa = resp.headers.get("WWW-Authenticate");
     if (!wa) throw await registryResponseError(resp, "镜像仓库请求");
+    await resp.body?.cancel();
     const challenge = parseWWWAuthenticate(wa);
     if (challenge.scheme === "basic") {
       if (!creds) throw new Error("该镜像需要登录凭据");

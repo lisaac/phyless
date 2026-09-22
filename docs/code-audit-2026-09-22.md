@@ -32,7 +32,7 @@ Cloudflare 的重定向行为依据：[官方 Request 文档](https://developers
 
 1. imagefs 第一次浏览仍需扫描整个 tar，跳过正文不等于不传输正文。大镜像/停止容器和远程 daemon 的成本主要在这里；若实际负载频繁触发新增容量限制，应改为磁盘索引或更局部的读取，不应直接移除限额。
 2. 概览页仍每五秒轮询五个列表，约每个可见会话 60 次 GET/分钟，另有首次/手动系统信息请求。多用户、大资源列表场景需要真实负载数据后再决定摘要 API 或请求共享。
-3. Compose build 能力缓存仍只跟踪顶层 Compose 文件；include/.env 变化没有完整依赖失效。首次检查每项目一个协程，缓存避免同项目重复加载；未改为长期调度服务。
+3. Compose build 能力缓存跟踪顶层文件，并在第二轮增加 30 秒 TTL，include/.env 变化可在缓存到期后的下一次查询生效。没有维护完整依赖图；首次检查仍每项目一个协程。
 4. 审计日志仍是追加文件，读取有界但磁盘总量未轮转；保留策略应由部署明确，不能在审计修复中自行删除历史。
 5. 前端生产包仍存在大于 500 kB 的按需 chunk（容器创建/命令转换相关）。入口和页面懒加载已存在，本次没有为消除构建提示而移动依赖。
 6. 本次没有执行真实 Docker 拉取/升级/回滚验收或线上 CPU/RSS/带宽采样；没有将微基准收益推算成整站收益。原有一个前端 todo 用例仍待补齐。
@@ -69,3 +69,21 @@ Apple M1 Pro / darwin arm64 / Go 1.26.6；每次解析 8000 条 JSON，保留最
 go test ./backend/internal/audit -run '^$' -bench BenchmarkScanTail -benchmem -cpu=1 -count=3
 ```
 
+
+## 第二轮复查
+
+第一轮修复已提交为 `8f5ded6`。本轮继续检查取消链路、持久化副本和错误恢复，新增修复如下。
+
+| 问题 | 修复与验证 |
+| --- | --- |
+| 任务取消未传到平台查询、Compose plan、容器/镜像 inspect，任务可长期占用运行槽。 | 任务信号贯穿所有这些 GET；用五种任务入口验证取消会中断实际 fetch，并且不启动后续步骤。 |
+| 登录/初始化/会话恢复的迟到响应可能恢复退出的账号或覆盖新 token。 | 登录和初始化共用可取消的建立会话流程；保存 token 和用户资料前检查取消；恢复会话时核对 token。覆盖迟到 token 和 profile。 |
+| 代理 URL 的 userinfo/query 可进入任务详情和 localStorage，即使请求 body 已剥离。 | 详情、持久化 metadata 和完成事件移除 URL 用户名/密码、query、fragment；正在执行的真实请求保持原值。修复防止新记录泄漏，不会撤销此前可能已暴露的凭据。 |
+| XHR open/send 等同步异常绕过 onerror，任务永远 running。 | 调度入口捕获同步异常，统一 settle，释放执行槽；验证后续同 key 任务能继续。 |
+| 刷新间隔接受 Infinity 或过大的有限数，定时器溢出后可形成高频轮询。 | 保证有限值并约束到有符号 32 位毫秒范围；保留正常整数秒行为。 |
+| imagefs helper 已被外部删除时，清理的 NotFound 被视为失败，旧索引无法驱逐。 | 统一删除入口将 NotFound 视为已完成；验证满缓存仍能换入新索引。 |
+| include/.env 变更未修改顶层 Compose 文件时，can_build 可无限陈旧。 | 保留 mtime 快速失效，增加 30 秒 TTL；真实 include 文件测试证明到期后重新加载。不是即时依赖追踪，显示更新还取决于下一次查询。 |
+| 更新检查先启动 registry Promise、再等待 tag inspect；registry 快速失败时可能触发未处理拒绝。 | 先完成 tag inspect，再在 try/await 范围启动 registry 查询，保留按镜像组去重。 |
+| 镜像认证重试遗弃旧 401 body，可能继续下载并占用连接。 | 元数据与 layer 路径在重试/放弃前取消 challenge body；补取消行为测试。 |
+
+本轮验证：`go test -race ./... -timeout=90s`、`go vet ./...` 全部通过；前端 209 个测试通过，保留 1 个原有 todo；类型检查与生产构建通过；`git diff --check` 通过。仍保留原有大 chunk 提示，未部署或执行真实 Docker 生产负载测试。

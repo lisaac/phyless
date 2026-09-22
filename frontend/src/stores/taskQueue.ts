@@ -115,7 +115,7 @@ export function showTaskPanel(): void {
 function persist() {
   try {
     const stored = tasks.list.slice(-MAX_STORED).map((t) => ({
-      ...unwrap(t), file: undefined, body: undefined, secret: undefined, layers: [], notes: t.notes.slice(-MAX_STORED_NOTES),
+      ...unwrap(t), file: undefined, body: undefined, secret: undefined, meta: t.meta && JSON.parse(safeJSON(t.meta)), layers: [], notes: t.notes.slice(-MAX_STORED_NOTES),
     }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
   } catch { /* quota / private mode — the in-memory queue still works */ }
@@ -144,11 +144,20 @@ const DETAIL_LABELS: Record<string, string> = {
   env_from_image: "改用镜像值的变量", envFromImage: "改用镜像值的变量",
 };
 const HIDDEN_KEYS = /^(password|passwd|secret|token|authorization|auth|credentials?|registry_auth|(?:ca|cert|key)_pem)$/i;
+const URL_KEYS = /^(proxy_url|workerUrl)$/i;
+function safeURL(value: unknown): string {
+  try {
+    const url = new URL(String(value));
+    url.username = ""; url.password = ""; url.search = ""; url.hash = "";
+    return url.toString();
+  } catch { return "已隐藏"; }
+}
 const ENV_KEYS = /^(env|environment)$/i;
 const CONTENT_KEYS = /^(cmd|command|content|data)$/i;
 
 const safeJSON = (value: unknown) => JSON.stringify(value, (key, nested) => {
   if (HIDDEN_KEYS.test(key)) return "已隐藏";
+  if (URL_KEYS.test(key)) return safeURL(nested);
   if (ENV_KEYS.test(key)) return `${Array.isArray(nested) ? nested.length : 1} 项（值已隐藏）`;
   return nested;
 });
@@ -156,6 +165,7 @@ const safeJSON = (value: unknown) => JSON.stringify(value, (key, nested) => {
 function safeDetailValue(key: string, value: unknown): string | string[] | undefined {
   if (value == null || value === "") return;
   if (HIDDEN_KEYS.test(key)) return "已隐藏";
+  if (URL_KEYS.test(key)) return safeURL(value);
   if (ENV_KEYS.test(key)) return `${Array.isArray(value) ? value.length : 1} 项（值已隐藏）`;
   if (CONTENT_KEYS.test(key)) return `${typeof value === "string" ? value.length : safeJSON(value).length} 字符（内容已隐藏）`;
   if (typeof value === "boolean") return value ? "是" : "否";
@@ -255,7 +265,7 @@ export const isPending = (pred: (t: Task) => boolean) => tasks.list.some((t) => 
 function settle(id: string, status: TaskStatus, error = "") {
   const t = find(id);
   if (!t || !isActive(t.status)) return;
-  upd(id, { status, error: error.slice(0, MAX_ERROR), finishedAt: Date.now(), uploadPct: null, file: undefined, body: undefined, secret: undefined });
+  upd(id, { status, error: error.slice(0, MAX_ERROR), finishedAt: Date.now(), uploadPct: null, file: undefined, body: undefined, secret: undefined, meta: t.meta && JSON.parse(safeJSON(t.meta)) });
   xhrs.delete(id);
   browserAborts.delete(id);
   persist();
@@ -282,7 +292,8 @@ function pump() {
     if (t.key && busy.has(t.key)) continue;
     if (t.key) busy.add(t.key);
     slots--;
-    start(t.id);
+    try { start(t.id); }
+    catch (error) { settle(t.id, "error", error instanceof Error ? error.message : String(error)); }
   }
 }
 
