@@ -24,7 +24,7 @@ const fmtDate = (s?: string): string => {
 
 export const VolumeListPage: Component = () => {
   const navigate = useNavigate();
-  const store = createResourceStore<VolumeSummary>("/api/volumes");
+  const store = createResourceStore<VolumeSummary>("/api/volumes", "Name");
   const view = createListView(store.items, (v) =>
     `${v.Name} ${v.Driver} ${v.Mountpoint} ${v.UsedBy?.map((c) => c.Name).join(" ") ?? ""}`);
   const [show, setShow] = createSignal(false);

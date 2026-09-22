@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { containerRunCommand } from "./containerActions";
+import { containerRunCommand, findContainer } from "./containerActions";
 import type { ContainerSummary } from "../../types";
 
 const base: ContainerSummary = {
@@ -25,5 +25,15 @@ describe("containerRunCommand", () => {
   it("omits port flag when not published", () => {
     const cmd = containerRunCommand({ ...base, Ports: [{ PrivatePort: 80, Type: "tcp" }] });
     expect(cmd).not.toContain("-p ");
+  });
+});
+
+describe("findContainer", () => {
+  const list = [{ Id: "abc123def", Names: ["/vpn"] }, { Id: "ffff", Names: ["/web"] }] as ContainerSummary[];
+  it("resolves a container:<ref> target by full id, id prefix or name", () => {
+    expect(findContainer(list, "abc123def")?.Names[0]).toBe("/vpn");
+    expect(findContainer(list, "abc1")?.Names[0]).toBe("/vpn");
+    expect(findContainer(list, "web")?.Id).toBe("ffff");
+    expect(findContainer(list, "nope")).toBeUndefined();
   });
 });

@@ -46,7 +46,7 @@ export const ComposeDetailPage: Component = () => {
   const tab = () => (searchParams.tab as Tab) || "info";
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
 
-  const store = createResourceStore<ComposeProject>("/api/compose");
+  const store = createResourceStore<ComposeProject>("/api/compose", "id");
   const containers = createResourceStore<ContainerSummary>("/api/containers");
   const { isP, act } = createContainerActions();
   const project = () => store.items().find((p) => p.id === id());
@@ -354,7 +354,7 @@ export const ComposeDetailPage: Component = () => {
                 <div class="divide-y divide-zinc-800">
                   <For each={cs()}>
                     {(c) => (
-                      <ContainerRow c={c} isP={isP} act={act} onViewCmd={setRunTarget} onConsole={setConsoleTarget} />
+                      <ContainerRow c={c} all={containers.items()} isP={isP} act={act} onViewCmd={setRunTarget} onConsole={setConsoleTarget} />
                     )}
                   </For>
                 </div>

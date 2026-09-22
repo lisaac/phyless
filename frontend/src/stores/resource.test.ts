@@ -14,6 +14,20 @@ describe("createResourceStore", () => {
     expect(store.error()).toBe("");
   });
 
+  it("keeps an item's object across polls, keyed, updating only changed fields", async () => {
+    const get = vi.spyOn(client, "get");
+    get.mockResolvedValueOnce([{ Id: "a", Status: "Up 3 minutes" }, { Id: "b", Status: "Exited" }]);
+    const store = createResourceStore<{ Id: string; Status: string }>("/api/containers");
+    await store.refresh();
+    const [a, b] = store.items();
+    get.mockResolvedValueOnce([{ Id: "b", Status: "Exited" }, { Id: "a", Status: "Up 4 minutes" }, { Id: "c", Status: "Created" }]);
+    await store.refresh();
+    expect(store.items()[0]).toBe(b);
+    expect(store.items()[1]).toBe(a);
+    expect(a.Status).toBe("Up 4 minutes");
+    expect(store.items()[2].Id).toBe("c");
+  });
+
   it("captures error message on failure", async () => {
     vi.spyOn(client, "get").mockRejectedValue(new Error("boom"));
     const store = createResourceStore("/api/things");

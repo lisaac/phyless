@@ -21,7 +21,7 @@ describe("ContainerRow volume links", () => {
     { mounts: [], title: "从根目录浏览文件", path: "%2F" },
   ])("opens the file browser at $path", async ({ mounts, title, path }) => {
     render(() => <ContainerRow
-      c={container(mounts)} isP={() => false} act={() => {}} onViewCmd={() => {}}
+      all={[]} c={container(mounts)} isP={() => false} act={() => {}} onViewCmd={() => {}}
     />);
 
     fireEvent.click(screen.getByTitle(title));
@@ -32,7 +32,7 @@ describe("ContainerRow volume links", () => {
 
   it("opens a stopped container at root", async () => {
     render(() => <ContainerRow
-      c={container([], "exited")} isP={() => false} act={() => {}} onViewCmd={() => {}}
+      all={[]} c={container([], "exited")} isP={() => false} act={() => {}} onViewCmd={() => {}}
     />);
     fireEvent.click(screen.getByTitle("从根目录浏览文件"));
     await waitFor(() => expect(get).toHaveBeenCalledWith("/api/containers/abc/files?path=%2F"));

@@ -1,4 +1,5 @@
 import { createSignal, type Accessor } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { get } from "../api/client";
 import { SETTLED_EVENT } from "./taskQueue";
 import { REFRESH_EVENT, autoRefresh, refreshSeconds } from "./refresh";
@@ -12,12 +13,17 @@ export interface ResourceStore<T> {
   stopPolling: () => void;
 }
 
-export function createResourceStore<T>(path: string): ResourceStore<T[]> {
-  return createPollingResource<T[]>(path, []);
+// `key` is the field that identifies an item across polls (Id, Name, id…).
+export function createResourceStore<T>(path: string, key = "Id"): ResourceStore<T[]> {
+  return createPollingResource<T[]>(path, [], key);
 }
 
-export function createPollingResource<T>(path: string, initial: T): ResourceStore<T> {
-  const [items, setItems] = createSignal<T>(initial);
+export function createPollingResource<T>(path: string, initial: T, key = "Id"): ResourceStore<T> {
+  // A store reconciled by `key`, not a replaced signal: an item that is still
+  // there keeps its object, so <For> keeps its row (and the row's local
+  // state — open modals, resources) and only the changed fields re-render.
+  const [state, setState] = createStore<{ value: T }>({ value: initial });
+  const items = () => state.value;
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -25,7 +31,6 @@ export function createPollingResource<T>(path: string, initial: T): ResourceStor
   let generation = 0;
   let controller: AbortController | undefined;
   let polling = false;
-  let lastSerialized = JSON.stringify(initial);
   const onVisibilityChange = () => {
     if (document.hidden) {
       if (timer) clearInterval(timer);
@@ -62,14 +67,7 @@ export function createPollingResource<T>(path: string, initial: T): ResourceStor
       try {
         const data = await get<T>(path, controller.signal);
         if (requestGeneration === generation) {
-          // ponytail: JSON compare of the fetched payload — O(payload) per poll, but it
-          // saves <For> re-creating every row when nothing changed. Switch to a per-item
-          // keyed reconcile if the payload ever gets big enough for the compare to hurt.
-          const serialized = JSON.stringify(data ?? initial);
-          if (serialized !== lastSerialized) {
-            lastSerialized = serialized;
-            setItems(() => data ?? initial);
-          }
+          setState("value", reconcile(data ?? initial, { key }));
           setError("");
         }
       } catch (e) {

@@ -25,7 +25,7 @@ const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
 
 export const ComposeListPage: Component = () => {
   const navigate = useNavigate();
-  const store = createResourceStore<ComposeProject>("/api/compose");
+  const store = createResourceStore<ComposeProject>("/api/compose", "id");
   const containers = createResourceStore<ContainerSummary>("/api/containers");
   const { isP, act } = createContainerActions();
   const view = createListView(store.items, (p) =>
@@ -232,6 +232,7 @@ export const ComposeListPage: Component = () => {
                                 {(c) => (
                                   <ContainerRow
                                     c={c}
+                                    all={containers.items()}
                                     isP={isP}
                                     act={act}
                                     onViewCmd={setRunTarget}

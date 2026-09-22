@@ -8,7 +8,7 @@ import { toast } from "../shared/Toast";
 import type { User, Role } from "../../types";
 
 export const UsersPage: Component = () => {
-  const store = createResourceStore<User>("/api/users");
+  const store = createResourceStore<User>("/api/users", "id");
   const [show, setShow] = createSignal(false);
   const [editing, setEditing] = createSignal<User | null>(null);
   const [newPassword, setNewPassword] = createSignal("");

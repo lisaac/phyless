@@ -9,7 +9,7 @@ import { toast } from "../shared/Toast";
 import type { Registry } from "../../types";
 
 export const RegistriesPage: Component = () => {
-  const store = createResourceStore<Registry>("/api/registries");
+  const store = createResourceStore<Registry>("/api/registries", "id");
   const [show, setShow] = createSignal(false);
   const [form, setForm] = createSignal({ url: "", username: "", password: "" });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));

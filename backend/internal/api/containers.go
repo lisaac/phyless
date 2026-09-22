@@ -352,7 +352,18 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sortMounts(info.Mounts)
-	writeJSON(w, http.StatusOK, info)
+	resp := struct {
+		container.InspectResponse
+		// Name of the `container:<ref>` network-mode target, so the detail
+		// page needn't inspect the target just to label it.
+		NetworkContainerName string `json:"NetworkContainerName,omitempty"`
+	}{InspectResponse: info}
+	if info.ContainerJSONBase != nil && info.HostConfig != nil && info.HostConfig.NetworkMode.IsContainer() {
+		if target, err := s.docker.ContainerInspect(r.Context(), info.HostConfig.NetworkMode.ConnectedContainer()); err == nil && target.ContainerJSONBase != nil {
+			resp.NetworkContainerName = strings.TrimPrefix(target.Name, "/")
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleDeleteContainer(w http.ResponseWriter, r *http.Request) {

@@ -13,7 +13,7 @@ import { get, getToken } from "../../api/client";
 import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
 import { UpdateBadge } from "./UpdateBadge";
 import { toUpgradeTarget, type UpgradeTarget } from "./UpgradeContainerModal";
-import { containerName, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
+import { containerName, findContainer, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary, FileEntry } from "../../types";
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
@@ -23,6 +23,8 @@ import type { ContainerSummary, FileEntry } from "../../types";
 // replaced, so both call sites still line up the same four "columns".
 export const ContainerRow: Component<{
   c: ContainerSummary;
+  /** Every container, to name a `container:<id>` network target without an inspect. */
+  all: readonly ContainerSummary[];
   selected?: boolean;
   onToggleSelect?: () => void;
   isP: (id: string, verb: string) => boolean;
@@ -66,13 +68,11 @@ export const ContainerRow: Component<{
     const mode = networkContainer().HostConfig?.NetworkMode ?? "";
     return mode.startsWith("container:") ? mode.slice("container:".length) : "";
   };
-  const [sharedNetName] = createResource(sharedNetTarget, (target) =>
-    target
-      ? get<{ Name?: string }>(`/api/containers/${encodeURIComponent(target)}/inspect`)
-        .then((info) => String(info?.Name ?? "").replace(/^\//, ""))
-        .catch(() => "")
-      : Promise.resolve("")
-  );
+  const netName = () => {
+    const target = sharedNetTarget();
+    const hit = target && findContainer(p.all, target);
+    return hit ? containerName(hit) : target.slice(0, 12);
+  };
   const networkRows = () => {
     const container = networkContainer();
     const rows = Object.entries(container.NetworkSettings?.Networks ?? {}).map(([name, endpoint]) => ({
@@ -83,7 +83,7 @@ export const ContainerRow: Component<{
     const mode = container.HostConfig?.NetworkMode ?? "";
     if (mode.startsWith("container:")) {
       return [{
-        name: `container:${sharedNetName() || "…"}`,
+        name: `container:${netName()}`,
         target: sharedNetTarget(),
         ips: [],
       }, ...rows];
@@ -205,7 +205,7 @@ export const ContainerRow: Component<{
                       <a
                         class="block break-all text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
                         href={`/containers/${encodeURIComponent(target())}`}
-                        title={`查看共享网络容器 ${sharedNetName() || target()}`}
+                        title={`查看共享网络容器 ${netName() || target()}`}
                         onClick={goto(`/containers/${encodeURIComponent(target())}`)}
                       >
                         {network.name}

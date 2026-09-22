@@ -5,6 +5,12 @@ export function containerName(c: ContainerSummary): string {
   return (c.Names[0] ?? "").replace(/^\//, "");
 }
 
+/** Container a reference points at — full ID, ID prefix or name, as
+ *  `network_mode: container:<ref>` may hold any of them. */
+export function findContainer(list: readonly ContainerSummary[], ref: string): ContainerSummary | undefined {
+  return list.find((c) => c.Id.startsWith(ref) || c.Names.includes(`/${ref}`));
+}
+
 export function fmtRelTime(unix: number): string {
   const diff = Date.now() - unix * 1000;
   const m = Math.floor(diff / 60000);

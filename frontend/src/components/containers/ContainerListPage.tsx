@@ -166,6 +166,7 @@ export const ContainerListPage: Component = () => {
             {(c) => (
               <ContainerRow
                 c={c}
+                all={store.items()}
                 selected={selected().has(c.Id)}
                 onToggleSelect={() => toggle(c.Id)}
                 isP={isP}

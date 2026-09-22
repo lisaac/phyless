@@ -190,9 +190,6 @@ export const ContainerDetailPage: Component = () => {
   const host = () => inspect()?.HostConfig ?? {};
   // container:<id> mode: no own endpoints, Docker refuses connect/disconnect.
   const sharedNetTarget = () => { const m: string = host().NetworkMode ?? ""; return m.startsWith("container:") ? m.slice("container:".length) : ""; };
-  const [sharedNetName] = createResource(sharedNetTarget, (t) =>
-    t ? get<any>(`/api/containers/${t}/inspect`).then((r) => String(r?.Name ?? "").replace(/^\//, "")).catch(() => "") : Promise.resolve("")
-  );
   const name = () => (inspect()?.Name ?? id()).replace(/^\//, "");
   const state = () => inspect()?.State?.Status ?? "unknown";
   const running = () => state() === "running";
@@ -568,7 +565,7 @@ export const ContainerDetailPage: Component = () => {
                   <div class="flex items-center gap-2">
                     <span class="text-zinc-500">模式:</span>
                     <span class="text-zinc-300">共享容器网络</span>
-                    <A class="text-zinc-300 hover:text-indigo-400 transition-colors" href={`/containers/${target()}`}>{sharedNetName() || target().slice(0, 12)}</A>
+                    <A class="text-zinc-300 hover:text-indigo-400 transition-colors" href={`/containers/${target()}`}>{inspect()?.NetworkContainerName || target().slice(0, 12)}</A>
                   </div>
                 )}
               </Show>
