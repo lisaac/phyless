@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"syscall"
+
+	"phyless/backend/internal/config"
 )
 
 // maxFileContent caps how much of a file the editor ever loads — without it,
@@ -53,8 +54,8 @@ func atomicWriteFile(path string, data []byte, defaultMode os.FileMode) error {
 			return fmt.Errorf("target is not a regular file")
 		}
 		mode = info.Mode()
-		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-			uid, gid = int(stat.Uid), int(stat.Gid)
+		if u, g, ok := config.FileOwner(info); ok {
+			uid, gid = u, g
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err

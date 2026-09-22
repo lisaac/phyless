@@ -119,7 +119,7 @@ export const DockerSettingsPage: Component = () => {
         </label>
         <label class="mb-3 block text-sm text-zinc-300">
           Docker API 地址
-          <input class="mt-1 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="留空使用本机 Docker，或 tcp://docker.example.com:2375" value={form().host} onInput={(e) => setText("host", e.currentTarget.value)} />
+          <input class="mt-1 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="留空使用本机 Docker，或 tcp://docker.example.com:2375、unix:///var/run/docker.sock" value={form().host} onInput={(e) => setText("host", e.currentTarget.value)} />
         </label>
         <label class="flex items-center gap-2 text-sm text-zinc-300">
           <input type="checkbox" checked={form().tls} onChange={(e) => setForm((f) => ({ ...f, tls: e.currentTarget.checked }))} />

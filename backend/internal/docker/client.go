@@ -52,7 +52,7 @@ func NewClient(endpoint models.DockerEndpoint) (*Client, error) {
 }
 
 // NormalizeEndpoint validates the persisted single-daemon configuration and
-// returns its canonical form. Remote Docker API URLs are always tcp://; TLS is
+// returns its canonical form. Endpoints are tcp:// or unix://; TLS (tcp only) is
 // selected separately so HTTPS and plain HTTP cannot be confused.
 func NormalizeEndpoint(endpoint models.DockerEndpoint) (models.DockerEndpoint, error) {
 	endpoint.Host = strings.TrimSpace(endpoint.Host)
@@ -65,8 +65,20 @@ func NormalizeEndpoint(endpoint models.DockerEndpoint) (models.DockerEndpoint, e
 	}
 
 	u, err := url.Parse(endpoint.Host)
+	if err == nil && u.Scheme == "unix" {
+		// unix:///path/to/docker.sock: a local socket (or an SSH-forwarded one).
+		if u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") || u.RawQuery != "" || u.Fragment != "" {
+			return endpoint, fmt.Errorf("Docker unix endpoint must be unix:///path/to/docker.sock")
+		}
+		if endpoint.TLS {
+			return endpoint, fmt.Errorf("Docker TLS requires a remote tcp endpoint")
+		}
+		endpoint.Host = "unix://" + u.Path
+		endpoint.CAPEM, endpoint.CertPEM, endpoint.KeyPEM = "", "", ""
+		return endpoint, nil
+	}
 	if err != nil || u.Scheme != "tcp" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return endpoint, fmt.Errorf("Docker endpoint must be tcp://host:port")
+		return endpoint, fmt.Errorf("Docker endpoint must be tcp://host:port or unix:///path/to/docker.sock")
 	}
 	if _, _, err := net.SplitHostPort(u.Host); err != nil {
 		return endpoint, fmt.Errorf("Docker endpoint must include a valid host and port: %w", err)

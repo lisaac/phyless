@@ -61,6 +61,21 @@ func TestNormalizeEndpointRejectsIncompleteTLS(t *testing.T) {
 	}
 }
 
+func TestNormalizeEndpointUnixSocket(t *testing.T) {
+	got, err := NormalizeEndpoint(models.DockerEndpoint{Host: " unix:///var/run/docker.sock "})
+	if err != nil || got.Host != "unix:///var/run/docker.sock" {
+		t.Fatalf("unix endpoint = %q, %v", got.Host, err)
+	}
+	for _, host := range []string{"unix://docker.sock", "unix:///var/run/docker.sock?x=1"} {
+		if _, err := NormalizeEndpoint(models.DockerEndpoint{Host: host}); err == nil {
+			t.Fatalf("%q was accepted", host)
+		}
+	}
+	if _, err := NormalizeEndpoint(models.DockerEndpoint{Host: "unix:///var/run/docker.sock", TLS: true}); err == nil {
+		t.Fatal("unix endpoint with TLS was accepted")
+	}
+}
+
 func testPEM(t *testing.T, server *httptest.Server) (string, string) {
 	t.Helper()
 	cert := server.TLS.Certificates[0]

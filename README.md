@@ -12,6 +12,7 @@
 - [为什么用 phyless](#为什么用-phyless)
 - [功能一览](#功能一览)
 - [部署](#部署)
+- [作为客户端使用](#作为客户端使用)
 - [使用代理拉取镜像](#使用代理拉取镜像)
 - [本地开发](#本地开发)
 - [安全须知](#安全须知)
@@ -36,7 +37,7 @@ docker run -d \
   ghcr.io/lisaac/phyless:latest
 ```
 
-**或者直接运行二进制**（Linux amd64）：
+**或者直接运行二进制**（Linux amd64，其他平台见 [Releases](https://github.com/lisaac/phyless/releases/latest)）：
 
 ```bash
 curl -fsSL https://github.com/lisaac/phyless/releases/latest/download/phyless-linux-amd64.tar.gz | tar -xz
@@ -120,7 +121,7 @@ Docker 主机与版本、操作系统和内核、总内存、存储驱动与可�
 
 | 页面 | 作用 |
 | --- | --- |
-| Docker 连接 | 管理多个 Docker 主机：本机 socket 或 `tcp://host:2375`，可配置 TLS 证书（CA / Cert / Key），随时切换当前主机。 |
+| Docker 连接 | 管理多个 Docker 主机：本机 socket、`unix:///path/to/docker.sock` 或 `tcp://host:2375`，可配置 TLS 证书（CA / Cert / Key），随时切换当前主机。 |
 | 用户管理 | 创建账号并分配角色：**admin**（全部权限）、**operator**（可执行操作）、**viewer**（只读）。 |
 | 镜像仓库 | 保存私有仓库凭据，拉取时自动使用；可测试连通性。 |
 | 审计日志 | 记录谁在什么时间执行了什么操作。 |
@@ -160,7 +161,7 @@ docker rm -f phyless         # 删除容器，phyless-data 卷仍保留
 
 ### 方式二：直接运行二进制
 
-适合不想多跑一个容器的机器。[Releases](https://github.com/lisaac/phyless/releases/latest) 提供 Linux amd64 版本，其他平台请[自行构建](#本地开发)。
+适合不想多跑一个容器的机器。[Releases](https://github.com/lisaac/phyless/releases/latest) 提供 Linux amd64 / arm64、macOS arm64、Windows amd64 版本，其他平台请[自行构建](#本地开发)。以下以 Linux amd64 为例，arm64 把文件名换成 `phyless-linux-arm64`。
 
 ```bash
 curl -fsSL https://github.com/lisaac/phyless/releases/latest/download/phyless-linux-amd64.tar.gz | tar -xz
@@ -239,6 +240,8 @@ services:
 
 在「设置 → Docker 连接」添加 `tcp://<主机>:2375`（或启用 TLS 并填写证书），保存后切换即可。远程主机需要自行开放 Docker API，务必配 TLS 或限定内网访问。
 
+也可以填 `unix:///path/to/docker.sock` 连接非默认位置的 Socket，例如 rootless Docker 的 `unix:///run/user/1000/docker.sock`，或经 SSH 转发来的远程 Socket（见 [作为客户端使用](#作为客户端使用)）。
+
 ### 部署参数
 
 | 项目 | 默认值 | 说明 |
@@ -249,6 +252,62 @@ services:
 | Docker Socket | `/var/run/docker.sock` | 管理本机 Docker 必需。 |
 
 公网访问请放在 HTTPS 反向代理之后（见 [安全须知](#安全须知)）。
+
+## 作为客户端使用
+
+phyless 不要求和 Docker 跑在同一台机器上。在自己的电脑（macOS / Windows / Linux 桌面）上运行它，当作本地客户端，通过「设置 → Docker 连接」管理一台或多台远程 Docker 主机，服务器上什么都不用装。
+
+**1. 下载并运行**
+
+从 [Releases](https://github.com/lisaac/phyless/releases/latest) 下载对应平台的文件：
+
+| 平台 | 文件 |
+| --- | --- |
+| macOS（Apple Silicon） | `phyless-darwin-arm64.tar.gz` |
+| Windows x64 | `phyless-windows-amd64.zip` |
+| Linux x64 / arm64 | `phyless-linux-amd64.tar.gz` / `phyless-linux-arm64.tar.gz` |
+
+macOS：
+
+```bash
+curl -fsSL https://github.com/lisaac/phyless/releases/latest/download/phyless-darwin-arm64.tar.gz | tar -xz
+```
+
+```bash
+xattr -d com.apple.quarantine phyless-darwin-arm64 2>/dev/null; ./phyless-darwin-arm64 -C ~/.phyless
+```
+
+Windows（PowerShell，解压 zip 后）：
+
+```powershell
+.\phyless-windows-amd64.exe -C $env:USERPROFILE\.phyless
+```
+
+然后在浏览器打开 `http://localhost:8080`，按提示设置 `admin` 密码。
+
+> phyless 监听所有网卡的 8080 端口，同一局域网的机器也能访问。在不可信网络中请用防火墙限制，或只在需要时运行。
+
+**2. 连接 Docker**
+
+在「设置 → Docker 连接」添加服务器，地址三选一：
+
+| 地址 | 场景 |
+| --- | --- |
+| 留空 | 本机的 Docker Desktop / OrbStack / Colima 等（读取 `DOCKER_HOST` 或默认 Socket） |
+| `unix:///path/to/docker.sock` | 指定本机 Socket，如 Colima 的 `unix:///Users/<你>/.colima/default/docker.sock`；也可以是 SSH 转发来的远程 Socket（macOS / Linux） |
+| `tcp://<主机>:2376` + TLS | 远程主机开放了 Docker API（建议配 TLS 证书） |
+
+**通过 SSH 连接远程主机**（远程无需开放 Docker API 端口，macOS / Linux）：把远程 Socket 转发成本地文件
+
+```bash
+ssh -nNT -L /tmp/docker-myserver.sock:/var/run/docker.sock user@myserver
+```
+
+然后添加 `unix:///tmp/docker-myserver.sock`。SSH 用户需要能访问远程的 Docker Socket（root 或 `docker` 组）。重新建立转发前先删除旧的 `/tmp/docker-myserver.sock`。
+
+添加多台服务器后，在列表中随时切换。
+
+客户端模式下，「Compose」页注册项目、编辑 `compose.yaml` 和「本机配置」操作的是**运行 phyless 的这台电脑**上的文件，而不是远程主机；Compose 的 `build:` 上下文也从本机读取。容器、镜像、网络、存储卷等则都在远程 Docker 上。
 
 ## 使用代理拉取镜像
 

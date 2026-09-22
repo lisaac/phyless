@@ -5,7 +5,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
-	"syscall"
 )
 
 type FileEntry struct {
@@ -40,9 +39,8 @@ func ListDir(root, subPath string) ([]FileEntry, error) {
 			}
 			fe.Mode = info.Mode().String()
 			fe.ModTime = info.ModTime().Unix()
-			if st, ok := info.Sys().(*syscall.Stat_t); ok {
-				fe.Uid = int(st.Uid)
-				fe.Gid = int(st.Gid)
+			if uid, gid, ok := FileOwner(info); ok {
+				fe.Uid, fe.Gid = uid, gid
 				fe.Uname = cachedUsername(usernames, fe.Uid, user.LookupId)
 			}
 		}
