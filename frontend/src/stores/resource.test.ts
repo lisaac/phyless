@@ -137,3 +137,15 @@ it("fetches again when a mutation settles during an older read", async () => {
   expect(store.items()).toEqual([{ id: "fresh" }]);
   store.stopPolling();
 });
+
+it("polls an object summary and preserves the last value on failure", async () => {
+  const { createPollingResource } = await import("./resource");
+  const get = vi.spyOn(client, "get").mockResolvedValue({ containers: 5 });
+  const store = createPollingResource("/api/system/summary", { containers: 0 });
+  await store.refresh();
+  expect(store.items()).toEqual({ containers: 5 });
+  get.mockRejectedValue(new Error("offline"));
+  await store.refresh();
+  expect(store.items()).toEqual({ containers: 5 });
+  expect(store.error()).toBe("offline");
+});

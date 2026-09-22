@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -467,7 +468,12 @@ func TestIndexEntryLimit(t *testing.T) {
 		}
 		_ = tarWriter.Close()
 	}()
-	_, err := buildIndex(r)
+	index, err := buildIndex(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	_, err = listIndex(context.Background(), index, "/")
 	_ = r.Close()
 	<-done
 	if err == nil {
@@ -492,5 +498,52 @@ func TestMissingHelperDoesNotPoisonCacheEviction(t *testing.T) {
 	}
 	if _, found := m.sessions["image:"+imgID]; found {
 		t.Fatal("stale index retained")
+	}
+}
+
+func TestDiskIndexReleasedAndRemovedFromFilesystem(t *testing.T) {
+	m := New(sampleClient(t))
+	if _, err := m.List(context.Background(), imgID, "/"); err != nil {
+		t.Fatal(err)
+	}
+	f := m.sessions["image:"+imgID].index
+	if _, err := os.Stat(f.Name()); !os.IsNotExist(err) {
+		t.Fatalf("temporary index is still named: %v", err)
+	}
+	if err := m.Release(context.Background(), imgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Stat(); err == nil {
+		t.Fatal("released index remains open")
+	}
+}
+
+func TestDiskIndexLargeTreeSmallDirectory(t *testing.T) {
+	r, w := io.Pipe()
+	go func() {
+		tw := tar.NewWriter(w)
+		for i := 0; i <= maxIndexEntries; i++ {
+			if err := tw.WriteHeader(&tar.Header{Name: fmt.Sprintf("dir-%d/file", i), Mode: 0644}); err != nil {
+				w.CloseWithError(err)
+				return
+			}
+		}
+		tw.Close()
+		w.Close()
+	}()
+	defer r.Close()
+	f, err := buildIndex(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	entries, err := listIndex(context.Background(), f, "/dir-100000")
+	if err != nil || len(entries) != 1 || entries[0].Name != "file" {
+		t.Fatalf("entries=%v err=%v", entries, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := listIndex(ctx, f, "/"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation=%v", err)
 	}
 }

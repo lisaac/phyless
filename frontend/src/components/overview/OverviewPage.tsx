@@ -2,47 +2,36 @@ import { Component, For, Show, createResource, onMount, onCleanup } from "solid-
 import { useNavigate } from "@solidjs/router";
 import { get } from "../../api/client";
 import { fmtBytes } from "../../api/download";
-import { createResourceStore } from "../../stores/resource";
+import { createPollingResource } from "../../stores/resource";
 import { REFRESH_EVENT } from "../../stores/refresh";
-import type { ContainerSummary, ImageSummary, ComposeProject, DockerInfo, VolumeSummary, NetworkSummary } from "../../types";
+import type { DockerInfo } from "../../types";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { ComposeIcon } from "../compose/composeShared";
 
 export const OverviewPage: Component = () => {
   const navigate = useNavigate();
-  const containers = createResourceStore<ContainerSummary>("/api/containers");
-  const images = createResourceStore<ImageSummary>("/api/images");
-  const compose = createResourceStore<ComposeProject>("/api/compose");
-  const volumes = createResourceStore<VolumeSummary>("/api/volumes");
-  const networks = createResourceStore<NetworkSummary>("/api/networks");
+  const summary = createPollingResource("/api/system/summary", {
+    containers: 0, running: 0, images: 0, compose: 0, volumes: 0, networks: 0,
+  });
   const [dockerInfo, { refetch: refetchDockerInfo }] = createResource(() => get<DockerInfo>("/api/system/info"));
   const refreshDockerInfo = () => { void refetchDockerInfo(); };
 
   onMount(() => {
-    containers.startPolling();
-    images.startPolling();
-    compose.startPolling();
-    volumes.startPolling();
-    networks.startPolling();
+    summary.startPolling();
     window.addEventListener(REFRESH_EVENT, refreshDockerInfo);
   });
   onCleanup(() => {
-    containers.stopPolling();
-    images.stopPolling();
-    compose.stopPolling();
-    volumes.stopPolling();
-    networks.stopPolling();
+    summary.stopPolling();
     window.removeEventListener(REFRESH_EVENT, refreshDockerInfo);
   });
 
-  const running = () => containers.items().filter((c) => c.State === "running").length;
 
   const cards = () => [
-    { label: "容器", value: `${running()} / ${containers.items().length}`, sub: "运行中 / 总数", to: "/containers", icon: <ContainerIcon size={20} class="shrink-0" /> },
-    { label: "镜像", value: `${images.items().length}`, sub: "总数", to: "/images", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 18 5-5 4 4 3-3 4 4" /></svg> },
-    { label: "Compose", value: `${compose.items().length}`, sub: "项目", to: "/compose", icon: <ComposeIcon size={20} class="shrink-0" /> },
-    { label: "存储卷", value: `${volumes.items().length}`, sub: "总数", to: "/volumes", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v9c0 1.7 3.1 3 7 3s7-1.3 7-3V5" /><path d="M5 10c0 1.7 3.1 3 7 3s7-1.3 7-3" /></svg> },
-    { label: "网络", value: `${networks.items().length}`, sub: "总数", to: "/networks", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="5" cy="12" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="19" cy="18" r="2" /><path d="m7 11 10-4M7 13l10 4" /></svg> },
+    { label: "容器", value: `${summary.items().running} / ${summary.items().containers}`, sub: "运行中 / 总数", to: "/containers", icon: <ContainerIcon size={20} class="shrink-0" /> },
+    { label: "镜像", value: `${summary.items().images}`, sub: "总数", to: "/images", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 18 5-5 4 4 3-3 4 4" /></svg> },
+    { label: "Compose", value: `${summary.items().compose}`, sub: "项目", to: "/compose", icon: <ComposeIcon size={20} class="shrink-0" /> },
+    { label: "存储卷", value: `${summary.items().volumes}`, sub: "总数", to: "/volumes", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v9c0 1.7 3.1 3 7 3s7-1.3 7-3V5" /><path d="M5 10c0 1.7 3.1 3 7 3s7-1.3 7-3" /></svg> },
+    { label: "网络", value: `${summary.items().networks}`, sub: "总数", to: "/networks", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="5" cy="12" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="19" cy="18" r="2" /><path d="m7 11 10-4M7 13l10 4" /></svg> },
   ];
   const infoRows = () => {
     const info = dockerInfo();

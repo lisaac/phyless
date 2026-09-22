@@ -31,7 +31,7 @@ func TestCanBuildDoesNotMutateReturnedResults(t *testing.T) {
 	}
 }
 
-func TestCanBuildEventuallyReloadsIncludedFiles(t *testing.T) {
+func TestCanBuildImmediatelyReloadsIncludedFiles(t *testing.T) {
 	dir := t.TempDir()
 	root, child := filepath.Join(dir, "compose.yaml"), filepath.Join(dir, "child.yaml")
 	if err := os.WriteFile(root, []byte("name: cache-test\ninclude:\n  - child.yaml\n"), 0600); err != nil {
@@ -48,12 +48,41 @@ func TestCanBuildEventuallyReloadsIncludedFiles(t *testing.T) {
 	if err := os.WriteFile(child, []byte("services:\n  web:\n    build: .\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	s.buildCache.mu.Lock()
-	entry := s.buildCache.entries["p"]
-	entry.checkedAt = time.Now().Add(-buildCacheTTL - time.Second)
-	s.buildCache.entries["p"] = entry
-	s.buildCache.mu.Unlock()
 	if !s.projectHasBuild(context.Background(), project) {
-		t.Fatal("expired cache ignored an included file change")
+		t.Fatal("cache ignored an included file change")
+	}
+}
+
+func TestCanBuildEnvChangeAndGlobalWorkerLimit(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "compose.yaml")
+	if err := os.WriteFile(root, []byte("name: cache-env\nservices:\n  web:\n    build: .\n    profiles: [build]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{composeRuntime: &dockercompose.Runtime{}, buildCache: newBuildCapabilityCache()}
+	p := models.ComposeProject{ID: "p", BaseDir: dir, ComposeFile: root}
+	if s.projectHasBuild(context.Background(), p) {
+		t.Fatal("unexpected default build profile")
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("COMPOSE_PROFILES=build\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !s.projectHasBuild(context.Background(), p) {
+		t.Fatal("new .env was not observed immediately")
+	}
+	for range cap(s.buildCache.slots) {
+		s.buildCache.slots <- struct{}{}
+	}
+	defer func() {
+		for range cap(s.buildCache.slots) {
+			<-s.buildCache.slots
+		}
+	}()
+	// Saturated checks reuse the known result and do not start more filesystem work.
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if !s.projectHasBuild(context.Background(), p) {
+		t.Fatal("saturated check did not reuse cached result")
 	}
 }

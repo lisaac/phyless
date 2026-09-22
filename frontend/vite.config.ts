@@ -17,7 +17,14 @@ export default defineConfig({
     __BUILD_TIME__: JSON.stringify(new Date().toISOString().slice(0, 16).replace("T", " ")),
     __GIT_HASH__: JSON.stringify(gitHash()),
   },
-  build: { outDir: "dist" },
+  build: {
+    outDir: "dist",
+    rollupOptions: { output: { manualChunks(id) {
+      // Both packages ship prebundled distributions: keep them independently cacheable.
+      if (id.includes("/node_modules/composerize/")) return "composerize";
+      if (id.includes("/node_modules/decomposerize/")) return "decomposerize";
+    } } },
+  },
   server: {
     proxy: {
       "/api": "http://localhost:8080",

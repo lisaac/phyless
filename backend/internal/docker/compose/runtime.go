@@ -212,11 +212,12 @@ func (s *Service) MaxConcurrency(parallel int) {
 // HTTP API. Paths are resolved relative to WorkingDir before compose-go reads
 // them, matching `docker compose -f ...` with cmd.Dir set to that directory.
 type ProjectOptions struct {
-	Name        string
-	WorkingDir  string
-	ConfigPaths []string
-	EnvFiles    []string
-	Environment []string
+	Name         string
+	WorkingDir   string
+	ConfigPaths  []string
+	EnvFiles     []string
+	Environment  []string
+	LoadListener func(string, map[string]any)
 }
 
 // LoadProject loads and labels a Compose project using compose-go. The custom
@@ -272,6 +273,9 @@ func (r *Runtime) LoadProject(ctx context.Context, options ProjectOptions) (*com
 		return nil, err
 	}
 
+	if options.LoadListener != nil {
+		projectOptions.WithListeners(options.LoadListener)
+	}
 	project, err := projectOptions.LoadProject(ctx)
 	if err != nil {
 		return nil, err

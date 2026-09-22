@@ -3,6 +3,13 @@ package api
 import (
 	"net/http"
 	"strings"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
+
+	"phyless/backend/internal/docker/imagefs"
 )
 
 // dockerInfoResponse deliberately exposes only operational metadata. In
@@ -113,4 +120,49 @@ func normalizeArch(raw string) string {
 	default:
 		return arch
 	}
+}
+
+// Summary skips usage joins, sorting and Compose YAML loads required by list views.
+func (s *Server) handleSystemSummary(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, 500, "failed to read projects")
+		return
+	}
+	ctx := r.Context()
+	containers, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		writeError(w, 503, "cannot list containers")
+		return
+	}
+	images, err := s.docker.ImageList(ctx, image.ListOptions{All: true})
+	if err != nil {
+		writeError(w, 503, "cannot list images")
+		return
+	}
+	volumes, err := s.docker.VolumeList(ctx, volume.ListOptions{})
+	if err != nil {
+		writeError(w, 503, "cannot list volumes")
+		return
+	}
+	networks, err := s.docker.NetworkList(ctx, network.ListOptions{})
+	if err != nil {
+		writeError(w, 503, "cannot list networks")
+		return
+	}
+	total, running := 0, 0
+	for _, c := range containers {
+		if imagefs.IsHelper(c.Labels) {
+			continue
+		}
+		total++
+		if c.State == "running" {
+			running++
+		}
+	}
+	writeJSON(w, 200, map[string]int{
+		"containers": total, "running": running, "images": len(images),
+		"compose": len(mergeComposeProjects(cfg.ComposeProjects, groupComposeContainers(containers))),
+		"volumes": len(volumes.Volumes), "networks": len(networks),
+	})
 }

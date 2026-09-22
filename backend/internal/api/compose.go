@@ -92,6 +92,7 @@ type buildCapabilityCache struct {
 	mu       sync.Mutex
 	entries  map[string]buildCacheEntry
 	inflight map[string]struct{}
+	slots    chan struct{}
 }
 
 const buildCacheTTL = 30 * time.Second
@@ -100,12 +101,14 @@ type buildCacheEntry struct {
 	checkedAt time.Time
 	signature string
 	canBuild  bool
+	reusable  bool
 }
 
 func newBuildCapabilityCache() *buildCapabilityCache {
 	return &buildCapabilityCache{
 		entries:  make(map[string]buildCacheEntry),
 		inflight: make(map[string]struct{}),
+		slots:    make(chan struct{}, 4),
 	}
 }
 
@@ -151,13 +154,17 @@ func (s *Server) discoverProjectsWithError(ctx context.Context) (map[string][]co
 	if err != nil {
 		return nil, err
 	}
+	return groupComposeContainers(containers), nil
+}
+
+func groupComposeContainers(containers []container.Summary) map[string][]container.Summary {
 	groups := make(map[string][]container.Summary)
 	for _, c := range containers {
 		if proj := c.Labels[labelProject]; proj != "" {
 			groups[proj] = append(groups[proj], c)
 		}
 	}
-	return groups, nil
+	return groups
 }
 
 func composeContainerLabel(cs []container.Summary, key string) string {
@@ -202,18 +209,32 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	canBuild := s.computeCanBuild(r.Context(), cfg.ComposeProjects)
-	var out []ComposeInfo
+	out := mergeComposeProjects(cfg.ComposeProjects, groups)
+	byID := make(map[string]bool, len(cfg.ComposeProjects))
 	for i, p := range cfg.ComposeProjects {
-		out = append(out, ComposeInfo{ComposeProject: p, CanBuild: canBuild[i]})
+		byID[p.ID] = canBuild[i]
+	}
+	for i := range out {
+		if !out[i].Discovered {
+			out[i].CanBuild = byID[out[i].ID]
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func mergeComposeProjects(projects []models.ComposeProject, groups map[string][]container.Summary) []ComposeInfo {
+	var out []ComposeInfo
+	for _, p := range projects {
+		out = append(out, ComposeInfo{ComposeProject: p, CanBuild: false})
 	}
 
 	// A single registered entry may match one running stack. If several
 	// registered entries or several project names match the same file, keep
 	// each discovered stack visible instead of assigning runtime state at
 	// random to one display row.
-	registeredMatches := make([][]string, len(cfg.ComposeProjects))
+	registeredMatches := make([][]string, len(projects))
 	owners := make(map[string][]int)
-	for i, p := range cfg.ComposeProjects {
+	for i, p := range projects {
 		for projectName, cs := range groups {
 			discovered := discoveredComposeProject(projectName, cs)
 			if composeProjectsMatch(p, discovered) {
@@ -248,7 +269,7 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
 func (s *Server) handleCreateCompose(w http.ResponseWriter, r *http.Request) {
@@ -614,6 +635,22 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 // cache, so late results just fill in on a later poll rather than blocking.
 func (s *Server) computeCanBuild(ctx context.Context, projects []models.ComposeProject) []bool {
 	results := make([]bool, len(projects))
+	if ctx.Err() != nil {
+		return results
+	}
+	if s.buildCache != nil {
+		s.buildCache.mu.Lock()
+		alive := make(map[string]bool, len(projects))
+		for _, p := range projects {
+			alive[p.ID] = true
+		}
+		for id := range s.buildCache.entries {
+			if !alive[id] {
+				delete(s.buildCache.entries, id)
+			}
+		}
+		s.buildCache.mu.Unlock()
+	}
 	if len(projects) == 0 {
 		return results
 	}
@@ -622,20 +659,29 @@ func (s *Server) computeCanBuild(ctx context.Context, projects []models.ComposeP
 		canBuild bool
 	}
 	completed := make(chan result, len(projects))
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	jobs := make(chan int, len(projects))
 	for i := range projects {
-		go func(i int) {
-			completed <- result{i, s.projectHasBuild(ctx, projects[i])}
-		}(i)
+		jobs <- i
 	}
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
+	close(jobs)
+	for range min(4, len(projects)) {
+		go func() {
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				completed <- result{i, s.projectHasBuild(ctx, projects[i])}
+			}
+		}()
+	}
+
 	for range projects {
 		select {
 		case value := <-completed:
 			results[value.index] = value.canBuild
 		case <-ctx.Done():
-			return results
-		case <-timer.C:
 			return results
 		}
 	}
@@ -654,7 +700,8 @@ func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) b
 	}
 	c := s.buildCache
 	if c == nil {
-		return s.loadProjectHasBuild(ctx, p) // no cache (e.g. tests build Server directly)
+		value, _ := s.loadProjectHasBuild(ctx, p)
+		return value
 	}
 
 	c.mu.Lock()
@@ -669,38 +716,59 @@ func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) b
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.inflight, p.ID); c.mu.Unlock() }()
 
-	// ponytail: mtime handles top-level edits immediately; a 30s TTL bounds
-	// staleness for include/.env dependencies without maintaining a second parser.
+	// A runtime-wide bound also covers overlapping polls and stalled filesystem calls.
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	default:
+		c.mu.Lock()
+		value := c.entries[p.ID].canBuild
+		c.mu.Unlock()
+		return value
+	}
 	sig := composeFileSignature(p)
 	c.mu.Lock()
 	entry, ok := c.entries[p.ID]
 	c.mu.Unlock()
-	if ok && sig != "" && entry.signature == sig && time.Since(entry.checkedAt) < buildCacheTTL {
+	if ok && entry.reusable && sig != "" && entry.signature == sig && time.Since(entry.checkedAt) < buildCacheTTL {
 		return entry.canBuild
 	}
 
-	canBuild := s.loadProjectHasBuild(ctx, p)
+	canBuild, reusable := s.loadProjectHasBuild(ctx, p)
 	if ctx.Err() != nil {
 		return canBuild // A cancelled load is not a cached negative result.
 	}
 	c.mu.Lock()
-	c.entries[p.ID] = buildCacheEntry{signature: sig, canBuild: canBuild, checkedAt: time.Now()}
+	c.entries[p.ID] = buildCacheEntry{signature: sig, canBuild: canBuild, checkedAt: time.Now(), reusable: reusable}
 	c.mu.Unlock()
 	return canBuild
 }
 
-func (s *Server) loadProjectHasBuild(ctx context.Context, p models.ComposeProject) bool {
-	project, err := s.composeRuntime.LoadProject(ctx, composeProjectOptions(p))
-	if err != nil {
-		log.Printf("compose: can_build check for %q failed: %v", p.ID, err)
-		return false
-	}
-	for _, service := range project.Services {
-		if service.Build != nil {
-			return true
+func (s *Server) loadProjectHasBuild(ctx context.Context, p models.ComposeProject) (bool, bool) {
+	reusable := true
+	options := composeProjectOptions(p)
+	// Compose itself detects nested includes/extends after interpolation. Reload these
+	// on each list request rather than duplicating its dependency parser.
+	options.LoadListener = func(event string, _ map[string]any) {
+		if event == "include" || event == "extends" {
+			reusable = false
 		}
 	}
-	return false
+	project, err := s.composeRuntime.LoadProject(ctx, options)
+	if err != nil {
+		log.Printf("compose: can_build check for %q failed: %v", p.ID, err)
+		return false, false
+	}
+	canBuild := false
+	for _, service := range project.Services {
+		if len(service.EnvFiles) > 0 {
+			reusable = false
+		}
+		if service.Build != nil {
+			canBuild = true
+		}
+	}
+	return canBuild, reusable
 }
 
 // composeFileSignature fingerprints a project's compose files by path+mtime+size
@@ -711,9 +779,23 @@ func composeFileSignature(p models.ComposeProject) string {
 	if len(paths) == 0 {
 		return ""
 	}
+	envFiles := p.EnvFile
+	if envFiles == "" {
+		envFiles = os.Getenv("COMPOSE_ENV_FILES")
+	}
+	base := p.BaseDir
+	if base == "" {
+		base = filepath.Dir(paths[0])
+	}
+	paths = append(paths, normalizeComposePaths(base, envFiles)...)
+	paths = append(paths, filepath.Join(base, ".env"))
 	var b strings.Builder
 	for _, path := range paths {
 		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			fmt.Fprintf(&b, "%s:missing;", path)
+			continue
+		}
 		if err != nil {
 			return ""
 		}

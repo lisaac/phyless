@@ -163,6 +163,7 @@ func TestViewerCanReadResourceDetailsThroughCompleteRouter(t *testing.T) {
 		{"/api/compose/files/content?id=missing&path=compose.yaml", http.StatusNotFound},
 		{"/api/compose/files/download?id=missing&path=compose.yaml", http.StatusNotFound},
 		{"/api/system/info", http.StatusOK},
+		{"/api/system/summary", http.StatusOK},
 		{"/api/config/files", http.StatusOK},
 		{"/api/config/files/content?path=hosts", http.StatusOK},
 		{"/api/config/files/download?path=hosts", http.StatusOK},

@@ -1,15 +1,18 @@
 // Package imagefs indexes Docker image and stopped-container filesystems without
-// starting them. Tar headers become an in-memory directory index; file downloads
+// starting them. Tar headers become a bounded temporary disk index; file downloads
 // continue to stream through CopyFromContainer.
 package imagefs
 
 import (
 	"archive/tar"
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +30,7 @@ const (
 	ImageLabel        = "phyless.image"
 	maxIndexEntries   = 100_000
 	maxIndexNameBytes = 16 << 20
+	maxIndexBytes     = 128 << 20
 )
 
 // IsHelper reports whether a container's labels mark it as an imagefs helper,
@@ -37,7 +41,7 @@ type session struct {
 	key         string
 	removing    bool
 	containerID string
-	index       map[string][]ctr.FileEntry
+	index       *os.File
 	owned       bool
 	lastUsed    time.Time
 	inflight    int
@@ -51,10 +55,11 @@ type Manager struct {
 	mu       sync.Mutex // guards sessions and session state, held across Docker I/O only during startup cleanup
 	sessions map[string]*session
 
-	now  func() time.Time
-	idle time.Duration
-	tick time.Duration
-	max  int // ponytail: LRU cap on resident indexes; each is the whole image tree in memory
+	now    func() time.Time
+	idle   time.Duration
+	tick   time.Duration
+	closed bool
+	max    int // LRU cap on open disk indexes and helper containers
 }
 
 func New(cli client.APIClient) *Manager {
@@ -75,7 +80,7 @@ func (m *Manager) List(ctx context.Context, imageID, p string) ([]ctr.FileEntry,
 		return nil, err
 	}
 	defer m.done(s)
-	return m.list(s, p)
+	return m.list(ctx, s, p)
 }
 
 // ListContainer returns a cached snapshot of a container filesystem. Docker's
@@ -88,19 +93,12 @@ func (m *Manager) ListContainer(ctx context.Context, containerID, p string) ([]c
 		return nil, err
 	}
 	defer m.done(s)
-	return m.list(s, p)
+	return m.list(ctx, s, p)
 }
 
-func (m *Manager) list(s *session, p string) ([]ctr.FileEntry, error) {
-	dir := normPath(p)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s.lastUsed = m.now()
-	entries, ok := s.index[dir]
-	if !ok {
-		return nil, fmt.Errorf("目录不存在: %s", dir)
-	}
-	return slices.Clone(entries), nil
+func (m *Manager) list(ctx context.Context, s *session, p string) ([]ctr.FileEntry, error) {
+	// The caller pins s; independent SectionReaders avoid a global lock during disk I/O.
+	return listIndex(ctx, s.index, normPath(p))
 }
 
 // Open streams one path out of the image as a tar archive. The session is
@@ -159,6 +157,14 @@ func (m *Manager) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			m.mu.Lock()
+			m.closed = true
+			for _, s := range m.sessions {
+				if s.inflight == 0 && s.index != nil {
+					_ = s.index.Close()
+				}
+			}
+			m.mu.Unlock()
 			return
 		case <-t.C:
 			m.gc(ctx)
@@ -222,6 +228,9 @@ func (m *Manager) discard(ctx context.Context, s *session) error {
 	if m.sessions[s.key] == s {
 		if err == nil {
 			delete(m.sessions, s.key)
+			if s.index != nil {
+				_ = s.index.Close()
+			}
 		} else {
 			s.removing = false
 		}
@@ -245,13 +254,13 @@ func (m *Manager) session(ctx context.Context, imageID string) (*session, error)
 	if err != nil {
 		return nil, err
 	}
-	return m.cached(ctx, "image:"+id, true, func() (string, map[string][]ctr.FileEntry, error) {
+	return m.cached(ctx, "image:"+id, true, func() (string, *os.File, error) {
 		return m.build(ctx, id)
 	})
 }
 
 func (m *Manager) containerSession(ctx context.Context, containerID string) (*session, error) {
-	return m.cached(ctx, "container:"+containerID, false, func() (string, map[string][]ctr.FileEntry, error) {
+	return m.cached(ctx, "container:"+containerID, false, func() (string, *os.File, error) {
 		rc, _, err := m.cli.CopyFromContainer(ctx, containerID, "/")
 		if err != nil {
 			return "", nil, err
@@ -262,8 +271,12 @@ func (m *Manager) containerSession(ctx context.Context, containerID string) (*se
 	})
 }
 
-func (m *Manager) cached(ctx context.Context, key string, owned bool, build func() (string, map[string][]ctr.FileEntry, error)) (*session, error) {
+func (m *Manager) cached(ctx context.Context, key string, owned bool, build func() (string, *os.File, error)) (*session, error) {
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("filesystem manager is closed")
+	}
 	if s := m.sessions[key]; s != nil {
 		if s.removing {
 			m.mu.Unlock()
@@ -345,7 +358,7 @@ func (m *Manager) resolve(ctx context.Context, imageID string) (string, error) {
 	return info.ID, nil
 }
 
-func (m *Manager) build(ctx context.Context, id string) (string, map[string][]ctr.FileEntry, error) {
+func (m *Manager) build(ctx context.Context, id string) (string, *os.File, error) {
 	containerID, err := m.find(ctx, id)
 	if err != nil {
 		return "", nil, err
@@ -402,6 +415,9 @@ func (m *Manager) find(ctx context.Context, id string) (string, error) {
 func (m *Manager) done(s *session) {
 	m.mu.Lock()
 	s.inflight--
+	if m.closed && s.inflight == 0 && s.index != nil {
+		_ = s.index.Close()
+	}
 	s.lastUsed = m.now()
 	m.mu.Unlock()
 }
@@ -431,42 +447,37 @@ func (r *reader) Close() error {
 // rooted path can never escape "/", so ".." needs no separate rejection.
 func normPath(p string) string { return path.Clean("/" + p) }
 
-// buildIndex parses only the tar headers of an image export into dir → entries.
-func buildIndex(r io.Reader) (map[string][]ctr.FileEntry, error) {
-	idx := map[string][]ctr.FileEntry{"/": nil}
-	nameBytes := 0
-	at := map[string]int{} // full path → position in its parent's slice
-	var ensure func(dir string)
-	add := func(full string, e ctr.FileEntry) {
-		d := path.Dir(full)
-		ensure(d)
-		nameBytes += len(full) + len(e.Name) + len(e.Uname)
-		if i, ok := at[full]; ok {
-			idx[d][i] = e
-			return
-		}
-		at[full] = len(idx[d])
-		idx[d] = append(idx[d], e)
-	}
-	ensure = func(dir string) {
-		if dir == "/" {
-			return
-		}
-		if _, ok := idx[dir]; ok {
-			return
-		}
-		idx[dir] = nil
-		add(dir, ctr.FileEntry{Name: path.Base(dir), Mode: "drwxr-xr-x", IsDir: true})
-	}
+type indexEntry struct {
+	Path  string
+	Entry ctr.FileEntry
+}
 
+// buildIndex retains metadata only. Unlink immediately so crashes and daemon
+// switches cannot leave sensitive filesystem metadata or orphan cache files.
+func buildIndex(r io.Reader) (_ *os.File, err error) {
+	f, err := os.CreateTemp("", "phyless-imagefs-*")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(f.Name()); err != nil {
+		f.Close()
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+		}
+	}()
+	writer := bufio.NewWriterSize(f, 64<<10)
+	total := 0
 	tr := tar.NewReader(r)
 	for {
-		h, err := tr.Next()
-		if err == io.EOF {
-			return idx, nil
+		h, readErr := tr.Next()
+		if readErr == io.EOF {
+			break
 		}
-		if err != nil {
-			return nil, err
+		if readErr != nil {
+			return nil, readErr
 		}
 		if len(h.Name) > 4096 || strings.Count(h.Name, "/") > 256 || len(h.Uname) > 4096 {
 			return nil, fmt.Errorf("filesystem path metadata is too large")
@@ -475,28 +486,91 @@ func buildIndex(r io.Reader) (map[string][]ctr.FileEntry, error) {
 		if name == "/" {
 			continue
 		}
-		e := ctr.FileEntry{
-			Name:    path.Base(name),
-			Size:    h.Size,
-			Mode:    modeString(h),
-			IsDir:   h.Typeflag == tar.TypeDir,
-			ModTime: h.ModTime.Unix(),
-			Uname:   h.Uname,
-			Uid:     h.Uid,
-			Gid:     h.Gid,
-		}
+		entry := ctr.FileEntry{Name: path.Base(name), Size: h.Size, Mode: modeString(h),
+			IsDir: h.Typeflag == tar.TypeDir, ModTime: h.ModTime.Unix(), Uname: h.Uname, Uid: h.Uid, Gid: h.Gid}
 		if h.Typeflag == tar.TypeSymlink {
-			e.Size = 0
+			entry.Size = 0
 		}
-		if e.IsDir {
-			ensure(name)
+		data, err := json.Marshal(indexEntry{Path: name, Entry: entry})
+		if err != nil {
+			return nil, err
 		}
-		add(name, e)
-		// ponytail: bound the whole-tree cache; use on-disk indexing for larger trees.
-		if len(at) > maxIndexEntries || nameBytes > maxIndexNameBytes {
-			return nil, fmt.Errorf("filesystem index exceeds its entry or name size limit")
+		total += len(data) + 1
+		if total > maxIndexBytes {
+			return nil, fmt.Errorf("filesystem disk index exceeds %d bytes", maxIndexBytes)
+		}
+		if _, err := writer.Write(append(data, '\n')); err != nil {
+			return nil, err
 		}
 	}
+	if err := writer.Flush(); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func listIndex(ctx context.Context, f *os.File, dir string) ([]ctr.FileEntry, error) {
+	// ponytail: sequential local metadata scan; add offsets only if disk scan latency warrants it.
+	scanner := bufio.NewScanner(io.NewSectionReader(f, 0, maxIndexBytes))
+	scanner.Buffer(make([]byte, 4096), 64<<10)
+	entries := []ctr.FileEntry{}
+	positions := map[string]int{}
+	found := dir == "/"
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	nameBytes := 0
+	encodedPrefix, _ := json.Marshal(prefix)
+	descendant := append([]byte(`{"Path":`), encodedPrefix[:len(encodedPrefix)-1]...)
+	encodedDir, _ := json.Marshal(dir)
+	exact := append(append([]byte(`{"Path":`), encodedDir...), ',')
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		line := scanner.Bytes()
+		if !bytes.HasPrefix(line, descendant) && !bytes.HasPrefix(line, exact) {
+			continue
+		}
+		var record indexEntry
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			return nil, err
+		}
+		if record.Path == dir && record.Entry.IsDir {
+			found = true
+		}
+		if !strings.HasPrefix(record.Path, prefix) {
+			continue
+		}
+		found = true
+		relative := strings.TrimPrefix(record.Path, prefix)
+		entry := record.Entry
+		implicit := strings.Contains(relative, "/")
+		if implicit {
+			entry = ctr.FileEntry{Name: strings.SplitN(relative, "/", 2)[0], Mode: "drwxr-xr-x", IsDir: true}
+		}
+		if i, ok := positions[entry.Name]; ok {
+			if !implicit {
+				nameBytes += len(entry.Uname) - len(entries[i].Uname)
+				if nameBytes > maxIndexNameBytes {
+					return nil, fmt.Errorf("filesystem directory exceeds its name size limit")
+				}
+				entries[i] = entry
+			}
+			continue
+		}
+		nameBytes += len(entry.Name) + len(entry.Uname)
+		if len(entries) >= maxIndexEntries || nameBytes > maxIndexNameBytes {
+			return nil, fmt.Errorf("filesystem directory exceeds its entry or name size limit")
+		}
+		positions[entry.Name] = len(entries)
+		entries = append(entries, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("目录不存在: %s", dir)
+	}
+	return entries, nil
 }
 
 // modeString formats a header like ls does; fs.FileMode prints 'L' for symlinks.

@@ -15,6 +15,8 @@ const (
 	DefaultMaxEntries = 1000
 	maxTailBytes      = 1 << 20
 	maxAuditLine      = 64 << 10
+	defaultMaxBytes   = 10 << 20
+	defaultBackups    = 5
 )
 
 type Entry struct {
@@ -26,32 +28,61 @@ type Entry struct {
 }
 
 type Logger struct {
-	path string
-	mu   sync.Mutex
+	path     string
+	mu       sync.Mutex
+	maxBytes int64
+	backups  int
 }
 
-func New(path string) *Logger { return &Logger{path: path} }
+func New(path string) *Logger {
+	return &Logger{path: path, maxBytes: defaultMaxBytes, backups: defaultBackups}
+}
 
 func (l *Logger) Log(user, action, target, result string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	f, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
 	e := Entry{Time: time.Now().UTC().Format(time.RFC3339), User: user, Action: action, Target: target, Result: result}
 	line, err := json.Marshal(e)
 	if err == nil && len(line)+1 > maxAuditLine {
 		err = fmt.Errorf("audit entry exceeds %d bytes", maxAuditLine)
 	}
-	if err == nil {
-		line = append(line, '\n')
-		_, err = f.Write(line)
+	if err != nil {
+		return err
 	}
+	line = append(line, '\n')
+	if info, statErr := os.Stat(l.path); statErr == nil {
+		if info.Size()+int64(len(line)) > l.maxBytes {
+			if err := l.rotate(); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	f, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(line)
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}
 	return err
+}
+
+// rotate keeps five completed files plus the active log (at most 60 MiB by default).
+// Rename preserves the active file if rotation fails; never truncate it in place.
+func (l *Logger) rotate() error {
+	for i := l.backups; i > 0; i-- {
+		src := l.path
+		if i > 1 {
+			src = fmt.Sprintf("%s.%d", l.path, i-1)
+		}
+		if err := os.Rename(src, fmt.Sprintf("%s.%d", l.path, i)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (l *Logger) ReadAll() ([]Entry, error) {
@@ -59,7 +90,7 @@ func (l *Logger) ReadAll() ([]Entry, error) {
 }
 
 // ReadTail returns only the newest entries, keeping audit responses bounded as
-// the append-only log grows.
+// the log rotates, with one shared byte budget across all retained files.
 func (l *Logger) ReadTail(maxEntries int) ([]Entry, error) {
 	if maxEntries <= 0 {
 		return nil, fmt.Errorf("max entries must be positive")
@@ -69,30 +100,50 @@ func (l *Logger) ReadTail(maxEntries int) ([]Entry, error) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	f, err := os.Open(l.path)
+	entries := []Entry{}
+	remainingBytes := int64(maxTailBytes)
+	for i := 0; i <= l.backups && len(entries) < maxEntries && remainingBytes > 0; i++ {
+		file := l.path
+		if i > 0 {
+			file = fmt.Sprintf("%s.%d", l.path, i)
+		}
+		tail, consumed, err := readFileTail(file, maxEntries-len(entries), remainingBytes)
+		if err != nil {
+			return nil, err
+		}
+		remainingBytes -= consumed
+		entries = append(tail, entries...)
+	}
+	return entries, nil
+}
+
+func readFileTail(path string, maxEntries int, maxBytes int64) ([]Entry, int64, error) {
+	f, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return []Entry{}, nil
+		return nil, 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	if info.Size() > maxTailBytes {
-		if _, err := f.Seek(-maxTailBytes, io.SeekEnd); err != nil {
-			return nil, err
+	var reader io.Reader = f
+	consumed := min(info.Size(), maxBytes)
+	if info.Size() > maxBytes {
+		if _, err := f.Seek(-maxBytes, io.SeekEnd); err != nil {
+			return nil, 0, err
 		}
-		// The first bytes may be the tail of a JSON line; discard it.
-		reader := bufio.NewReader(f)
-		if _, err := reader.ReadString('\n'); err != nil && err != io.EOF {
-			return nil, err
+		buffered := bufio.NewReader(f)
+		if _, err := buffered.ReadString('\n'); err != nil && err != io.EOF {
+			return nil, 0, err
 		}
-		return scanTail(reader, maxEntries)
+		reader = buffered
 	}
-	return scanTail(f, maxEntries)
+	entries, err := scanTail(reader, maxEntries)
+	return entries, consumed, err
 }
 
 func scanTail(r io.Reader, maxEntries int) ([]Entry, error) {

@@ -4,7 +4,7 @@ import { SETTLED_EVENT } from "./taskQueue";
 import { REFRESH_EVENT, autoRefresh, refreshSeconds } from "./refresh";
 
 export interface ResourceStore<T> {
-  items: Accessor<T[]>;
+  items: Accessor<T>;
   loading: Accessor<boolean>;
   error: Accessor<string>;
   refresh: () => Promise<void>;
@@ -12,8 +12,12 @@ export interface ResourceStore<T> {
   stopPolling: () => void;
 }
 
-export function createResourceStore<T>(path: string): ResourceStore<T> {
-  const [items, setItems] = createSignal<T[]>([]);
+export function createResourceStore<T>(path: string): ResourceStore<T[]> {
+  return createPollingResource<T[]>(path, []);
+}
+
+export function createPollingResource<T>(path: string, initial: T): ResourceStore<T> {
+  const [items, setItems] = createSignal<T>(initial);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -21,7 +25,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
   let generation = 0;
   let controller: AbortController | undefined;
   let polling = false;
-  let lastSerialized = "[]";
+  let lastSerialized = JSON.stringify(initial);
   const onVisibilityChange = () => {
     if (document.hidden) {
       if (timer) clearInterval(timer);
@@ -56,15 +60,15 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
     let request!: Promise<void>;
     request = (async () => {
       try {
-        const data = await get<T[]>(path, controller.signal);
+        const data = await get<T>(path, controller.signal);
         if (requestGeneration === generation) {
           // ponytail: JSON compare of the fetched payload — O(payload) per poll, but it
           // saves <For> re-creating every row when nothing changed. Switch to a per-item
           // keyed reconcile if the payload ever gets big enough for the compare to hurt.
-          const serialized = JSON.stringify(data ?? []);
+          const serialized = JSON.stringify(data ?? initial);
           if (serialized !== lastSerialized) {
             lastSerialized = serialized;
-            setItems(data ?? []);
+            setItems(() => data ?? initial);
           }
           setError("");
         }

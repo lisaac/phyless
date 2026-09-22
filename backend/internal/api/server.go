@@ -274,6 +274,7 @@ func (s *Server) mountViewerResourceRoutes(r chi.Router) {
 	r.Get("/api/registries", s.handleListRegistries)
 	r.Get("/api/templates", s.handleListTemplates)
 	r.Get("/api/system/info", s.handleSystemInfo)
+	r.Get("/api/system/summary", s.handleSystemSummary)
 }
 
 const maxJSONBody = 10 << 20
