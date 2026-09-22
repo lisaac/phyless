@@ -19,6 +19,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
   let timer: ReturnType<typeof setInterval> | undefined;
   let inFlight: Promise<void> | undefined;
   let generation = 0;
+  let controller: AbortController | undefined;
   let polling = false;
   let lastSerialized = "[]";
   const onVisibilityChange = () => {
@@ -26,6 +27,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
       if (timer) clearInterval(timer);
       timer = undefined;
       generation++;
+      controller?.abort();
       setLoading(false);
     } else if (polling) {
       void refresh();
@@ -38,6 +40,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
   const onSettled = () => {
     if (timer) clearInterval(timer);
     timer = undefined;
+    if (inFlight) generation++; // A completed mutation invalidates a read that started before it.
     if (!document.hidden) { void refresh(); schedule(); }
   };
   const schedule = () => {
@@ -48,11 +51,12 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
   const refresh = () => {
     if (inFlight) return inFlight;
     const requestGeneration = generation;
+    controller = new AbortController();
     setLoading(true);
     let request!: Promise<void>;
     request = (async () => {
       try {
-        const data = await get<T[]>(path);
+        const data = await get<T[]>(path, controller.signal);
         if (requestGeneration === generation) {
           // ponytail: JSON compare of the fetched payload — O(payload) per poll, but it
           // saves <For> re-creating every row when nothing changed. Switch to a per-item
@@ -94,6 +98,7 @@ export function createResourceStore<T>(path: string): ResourceStore<T> {
     timer = undefined;
     polling = false;
     generation++;
+    controller?.abort();
     setLoading(false);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener(SETTLED_EVENT, onSettled);

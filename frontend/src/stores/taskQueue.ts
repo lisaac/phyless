@@ -239,7 +239,8 @@ export function cancelActiveTasks() {
 }
 
 export function remove(id: string) {
-  if (find(id)?.status === "running") return;
+  const task = find(id);
+  if (task && isActive(task.status)) return;
   setTasks("list", (l) => l.filter((t) => t.id !== id));
   persist();
 }
@@ -254,7 +255,7 @@ export const isPending = (pred: (t: Task) => boolean) => tasks.list.some((t) => 
 function settle(id: string, status: TaskStatus, error = "") {
   const t = find(id);
   if (!t || !isActive(t.status)) return;
-  upd(id, { status, error: error.slice(0, MAX_ERROR), finishedAt: Date.now(), uploadPct: null });
+  upd(id, { status, error: error.slice(0, MAX_ERROR), finishedAt: Date.now(), uploadPct: null, file: undefined, body: undefined, secret: undefined });
   xhrs.delete(id);
   browserAborts.delete(id);
   persist();
@@ -369,11 +370,7 @@ function startBrowserAction(id: string) {
 // server options; secret.creds holds browser credentials.
 function startComposeUpdate(id: string) {
   const t = find(id)!;
-  const ac = new AbortController();
-  browserAborts.set(id, ac);
-  const note = (m: string) =>
-    setTasks("list", (x) => x.id === id, "notes", (n) => [...n, m.slice(0, MAX_ERROR)].slice(-MAX_NOTES));
-  runComposeUpdate(
+  startBrowserTask(id, (cb) => runComposeUpdate(
     {
       id: String(t.meta?.composeId ?? ""),
       mode: t.meta?.mode === "browser" ? "browser" : "server",
@@ -384,11 +381,8 @@ function startComposeUpdate(id: string) {
       pullOptions: (t.body as Record<string, unknown> | undefined) ?? undefined,
       restart: t.meta?.restart === true,
     },
-    { note, progress: note, signal: ac.signal },
-  ).then(
-    () => settle(id, "done"),
-    (err) => settle(id, ac.signal.aborted ? "cancelled" : "error", err instanceof Error ? err.message : String(err)),
-  );
+    cb,
+  ));
 }
 
 function start(id: string) {
@@ -417,6 +411,7 @@ function start(id: string) {
   const fail = (m: string) => { if (!err) err = m; };
 
   const applyLine = (line: string) => {
+    if (line.length > MAX_PROGRESS_LINE) { fail("进度行过大"); return; }
     if (!line.trim()) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let evt: any;
@@ -448,10 +443,10 @@ function start(id: string) {
   };
   const consumeChunk = (chunk: string) => {
     buf += chunk;
-    if (buf.length > MAX_PROGRESS_LINE) { buf = buf.slice(-MAX_PROGRESS_LINE); fail("进度行过大"); return; }
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     lines.forEach(applyLine);
+    if (buf.length > MAX_PROGRESS_LINE) { buf = ""; fail("进度行过大"); }
   };
 
   const req = new XMLHttpRequest();

@@ -163,7 +163,7 @@ function responseErrorText(raw: string): string {
 }
 
 export async function registryResponseError(resp: Response, action: string): Promise<Error> {
-  const detail = responseErrorText(await resp.text().catch(() => ""));
+  const detail = responseErrorText(await readBounded(resp, 64 * 1024).then((b) => new TextDecoder().decode(b)).catch(() => ""));
   const suffix = detail ? `：${detail}` : "";
   if (resp.status === 401) return new Error(`镜像仓库认证失败（401）${suffix}`);
   if (resp.status === 404) return new Error(`镜像、标签或镜像层不存在（404）${suffix}`);
@@ -217,7 +217,7 @@ async function fetchToken(
   if (creds) headers.Authorization = "Basic " + btoa(`${creds.username}:${creds.secret}`);
   const resp = await proxiedGet(workerUrl, url.toString(), headers, signal);
   if (!resp.ok) throw await registryResponseError(resp, "获取镜像仓库访问令牌");
-  const body = (await resp.json()) as { token?: string; access_token?: string };
+  const body = JSON.parse(new TextDecoder().decode(await readBounded(resp, MAX_META))) as { token?: string; access_token?: string };
   const token = body.token || body.access_token;
   if (!token) throw new Error("registry 未返回访问令牌");
   return token;
@@ -238,10 +238,33 @@ export async function authHeaderFromChallenge(workerUrl: string, wwwAuthenticate
 
 async function readBounded(resp: Response, limit: number): Promise<Uint8Array> {
   const len = resp.headers.get("Content-Length");
-  if (len && Number(len) > limit) throw new Error("registry 响应过大");
-  const buf = new Uint8Array(await resp.arrayBuffer());
-  if (buf.byteLength > limit) throw new Error("registry 响应过大");
-  return buf;
+  if (len && Number(len) > limit) {
+    await resp.body?.cancel();
+    throw new Error("registry 响应过大");
+  }
+  if (!resp.body) return new Uint8Array();
+  const reader = resp.body.getReader();
+  let bytes = new Uint8Array(0);
+  let size = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return bytes.subarray(0, size);
+      if (size + value.byteLength > limit) throw new Error("registry 响应过大");
+      if (size + value.byteLength > bytes.length) {
+        const grown = new Uint8Array(Math.min(limit, Math.max(4096, size + value.byteLength, bytes.length * 2)));
+        grown.set(bytes);
+        bytes = grown;
+      }
+      bytes.set(value, size);
+      size += value.byteLength;
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 async function sha256Digest(bytes: Uint8Array): Promise<string> {

@@ -48,6 +48,10 @@ func (c *routeClient) ContainerExecCreate(context.Context, string, container.Exe
 	return container.ExecCreateResponse{}, errors.New("exec unavailable")
 }
 
+func (c *routeClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
+	return nil
+}
+
 func (c *routeClient) ContainerExport(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("tar")), nil
 }

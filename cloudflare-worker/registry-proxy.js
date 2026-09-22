@@ -46,12 +46,6 @@ export default {
     } catch {
       return jsonError(config, origin, 400, 'The target url must be an absolute URL.');
     }
-    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-      return jsonError(config, origin, 400, 'Only http:// and https:// target URLs are allowed.');
-    }
-    if (!config.allowAnyUpstream && !isAllowedHost(target.hostname, config.upstreamAllowlist)) {
-      return jsonError(config, origin, 403, `Host ${target.hostname} is not allowed by the upstream policy.`);
-    }
 
     const upstreamHeaders = new Headers();
     for (const name of FORWARDED_HEADERS) {
@@ -61,14 +55,33 @@ export default {
 
     let upstream;
     try {
-      upstream = await fetch(target.toString(), {
-        method: request.method,
-        headers: upstreamHeaders,
-        redirect: 'follow', // blob GETs 302 to object storage
-        cf: { cacheTtl: 0, cacheEverything: false },
-      });
-    } catch (error) {
-      return jsonError(config, origin, 502, `Upstream fetch failed: ${error?.message || 'unknown error'}.`);
+      for (let redirects = 0; ; redirects++) {
+        if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
+          return jsonError(config, origin, 400, 'Target must be HTTP(S) without URL credentials.');
+        }
+        if (!config.allowAnyUpstream && !isAllowedHost(target.hostname, config.upstreamAllowlist)) {
+          return jsonError(config, origin, 403, 'Target is not allowed by the upstream policy.');
+        }
+        upstream = await fetch(target.toString(), {
+          method: request.method,
+          headers: upstreamHeaders,
+          redirect: 'manual',
+          signal: request.signal,
+          cf: { cacheTtl: 0, cacheEverything: false },
+        });
+        const location = upstream.headers.get('Location');
+        if (![301, 302, 303, 307, 308].includes(upstream.status) || !location) break;
+        await upstream.body?.cancel();
+        if (redirects >= 5) return jsonError(config, origin, 502, 'Too many upstream redirects.');
+        const next = new URL(location, target);
+        if (target.protocol === 'https:' && next.protocol !== 'https:') {
+          return jsonError(config, origin, 502, 'Insecure upstream redirect denied.');
+        }
+        if (next.origin !== target.origin) upstreamHeaders.delete('authorization');
+        target = next;
+      }
+    } catch {
+      return jsonError(config, origin, 502, 'Upstream fetch failed.');
     }
 
     const headers = new Headers(upstream.headers);

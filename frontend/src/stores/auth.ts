@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
-import { login, setup, get, setToken, getToken, ApiError } from "../api/client";
+import { login, setup, get, setToken, getToken, ApiError, cancelPendingReads } from "../api/client";
+import { cancelActiveTasks } from "./taskQueue";
 import { ROLE_LEVEL, type Role, type User } from "../types";
 
 const [currentUser, setCurrentUser] = createSignal<User | null>(null);
@@ -20,6 +21,8 @@ export async function doSetup(password: string): Promise<void> {
 export function doLogout(): void {
   setToken(null);
   setCurrentUser(null);
+  cancelPendingReads();
+  cancelActiveTasks();
 }
 
 export async function loadSession(): Promise<void> {

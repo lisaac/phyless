@@ -155,7 +155,11 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 			t.result.Error = "image is not referenced by a registry tag"
 			continue
 		}
-		t.current, _ = inspectImage(info.Image)
+		t.current, err = inspectImage(info.Image)
+		if err != nil || t.current.ID == "" {
+			t.result.Error = "cannot inspect the container image"
+			continue
+		}
 		t.platform = dockercontainer.ImagePlatform(t.current)
 		if t.platform == "" {
 			if daemonPlatform == "" {
@@ -186,10 +190,14 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	sem := make(chan struct{}, updateCheckConcurrency)
 	var wg sync.WaitGroup
 	for _, g := range groups {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 		wg.Add(1)
 		go func(g *remoteGroup) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
 			gctx, cancel := context.WithTimeout(ctx, updateCheckTimeout)
 			defer cancel()

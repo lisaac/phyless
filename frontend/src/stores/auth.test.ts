@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { currentUser, doLogin, doLogout, hasRole, loadSession } from "./auth";
+import * as queue from "./taskQueue";
 import * as client from "../api/client";
 
 beforeEach(() => {
@@ -44,3 +45,12 @@ describe("auth store", () => {
 function setTokenForTest(token: string): void {
   localStorage.setItem("phyless_token", token);
 }
+
+
+it("cancels pending reads and writes when logging out", () => {
+  const reads = vi.spyOn(client, "cancelPendingReads");
+  const writes = vi.spyOn(queue, "cancelActiveTasks");
+  doLogout();
+  expect(reads).toHaveBeenCalledOnce();
+  expect(writes).toHaveBeenCalledOnce();
+});

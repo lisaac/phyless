@@ -28,3 +28,8 @@ describe("streamCompose", () => {
     expect(onProgress).toHaveBeenCalledWith("ok");
   });
 });
+
+it("rejects an oversized complete progress line, including its newline", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ stream: "x".repeat(256 * 1024) }) + "\n")));
+  await expect(streamCompose("build", "1", { token: "t", signal: sig() })).rejects.toThrow("进度行过大");
+});

@@ -131,6 +131,7 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
         r.ref = upgradeImageRef(info);
         if (!tagRef(r.ref) || r.ref === r.local_id) { r.status = "unsupported"; r.error = "镜像不是 registry tag 引用"; continue; }
         const cur = await inspectImage(r.local_id);
+        if (!cur?.Id) throw new Error("无法读取容器当前镜像");
         const platform = imagePlatform(cur);
         const key = `${r.ref}|${platform}`;
         cb.note(`检查 ${i + 1}/${p.ids.length}：${r.ref}`);

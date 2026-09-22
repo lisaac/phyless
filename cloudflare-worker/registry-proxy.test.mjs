@@ -54,3 +54,44 @@ test('forwards and exposes Retry-After from a rate-limited registry', async () =
     globalThis.fetch = originalFetch;
   }
 });
+
+test('validates every redirect and strips credentials across origins', async () => {
+  const original = globalThis.fetch;
+  const req = new Request('https://worker.example/?url=https://registry.example/v2/', {
+    headers: { Origin: 'https://app.example', Authorization: 'Bearer private' },
+  });
+  try {
+    for (const allowed of [false, true]) {
+      const calls = [];
+      let cancelled = false;
+      globalThis.fetch = async (url, opts) => {
+        calls.push({ url, auth: opts.headers.get('authorization'), redirect: opts.redirect });
+        return calls.length === 1
+          ? new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 302, headers: { Location: 'https://cdn.example/blob' } })
+          : new Response('layer');
+      };
+      const response = await worker.fetch(req, { UPSTREAM_ALLOWLIST: allowed ? 'registry.example,cdn.example' : 'registry.example' });
+      assert.equal(response.status, allowed ? 200 : 403);
+      assert.equal(cancelled, true);
+      assert.equal(calls.length, allowed ? 2 : 1);
+      assert.equal(calls[0].redirect, 'manual');
+      assert.equal(calls[0].auth, 'Bearer private');
+      if (allowed) assert.equal(calls[1].auth, null);
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+test('bounds redirect loops and refuses HTTPS downgrades', async () => {
+  const original = globalThis.fetch;
+  try {
+    for (const location of ['/again', 'http://registry.example/blob']) {
+      let calls = 0;
+      globalThis.fetch = async () => { calls++; return new Response(null, { status: 307, headers: { Location: location } }); };
+      const response = await worker.fetch(new Request('https://worker.example/?url=https://registry.example/v2/', {
+        headers: { Origin: 'https://app.example' },
+      }), { UPSTREAM_ALLOWLIST: 'registry.example' });
+      assert.equal(response.status, 502);
+      assert.equal(calls, location === '/again' ? 6 : 1);
+    }
+  } finally { globalThis.fetch = original; }
+});

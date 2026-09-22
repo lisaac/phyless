@@ -48,3 +48,5 @@ ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
 
 - 代理会将 `Authorization` 转发到指定的上游地址，因此必须收紧 `UPSTREAM_ALLOWLIST`；生产环境不要将 `ALLOW_ANY_UPSTREAMS` 设为 `true`，否则 Worker 会变成可转发凭据的开放代理。
 - 私有注册表凭据只在请求期间经过「浏览器 → Worker → 注册表」，不会发送给 phyless 服务端。
+
+重定向的每一跳也必须在上游白名单内（包括镜像层的 CDN／对象存储域名）。跨来源重定向会移除 `Authorization`，HTTPS 降级到 HTTP 会被拒绝；最多跟随五次重定向。

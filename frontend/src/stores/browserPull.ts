@@ -146,6 +146,7 @@ export async function streamPost(
   const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   const consume = (line: string) => {
+    if (line.length > MAX_STREAM_LINE) throw new Error("进度行过大");
     const s = line.trim();
     if (!s) return;
     try {

@@ -21,9 +21,11 @@ import (
 )
 
 const (
-	RoleLabel  = "phyless.role"
-	RoleValue  = "image-fs"
-	ImageLabel = "phyless.image"
+	RoleLabel         = "phyless.role"
+	RoleValue         = "image-fs"
+	ImageLabel        = "phyless.image"
+	maxIndexEntries   = 100_000
+	maxIndexNameBytes = 16 << 20
 )
 
 // IsHelper reports whether a container's labels mark it as an imagefs helper,
@@ -31,6 +33,8 @@ const (
 func IsHelper(labels map[string]string) bool { return labels[RoleLabel] == RoleValue }
 
 type session struct {
+	key         string
+	removing    bool
 	containerID string
 	index       map[string][]ctr.FileEntry
 	owned       bool
@@ -43,7 +47,7 @@ type session struct {
 type Manager struct {
 	cli client.APIClient
 
-	mu       sync.Mutex // guards sessions and session state, never held across Docker I/O
+	mu       sync.Mutex // guards sessions and session state, held across Docker I/O only during startup cleanup
 	sessions map[string]*session
 
 	now  func() time.Time
@@ -69,6 +73,7 @@ func (m *Manager) List(ctx context.Context, imageID, p string) ([]ctr.FileEntry,
 	if err != nil {
 		return nil, err
 	}
+	defer m.done(s)
 	return m.list(s, p)
 }
 
@@ -81,6 +86,7 @@ func (m *Manager) ListContainer(ctx context.Context, containerID, p string) ([]c
 	if err != nil {
 		return nil, err
 	}
+	defer m.done(s)
 	return m.list(s, p)
 }
 
@@ -103,10 +109,6 @@ func (m *Manager) Open(ctx context.Context, imageID, p string) (io.ReadCloser, e
 	if err != nil {
 		return nil, err
 	}
-	m.mu.Lock()
-	s.inflight++
-	s.lastUsed = m.now()
-	m.mu.Unlock()
 	rc, _, err := m.cli.CopyFromContainer(ctx, s.containerID, normPath(p))
 	if err != nil {
 		m.done(s)
@@ -125,19 +127,20 @@ func (m *Manager) Release(ctx context.Context, imageID string) error {
 	m.mu.Lock()
 	key := "image:" + id
 	s := m.sessions[key]
-	delete(m.sessions, key)
-	m.mu.Unlock()
 	if s != nil {
-		select { // 等索引建完，否则容器 ID 还没写进去
-		case <-s.ready:
-		case <-ctx.Done():
-			return ctx.Err()
+		if s.inflight > 0 || s.removing {
+			m.mu.Unlock()
+			return fmt.Errorf("filesystem is in use; retry after the current operation")
 		}
-		if s.containerID == "" {
-			return nil
-		}
-		return m.remove(ctx, s.containerID)
+		s.removing = true
+		m.mu.Unlock()
+		return m.discard(ctx, s)
 	}
+	// Reserve the key during the fallback lookup as well.
+	s = &session{key: key, removing: true}
+	m.sessions[key] = s
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); delete(m.sessions, key); m.mu.Unlock() }()
 	// 重启后尚未访问过该镜像：按 label 找遗留容器
 	found, err := m.find(ctx, id)
 	if err != nil || found == "" {
@@ -163,6 +166,14 @@ func (m *Manager) Run(ctx context.Context) {
 }
 
 func (m *Manager) cleanup(ctx context.Context) {
+	// Startup only: never race a new build or remove an already acquired helper.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.sessions) != 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	list, err := m.cli.ContainerList(ctx, container.ListOptions{
 		All:     true,
 		Filters: filters.NewArgs(filters.Arg("label", RoleLabel+"="+RoleValue)),
@@ -185,21 +196,36 @@ func (m *Manager) gc(ctx context.Context) {
 		default:
 			continue
 		}
-		if s.inflight == 0 && now.Sub(s.lastUsed) > m.idle {
+		if s.inflight == 0 && !s.removing && now.Sub(s.lastUsed) > m.idle {
+			s.removing = true
 			stale[id] = s
 		}
 	}
 	m.mu.Unlock()
-	for id, s := range stale {
-		if s.owned {
-			if err := m.remove(ctx, s.containerID); err != nil {
-				continue // 下一轮重试
-			}
-		}
-		m.mu.Lock()
-		delete(m.sessions, id)
-		m.mu.Unlock()
+	for _, s := range stale {
+		_ = m.discard(ctx, s)
 	}
+}
+
+// Keep a retiring session reserved until Docker confirms removal, so a new
+// request cannot reuse a helper that GC is about to delete.
+func (m *Manager) discard(ctx context.Context, s *session) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var err error
+	if s.owned {
+		err = m.remove(ctx, s.containerID)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessions[s.key] == s {
+		if err == nil {
+			delete(m.sessions, s.key)
+		} else {
+			s.removing = false
+		}
+	}
+	return err
 }
 
 func (m *Manager) remove(ctx context.Context, containerID string) error {
@@ -234,21 +260,38 @@ func (m *Manager) containerSession(ctx context.Context, containerID string) (*se
 func (m *Manager) cached(ctx context.Context, key string, owned bool, build func() (string, map[string][]ctr.FileEntry, error)) (*session, error) {
 	m.mu.Lock()
 	if s := m.sessions[key]; s != nil {
+		if s.removing {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("filesystem is being released; retry shortly")
+		}
+		s.inflight++
+		s.lastUsed = m.now()
 		m.mu.Unlock()
 		select {
 		case <-s.ready:
+			if s.err != nil {
+				m.done(s)
+			}
 			return s, s.err
 		case <-ctx.Done():
+			m.done(s)
 			return nil, ctx.Err()
 		}
 	}
-	evict := m.evictLocked()
-	s := &session{ready: make(chan struct{}), lastUsed: m.now(), owned: owned}
+	if evict := m.evictLocked(); evict != nil {
+		m.mu.Unlock()
+		if err := m.discard(ctx, evict); err != nil {
+			return nil, err
+		}
+		return m.cached(ctx, key, owned, build)
+	}
+	if len(m.sessions) >= m.max {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("filesystem index limit reached; retry after an active operation finishes")
+	}
+	s := &session{key: key, ready: make(chan struct{}), lastUsed: m.now(), owned: owned, inflight: 1}
 	m.sessions[key] = s
 	m.mu.Unlock()
-	if evict != nil && evict.owned {
-		go m.remove(context.Background(), evict.containerID) //nolint:errcheck // gc retries via cleanup on restart
-	}
 
 	s.containerID, s.index, s.err = build()
 	if s.err != nil {
@@ -259,30 +302,32 @@ func (m *Manager) cached(ctx context.Context, key string, owned bool, build func
 		m.mu.Unlock()
 	}
 	close(s.ready)
+	if s.err != nil {
+		m.done(s)
+	}
 	return s, s.err
 }
 
-// evictLocked drops the least recently used idle session when the cap is
+// evictLocked reserves the least recently used idle session when the cap is
 // reached and returns it so the caller can remove its helper container.
 // Caller holds m.mu.
 func (m *Manager) evictLocked() *session {
 	if len(m.sessions) < m.max {
 		return nil
 	}
-	var key string
 	var victim *session
-	for k, s := range m.sessions {
+	for _, s := range m.sessions {
 		select {
 		case <-s.ready:
 		default:
 			continue
 		}
-		if s.inflight == 0 && (victim == nil || s.lastUsed.Before(victim.lastUsed)) {
-			key, victim = k, s
+		if s.inflight == 0 && !s.removing && (victim == nil || s.lastUsed.Before(victim.lastUsed)) {
+			victim = s
 		}
 	}
 	if victim != nil {
-		delete(m.sessions, key)
+		victim.removing = true
 	}
 	return victim
 }
@@ -314,6 +359,14 @@ func (m *Manager) build(ctx context.Context, id string) (string, map[string][]ct
 		}
 		containerID = resp.ID
 	}
+	indexed := false
+	defer func() {
+		if !indexed {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			_ = m.remove(cleanup, containerID)
+		}
+	}()
 	rc, err := m.cli.ContainerExport(ctx, containerID)
 	if err != nil {
 		return "", nil, err
@@ -323,6 +376,7 @@ func (m *Manager) build(ctx context.Context, id string) (string, map[string][]ct
 	if err != nil {
 		return "", nil, err
 	}
+	indexed = true
 	return containerID, index, nil
 }
 
@@ -375,11 +429,13 @@ func normPath(p string) string { return path.Clean("/" + p) }
 // buildIndex parses only the tar headers of an image export into dir → entries.
 func buildIndex(r io.Reader) (map[string][]ctr.FileEntry, error) {
 	idx := map[string][]ctr.FileEntry{"/": nil}
+	nameBytes := 0
 	at := map[string]int{} // full path → position in its parent's slice
 	var ensure func(dir string)
 	add := func(full string, e ctr.FileEntry) {
 		d := path.Dir(full)
 		ensure(d)
+		nameBytes += len(full) + len(e.Name) + len(e.Uname)
 		if i, ok := at[full]; ok {
 			idx[d][i] = e
 			return
@@ -407,6 +463,9 @@ func buildIndex(r io.Reader) (map[string][]ctr.FileEntry, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(h.Name) > 4096 || strings.Count(h.Name, "/") > 256 || len(h.Uname) > 4096 {
+			return nil, fmt.Errorf("filesystem path metadata is too large")
+		}
 		name := normPath(h.Name)
 		if name == "/" {
 			continue
@@ -428,6 +487,10 @@ func buildIndex(r io.Reader) (map[string][]ctr.FileEntry, error) {
 			ensure(name)
 		}
 		add(name, e)
+		// ponytail: bound the whole-tree cache; use on-disk indexing for larger trees.
+		if len(at) > maxIndexEntries || nameBytes > maxIndexNameBytes {
+			return nil, fmt.Errorf("filesystem index exceeds its entry or name size limit")
+		}
 	}
 }
 

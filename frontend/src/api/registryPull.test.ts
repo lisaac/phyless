@@ -155,3 +155,20 @@ describe("resolveImage", () => {
     await expect(pending).rejects.toBe(aborted);
   });
 });
+
+it("cancels chunked metadata before buffering an oversized response", async () => {
+  let chunks = 0;
+  const cancel = vi.fn();
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      chunks++;
+      controller.enqueue(new Uint8Array(1024 * 1024));
+      if (chunks === 64) controller.close();
+    },
+    cancel,
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+  await expect(resolveImage("nginx:1.27", "linux/amd64", "https://w.example")).rejects.toThrow("响应过大");
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(chunks).toBeLessThanOrEqual(18);
+});

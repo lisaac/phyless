@@ -100,3 +100,16 @@ describe("login", () => {
     expect(getToken()).toBe("setup-jwt");
   });
 });
+
+it("joins a local GET cancellation signal to Docker server cancellation and disposes listeners", async () => {
+  const local = new AbortController();
+  const remove = vi.spyOn(local.signal, "removeEventListener");
+  vi.stubGlobal("fetch", vi.fn((_path, init: RequestInit) => new Promise((_, reject) => {
+    init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+  })));
+  const pending = request("GET", "/api/containers", undefined, local.signal);
+  cancelDockerServerRequests();
+  await expect(pending).rejects.toThrow("aborted");
+  expect(local.signal.aborted).toBe(false);
+  expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+});

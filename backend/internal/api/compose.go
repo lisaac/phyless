@@ -614,20 +614,27 @@ func (s *Server) computeCanBuild(ctx context.Context, projects []models.ComposeP
 	if len(projects) == 0 {
 		return results
 	}
-	var wg sync.WaitGroup
+	type result struct {
+		index    int
+		canBuild bool
+	}
+	completed := make(chan result, len(projects))
 	for i := range projects {
-		wg.Add(1)
 		go func(i int) {
-			defer wg.Done()
-			results[i] = s.projectHasBuild(ctx, projects[i])
+			completed <- result{i, s.projectHasBuild(ctx, projects[i])}
 		}(i)
 	}
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	case <-time.After(2 * time.Second):
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for range projects {
+		select {
+		case value := <-completed:
+			results[value.index] = value.canBuild
+		case <-ctx.Done():
+			return results
+		case <-timer.C:
+			return results
+		}
 	}
 	return results
 }
@@ -666,11 +673,14 @@ func (s *Server) projectHasBuild(ctx context.Context, p models.ComposeProject) b
 	c.mu.Lock()
 	entry, ok := c.entries[p.ID]
 	c.mu.Unlock()
-	if ok && entry.signature == sig {
+	if ok && sig != "" && entry.signature == sig {
 		return entry.canBuild
 	}
 
 	canBuild := s.loadProjectHasBuild(ctx, p)
+	if ctx.Err() != nil {
+		return canBuild // A cancelled load is not a cached negative result.
+	}
 	c.mu.Lock()
 	c.entries[p.ID] = buildCacheEntry{signature: sig, canBuild: canBuild}
 	c.mu.Unlock()

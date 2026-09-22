@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -391,5 +392,84 @@ func TestEvictsLeastRecentlyUsedAtCap(t *testing.T) {
 	m.mu.Unlock()
 	if hasC1 || !hasC2 || !hasC3 || n != 2 {
 		t.Fatalf("sessions after eviction: c1=%v c2=%v c3=%v n=%d", hasC1, hasC2, hasC3, n)
+	}
+}
+
+func TestCapacityIncludesBuildingAndPinnedSessions(t *testing.T) {
+	c := sampleClient(t)
+	m := New(c)
+	m.max = 1
+	started, release := make(chan struct{}), make(chan struct{})
+	c.exportHook = func() { close(started); <-release }
+	done := make(chan error, 1)
+	go func() { _, err := m.List(context.Background(), imgID, "/"); done <- err }()
+	<-started
+	_, err := m.ListContainer(context.Background(), "other", "/")
+	if err == nil {
+		t.Error("building index must count toward the cap")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	rc, err := m.Open(context.Background(), imgID, "/etc/hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	if _, err := m.ListContainer(context.Background(), "other", "/"); err == nil {
+		t.Error("open download must not be evicted")
+	}
+	if err := m.Release(context.Background(), imgID); err == nil {
+		t.Error("active download must not be released")
+	}
+}
+
+func TestRetiringSessionCannotBeReused(t *testing.T) {
+	c := sampleClient(t)
+	m := New(c)
+	if _, err := m.List(context.Background(), imgID, "/"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.sessions["image:"+imgID].removing = true
+	m.mu.Unlock()
+	if _, err := m.Open(context.Background(), imgID, "/etc/hosts"); err == nil {
+		t.Fatal("must not open a helper while it is being removed")
+	}
+}
+
+func TestIndexRejectsDeepOrOversizeNamesAndCleansFailedHelper(t *testing.T) {
+	for _, name := range []string{strings.Repeat("d/", 257) + "file", strings.Repeat("x", 4097)} {
+		c := &fakeClient{tar: makeTar(t, []entry{{name: name, typ: tar.TypeReg, mode: 0644}})}
+		m := New(c)
+		if _, err := m.List(context.Background(), imgID, "/"); err == nil {
+			t.Fatal("expected metadata limit")
+		}
+		if len(c.removed) != 1 || len(m.sessions) != 0 {
+			t.Fatalf("failed index leaked: removed=%v sessions=%d", c.removed, len(m.sessions))
+		}
+	}
+}
+
+func TestIndexEntryLimit(t *testing.T) {
+	r, w := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer w.Close()
+		tarWriter := tar.NewWriter(w)
+		for i := 0; i <= maxIndexEntries; i++ {
+			if err := tarWriter.WriteHeader(&tar.Header{Name: fmt.Sprintf("file-%d", i), Mode: 0644}); err != nil {
+				return
+			}
+		}
+		_ = tarWriter.Close()
+	}()
+	_, err := buildIndex(r)
+	_ = r.Close()
+	<-done
+	if err == nil {
+		t.Fatal("expected index entry limit")
 	}
 }

@@ -64,35 +64,40 @@ export async function request<T>(method: string, path: string, body?: unknown, s
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
-  const res = await fetch(path, { method, headers, body: payload, signal: signal ?? (method === "GET" ? readController.signal : undefined) });
-  if (res.status === 401 && token === getToken()) {
-    setToken(null);
-    window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
-    throw new ApiError(401, "unauthorized");
-  }
-  if (res.status === 401) throw new ApiError(401, "unauthorized");
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    let msg = text || res.statusText;
-    try {
-      const j = JSON.parse(text);
-      if (j?.error) msg = j.error;
-    } catch {}
-    throw new ApiError(res.status, msg);
-  }
-  if (res.status === 204) return undefined as T;
-  const ct = res.headers.get("Content-Type") ?? "";
-  const text = await res.text();
-  if (ct.includes("application/json")) return JSON.parse(text) as T;
-  // Try to parse as JSON even without Content-Type header
+  const read = method === "GET" ? readSignal(signal) : undefined;
   try {
-    return JSON.parse(text) as T;
-  } catch {
-    return text as unknown as T;
+    const res = await fetch(path, { method, headers, body: payload, signal: read?.signal ?? signal });
+    if (res.status === 401 && token === getToken()) {
+      setToken(null);
+      window.dispatchEvent(new CustomEvent("phyless:unauthorized"));
+      throw new ApiError(401, "unauthorized");
+    }
+    if (res.status === 401) throw new ApiError(401, "unauthorized");
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      let msg = text || res.statusText;
+      try {
+        const j = JSON.parse(text);
+        if (j?.error) msg = j.error;
+      } catch {}
+      throw new ApiError(res.status, msg);
+    }
+    if (res.status === 204) return undefined as T;
+    const ct = res.headers.get("Content-Type") ?? "";
+    const text = await res.text();
+    if (ct.includes("application/json")) return JSON.parse(text) as T;
+    // Try to parse as JSON even without Content-Type header
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as unknown as T;
+    }
+  } finally {
+    read?.dispose();
   }
 }
 
-export const get = <T>(p: string) => request<T>("GET", p);
+export const get = <T>(p: string, signal?: AbortSignal) => request<T>("GET", p, undefined, signal);
 // No post/put/del: every server-mutating request goes through
 // stores/taskQueue.ts (enqueue / queued) so it survives navigation and
 // shows in the task panel.

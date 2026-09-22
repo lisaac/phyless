@@ -112,3 +112,23 @@ func TestHandleCheckUpdatesDirect(t *testing.T) {
 		t.Errorf("same ref/platform should be resolved once, got %d calls", c.distCalls)
 	}
 }
+
+type missingUpdateImageClient struct{ updateCheckClient }
+
+func (*missingUpdateImageClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
+	return image.InspectResponse{}, errors.New("image unavailable")
+}
+
+func TestCheckUpdatesStopsAtMissingCurrentImage(t *testing.T) {
+	c := &missingUpdateImageClient{}
+	s := &Server{docker: c}
+	rec := httptest.NewRecorder()
+	s.handleCheckUpdates(rec, httptest.NewRequest(http.MethodPost, "/api/containers/check-updates", strings.NewReader(`{"ids":["a"]}`)))
+	var out []updateCheckResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Status != updateError || out[0].Error == "" || c.distCalls != 0 {
+		t.Fatalf("unexpected result: %+v, remote calls=%d", out, c.distCalls)
+	}
+}

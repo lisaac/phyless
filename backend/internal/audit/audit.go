@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"time"
 )
@@ -96,18 +97,23 @@ func (l *Logger) ReadTail(maxEntries int) ([]Entry, error) {
 
 func scanTail(r io.Reader, maxEntries int) ([]Entry, error) {
 	entries := make([]Entry, 0, maxEntries)
+	next := 0
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 4096), maxAuditLine+1)
 	for scanner.Scan() {
 		var e Entry
 		if json.Unmarshal(scanner.Bytes(), &e) == nil {
 			if len(entries) == maxEntries {
-				copy(entries, entries[1:])
-				entries[len(entries)-1] = e
+				entries[next] = e
+				next = (next + 1) % maxEntries
 			} else {
 				entries = append(entries, e)
 			}
 		}
 	}
+	// Restore chronological order once, instead of shifting the tail for every entry.
+	slices.Reverse(entries[:next])
+	slices.Reverse(entries[next:])
+	slices.Reverse(entries)
 	return entries, scanner.Err()
 }

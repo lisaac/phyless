@@ -110,3 +110,30 @@ describe("createResourceStore + refresh settings", () => {
     vi.useRealTimers();
   });
 });
+
+it("aborts an in-flight read when its page stops polling", async () => {
+  const get = vi.spyOn(client, "get").mockImplementation((_path, signal) => new Promise((_, reject) => {
+    signal?.addEventListener("abort", () => reject(new Error("aborted")));
+  }));
+  const store = createResourceStore("/api/things");
+  const pending = store.refresh();
+  const signal = get.mock.calls[0][1];
+  store.stopPolling();
+  expect(signal?.aborted).toBe(true);
+  await pending;
+  expect(store.error()).toBe("");
+});
+
+it("fetches again when a mutation settles during an older read", async () => {
+  let resolve!: (value: unknown[]) => void;
+  const get = vi.spyOn(client, "get").mockImplementationOnce(() => new Promise((r) => { resolve = r; })).mockResolvedValue([{ id: "fresh" }]);
+  const store = createResourceStore<{ id: string }>("/api/things");
+  store.startPolling();
+  window.dispatchEvent(new CustomEvent("phyless:task-settled"));
+  resolve([{ id: "stale" }]);
+  await store.refresh();
+  await Promise.resolve();
+  expect(get).toHaveBeenCalledTimes(2);
+  expect(store.items()).toEqual([{ id: "fresh" }]);
+  store.stopPolling();
+});

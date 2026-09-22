@@ -239,3 +239,37 @@ describe("taskQueue persistence", () => {
     expect(localStorage.getItem("phyless_tasks")).not.toContain("never-store-this");
   });
 });
+
+it("releases request payloads and credentials on every terminal state", async () => {
+  const q = await load();
+  for (const status of ["done", "error", "cancelled"] as const) {
+    const task = q.enqueue({ title: status, url: "/upload", file: new File(["large"], "a.tar"), body: { password: "private" }, secret: { creds: { username: "u", secret: "private" } } });
+    const xhr = FakeXHR.requests.at(-1)!;
+    if (status === "cancelled") q.cancel(task.id);
+    else xhr.finish(status === "error" ? '{"error":"failed"}' : "", status === "error" ? 500 : 200);
+    const finished = await task.done;
+    for (const value of [finished, q.tasks.list.find((t) => t.id === task.id)!]) {
+      expect(value.status).toBe(status);
+      expect(value.file).toBeUndefined();
+      expect(value.body).toBeUndefined();
+      expect(value.secret).toBeUndefined();
+    }
+  }
+});
+
+it("parses a large burst of short progress lines without treating it as one line", async () => {
+  const q = await load();
+  const task = q.enqueue({ title: "pull", url: "/pull" });
+  FakeXHR.requests[0].finish('{"status":"Downloading"}\n'.repeat(12000));
+  expect((await task.done).status).toBe("done");
+});
+
+it("keeps queued tasks reachable until cancelled or completed", async () => {
+  const q = await load();
+  q.enqueue({ title: "running", url: "/run", key: "same" });
+  const task = q.enqueue({ title: "queued", url: "/run", key: "same" });
+  q.remove(task.id);
+  expect(q.tasks.list.some((t) => t.id === task.id)).toBe(true);
+  q.cancel(task.id);
+  expect((await task.done).status).toBe("cancelled");
+});

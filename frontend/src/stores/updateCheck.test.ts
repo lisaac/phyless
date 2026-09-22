@@ -52,3 +52,11 @@ describe("runUpdateCheck (browser)", () => {
     expect(d.post).toHaveBeenCalledWith({ ids: ["a"], proxy_url: "http://p:1" }, expect.any(AbortSignal));
   });
 });
+
+it("does not claim an update when the current image cannot be inspected", async () => {
+  const d = deps();
+  d.inspectImage = vi.fn(async () => null);
+  await runUpdateCheck({ ids: ["a"], mode: "browser", workerUrl: "https://w" }, cb(), d);
+  expect(updateCheckFor("a")?.status).toBe("error");
+  expect(d.resolve).not.toHaveBeenCalled();
+});
