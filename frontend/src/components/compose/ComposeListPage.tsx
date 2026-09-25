@@ -125,7 +125,9 @@ export const ComposeListPage: Component = () => {
                 if (state() === "partial") return "text-sky-400";
                 return "";
               };
-              const rowBg = () => state() === "running"
+              const rowBg = () => p.discovered
+                ? "bg-violet-500/[0.09] hover:bg-violet-500/[0.15]"
+                : state() === "running"
                 ? "bg-emerald-500/[0.08] hover:bg-emerald-500/[0.13]"
                 : state() === "partial"
                   ? "bg-sky-500/[0.04] hover:bg-sky-500/[0.08]"
@@ -153,7 +155,7 @@ export const ComposeListPage: Component = () => {
                   <Show when={hasRole("operator")}>
                     <span class="mx-0.5 text-zinc-400">│</span>
                     <Show when={p.discovered} fallback={<IBtn danger title="注销项目" onClick={() => remove(p.id, p.name)}>⊖</IBtn>}>
-                      <IBtn title="注册为项目" loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕</IBtn>
+                      <IBtn title={p.discovery_source === "directory" ? "注册此目录中的 Compose YAML 文件；不会修改原文件" : "将容器发现的 Compose 项目注册到当前服务器；不会修改原文件"} loading={isPending((t) => t.key === `compose:${p.id}`)} onClick={() => void register(p)}>⊕</IBtn>
                     </Show>
                     <IBtn
                       danger
@@ -184,7 +186,7 @@ export const ComposeListPage: Component = () => {
                               onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                             >{p.name}</a>
                             <Show when={p.discovered}>
-                              <span class="bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400" title="根据容器上的 compose 标签自动发现，非手动注册">自动发现</span>
+                              <span class="bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300" title={p.discovery_source === "directory" ? "在当前服务器的 Compose 存储目录中发现 YAML 文件；尚未手动注册，点击加号可注册" : "根据 Docker 容器的 Compose 标签发现；尚未手动注册，点击加号可注册"}>自动发现</span>
                             </Show>
                             <span class={`text-xs sm:hidden ${statusColor() || "text-zinc-500"}`}>
                               {p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}

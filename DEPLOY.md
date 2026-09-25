@@ -14,7 +14,8 @@ docker compose -f compose.yaml up -d --build
 The web UI is available at `http://localhost:8080`. On first visit, set the
 initial `admin` password; the service persists its generated JWT secret and the
 password hash under `data/`. The Docker socket is mounted so the service can
-manage the local Docker daemon.
+manage the local Docker daemon. `/srv` is mounted at the same host and container
+path for Compose projects created from the web UI.
 
 ## Stop and update
 

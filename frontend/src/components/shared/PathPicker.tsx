@@ -11,6 +11,7 @@ export const PathPicker: Component<{
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  files?: boolean;
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
 
@@ -31,11 +32,14 @@ export const PathPicker: Component<{
   });
 
   const suggestions = () =>
-    (entries() ?? [])
-      .filter((e) => e.is_dir && e.name.toLowerCase().startsWith(filterPart().toLowerCase()))
+    (entries.loading ? [] : entries.latest ?? [])
+      .filter((e) => (e.is_dir || (props.files && /\.ya?ml$/i.test(e.name))) && e.name.toLowerCase().startsWith(filterPart().toLowerCase()))
       .slice(0, 30);
 
-  const pick = (name: string) => props.onChange(`${dirPart()}${name}/`);
+  const pick = (entry: FileEntry) => {
+    props.onChange(`${dirPart()}${entry.name}${entry.is_dir ? "/" : ""}`);
+    if (!entry.is_dir) setOpen(false);
+  };
 
   return (
     <div class="relative">
@@ -55,8 +59,8 @@ export const PathPicker: Component<{
                 type="button"
                 class="block w-full truncate px-2.5 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
                 onMouseDown={(ev) => ev.preventDefault()}
-                onClick={() => pick(e.name)}
-              >📁 {e.name}</button>
+                onClick={() => pick(e)}
+              >{e.is_dir ? "📁" : "📄"} {e.name}</button>
             )}
           </For>
         </div>

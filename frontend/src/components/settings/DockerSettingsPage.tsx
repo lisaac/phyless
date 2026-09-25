@@ -8,9 +8,9 @@ import { Modal } from "../shared/Modal";
 import { Table, type Column } from "../shared/Table";
 import type { DockerServer, DockerSettings } from "../../types";
 
-type Form = { name: string; host: string; tls: boolean; ca_pem: string; cert_pem: string; key_pem: string };
+type Form = { name: string; host: string; compose_dir: string; tls: boolean; ca_pem: string; cert_pem: string; key_pem: string };
 
-const emptyForm = (): Form => ({ name: "", host: "", tls: false, ca_pem: "", cert_pem: "", key_pem: "" });
+const emptyForm = (): Form => ({ name: "", host: "", compose_dir: "/srv", tls: false, ca_pem: "", cert_pem: "", key_pem: "" });
 
 export const DockerSettingsPage: Component = () => {
   const [settings, setSettings] = createSignal<DockerSettings>({ servers: [], active_id: "" });
@@ -31,18 +31,21 @@ export const DockerSettingsPage: Component = () => {
   };
   const openEdit = (server: DockerServer) => {
     setEditing(server);
-    setForm({ name: server.name, host: server.host, tls: server.tls, ca_pem: "", cert_pem: "", key_pem: "" });
+    setForm({ name: server.name, host: server.host, compose_dir: server.compose_dir, tls: server.tls, ca_pem: "", cert_pem: "", key_pem: "" });
     setShow(true);
   };
   const close = () => setShow(false);
-  const setText = (key: "name" | "host" | "ca_pem" | "cert_pem" | "key_pem", value: string) => setForm((f) => ({ ...f, [key]: value }));
+  const setText = (key: "name" | "host" | "compose_dir" | "ca_pem" | "cert_pem" | "key_pem", value: string) => setForm((f) => ({ ...f, [key]: value }));
   const isActive = (server: DockerServer) => server.id === settings().active_id;
 
   const save = async () => {
     const current = editing();
-    const updatesActiveServer = Boolean(current && isActive(current));
     const f = form();
-    const body: Record<string, string | boolean> = { name: f.name.trim(), host: f.host.trim(), tls: f.tls };
+    const updatesActiveServer = Boolean(current && isActive(current) && (
+      f.host.trim() !== current.host || f.tls !== current.tls ||
+      f.ca_pem.trim() || f.cert_pem.trim() || f.key_pem.trim()
+    ));
+    const body: Record<string, string | boolean> = { name: f.name.trim(), host: f.host.trim(), compose_dir: f.compose_dir.trim(), tls: f.tls };
     if (f.tls) {
       if (f.ca_pem.trim()) body.ca_pem = f.ca_pem;
       if (f.cert_pem.trim()) body.cert_pem = f.cert_pem;
@@ -87,6 +90,7 @@ export const DockerSettingsPage: Component = () => {
       cell: (server) => <div class="flex items-center gap-2"><span class="font-medium">{server.name}</span><Show when={isActive(server)}><span class="text-xs text-emerald-400">当前</span></Show></div>,
     },
     { header: "Docker API", cell: (server) => <code class="text-xs text-zinc-400">{server.host || "本机 Docker"}</code> },
+    { header: "Compose 存储目录", cell: (server) => <code class="text-xs text-zinc-400">{server.compose_dir}</code> },
     { header: "连接", cell: (server) => <span>{server.tls ? "TLS" : "明文"}</span> },
     {
       header: "操作",
@@ -120,6 +124,11 @@ export const DockerSettingsPage: Component = () => {
         <label class="mb-3 block text-sm text-zinc-300">
           Docker API 地址
           <input class="mt-1 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="留空使用本机 Docker，或 tcp://docker.example.com:2375、unix:///var/run/docker.sock" value={form().host} onInput={(e) => setText("host", e.currentTarget.value)} />
+        </label>
+        <label class="mb-3 block text-sm text-zinc-300">
+          Compose 存储目录
+          <input class="mt-1 w-full bg-zinc-900 border border-zinc-800 px-3 py-2 font-mono" placeholder="/srv" value={form().compose_dir} onInput={(e) => setText("compose_dir", e.currentTarget.value)} />
+          <span class="mt-1 block text-xs text-zinc-500">新建项目会保存在此目录下；服务进程需要能读写该路径。</span>
         </label>
         <label class="flex items-center gap-2 text-sm text-zinc-300">
           <input type="checkbox" checked={form().tls} onChange={(e) => setForm((f) => ({ ...f, tls: e.currentTarget.checked }))} />

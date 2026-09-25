@@ -153,7 +153,7 @@ function safeURL(value: unknown): string {
   } catch { return "已隐藏"; }
 }
 const ENV_KEYS = /^(env|environment)$/i;
-const CONTENT_KEYS = /^(cmd|command|content|data)$/i;
+const CONTENT_KEYS = /^(cmd|command|content|data|compose_content|env_content)$/i;
 
 const safeJSON = (value: unknown) => JSON.stringify(value, (key, nested) => {
   if (HIDDEN_KEYS.test(key)) return "已隐藏";

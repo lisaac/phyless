@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -37,6 +39,7 @@ import (
 // chi RawPath decoding bug that once broke image ids (see images.go).
 func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Post("/api/compose", s.handleCreateCompose)
+	r.Post("/api/compose/new", s.handleCreateNewCompose)
 	r.Delete("/api/compose", s.handleDeleteCompose)
 	r.Post("/api/compose/up", s.handleComposeUp)
 	r.Post("/api/compose/stop", s.handleComposeStop)
@@ -136,10 +139,11 @@ func tryComposeOperation(projectName string) (func(), bool) {
 // the list reflects what's actually deployed, not just what a user typed in.
 type ComposeInfo struct {
 	models.ComposeProject
-	ProjectName string `json:"project_name,omitempty"`
-	Discovered  bool   `json:"discovered"`
-	Running     int    `json:"running"`
-	Total       int    `json:"total"`
+	ProjectName     string `json:"project_name,omitempty"`
+	Discovered      bool   `json:"discovered"`
+	DiscoverySource string `json:"discovery_source,omitempty"`
+	Running         int    `json:"running"`
+	Total           int    `json:"total"`
 	// CanBuild is true only when the project's compose file is readable and at
 	// least one service declares a build. The list's Build button keys off it.
 	CanBuild bool `json:"can_build"`
@@ -209,7 +213,7 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	canBuild := s.computeCanBuild(r.Context(), cfg.ComposeProjects)
-	out := mergeComposeProjects(cfg.ComposeProjects, groups)
+	out := mergeFilesystemCompose(mergeComposeProjects(cfg.ComposeProjects, groups), cfg)
 	byID := make(map[string]bool, len(cfg.ComposeProjects))
 	for i, p := range cfg.ComposeProjects {
 		byID[p.ID] = canBuild[i]
@@ -220,6 +224,65 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+var composeFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"}
+
+// ponytail: scan only the storage root and its direct children; deeper projects can be registered by file path.
+func scanComposeDirectory(root string) []models.ComposeProject {
+	if !filepath.IsAbs(root) || filepath.Clean(root) == "/" {
+		return nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	dirs := []string{root}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, filepath.Join(root, entry.Name()))
+		}
+	}
+	var projects []models.ComposeProject
+	for _, dir := range dirs {
+		for _, name := range composeFileNames {
+			file := filepath.Join(dir, name)
+			info, err := os.Lstat(file)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			project := models.ComposeProject{ID: "disk:" + base64.RawURLEncoding.EncodeToString([]byte(file)), Name: filepath.Base(dir), BaseDir: dir, ComposeFile: file}
+			if envInfo, err := os.Lstat(filepath.Join(dir, ".env")); err == nil && envInfo.Mode().IsRegular() {
+				project.EnvFile = filepath.Join(dir, ".env")
+			}
+			projects = append(projects, project)
+			break
+		}
+	}
+	return projects
+}
+
+func mergeFilesystemCompose(out []ComposeInfo, cfg *store.Config) []ComposeInfo {
+	server, err := cfg.ActiveDockerServer()
+	if err != nil {
+		return out
+	}
+	// ponytail: compare paths directly; index them if storage grows to thousands of projects.
+	for _, disk := range scanComposeDirectory(server.ComposeDir) {
+		duplicate := false
+		for _, existing := range out {
+			files := normalizeComposePaths(existing.BaseDir, existing.ComposeFile)
+			if len(files) > 0 && files[0] == disk.ComposeFile {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, ComposeInfo{ComposeProject: disk, Discovered: true, DiscoverySource: "directory"})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func mergeComposeProjects(projects []models.ComposeProject, groups map[string][]container.Summary) []ComposeInfo {
@@ -260,16 +323,89 @@ func mergeComposeProjects(projects []models.ComposeProject, groups map[string][]
 		discovered := discoveredComposeProject(projectName, cs)
 		running, total := composeRunningCounts(cs)
 		out = append(out, ComposeInfo{
-			ComposeProject: discovered,
-			ProjectName:    discovered.Name,
-			Discovered:     true,
-			Running:        running,
-			Total:          total,
+			ComposeProject:  discovered,
+			ProjectName:     discovered.Name,
+			Discovered:      true,
+			DiscoverySource: "container",
+			Running:         running,
+			Total:           total,
 		})
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+var composeDirectoryName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+func (s *Server) handleCreateNewCompose(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Name           string `json:"name"`
+		ComposeContent string `json:"compose_content"`
+		EnvContent     string `json:"env_content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if !composeDirectoryName.MatchString(input.Name) || strings.TrimSpace(input.ComposeContent) == "" {
+		writeError(w, http.StatusBadRequest, "name must use lowercase letters, numbers, _ or -, and Compose content is required")
+		return
+	}
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read Compose storage directory")
+		return
+	}
+	server, err := cfg.ActiveDockerServer()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !filepath.IsAbs(server.ComposeDir) || filepath.Clean(server.ComposeDir) == "/" {
+		writeError(w, http.StatusInternalServerError, "invalid Compose storage directory")
+		return
+	}
+	dir := filepath.Join(server.ComposeDir, input.Name)
+	if err := os.MkdirAll(server.ComposeDir, 0755); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := os.Mkdir(dir, 0755); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			writeError(w, http.StatusConflict, "Compose directory already exists; register its YAML file instead")
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	file := filepath.Join(dir, "compose.yaml")
+	if err := atomicWriteFile(file, []byte(input.ComposeContent), 0644); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	project := models.ComposeProject{Name: input.Name, BaseDir: dir, ComposeFile: file}
+	if input.EnvContent != "" {
+		project.EnvFile = filepath.Join(dir, ".env")
+		if err := atomicWriteFile(project.EnvFile, []byte(input.EnvContent), 0600); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err := s.store.Update(func(cfg *store.Config) error {
+		var err error
+		project.ID, err = store.NewID("c")
+		if err == nil {
+			cfg.ComposeProjects = append(cfg.ComposeProjects, project)
+		}
+		return err
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "Compose files were created but registration failed: "+err.Error())
+		return
+	}
+	s.auditFromCtx(r, "compose.create", project.Name, "ok")
+	writeJSON(w, http.StatusCreated, map[string]string{"id": project.ID})
 }
 
 func (s *Server) handleCreateCompose(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +541,21 @@ func mergeDiscoveredCompose(registered, discovered models.ComposeProject) models
 }
 
 func (s *Server) resolveCompose(ctx context.Context, id string) (composeResolution, error) {
+	if strings.HasPrefix(id, "disk:") {
+		cfg, err := s.store.Read()
+		if err != nil {
+			return composeResolution{}, &composeLookupError{status: http.StatusInternalServerError, message: "failed to read compose projects"}
+		}
+		server, err := cfg.ActiveDockerServer()
+		if err == nil {
+			for _, project := range scanComposeDirectory(server.ComposeDir) {
+				if project.ID == id {
+					return composeResolution{display: project, effective: project}, nil
+				}
+			}
+		}
+		return composeResolution{}, &composeLookupError{status: http.StatusNotFound, message: "not found"}
+	}
 	if name, ok := strings.CutPrefix(id, "auto:"); ok {
 		groups, err := s.discoverProjectsWithError(ctx)
 		if err != nil {
@@ -603,7 +754,7 @@ func (s *Server) handleComposePullPlan(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	if strings.HasPrefix(id, "auto:") {
+	if strings.HasPrefix(id, "auto:") || strings.HasPrefix(id, "disk:") {
 		writeError(w, http.StatusBadRequest, "自动发现的项目无法删除，使用「停止」将其下线")
 		return
 	}
@@ -1237,7 +1388,11 @@ func (s *Server) handleComposePutFileContent(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := atomicWriteFile(fullPath, data, 0644); err != nil {
+	mode := os.FileMode(0644)
+	if filepath.Base(fullPath) == ".env" {
+		mode = 0600
+	}
+	if err := atomicWriteFile(fullPath, data, mode); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1416,7 +1571,7 @@ func (c *composeLogConsumer) WriteErr() error {
 // more than one real project and a daemon discovery error when mutation would
 // be unsafe.
 func (s *Server) findCompose(ctx context.Context, id string) (models.ComposeProject, error) {
-	if strings.HasPrefix(id, "auto:") {
+	if strings.HasPrefix(id, "auto:") || strings.HasPrefix(id, "disk:") {
 		resolved, err := s.resolveCompose(ctx, id)
 		if err != nil {
 			return models.ComposeProject{}, err

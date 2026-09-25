@@ -44,7 +44,7 @@ func TestDockerSettingsStoreTLSPEMWithoutReturningIt(t *testing.T) {
 	if len(cfg.DockerServers) != 2 {
 		t.Fatalf("servers = %+v", cfg.DockerServers)
 	}
-	if got := cfg.DockerServers[1]; got.ID != created.ID || got.Host != "tcp://docker.example:2376" || got.KeyPEM != key {
+	if got := cfg.DockerServers[1]; got.ID != created.ID || got.Host != "tcp://docker.example:2376" || got.KeyPEM != key || got.ComposeDir != "/srv" {
 		t.Fatalf("stored Docker server = %+v", got)
 	}
 
@@ -68,7 +68,7 @@ func TestDockerSettingsStoreTLSPEMWithoutReturningIt(t *testing.T) {
 	}
 	if cfg, err = server.store.Read(); err != nil {
 		t.Fatal(err)
-	} else if cfg.ActiveDockerServerID != created.ID || cfg.DockerServers[1].KeyPEM != key {
+	} else if cfg.ActiveDockerServerID != created.ID || cfg.DockerServers[1].KeyPEM != key || cfg.DockerServers[1].ComposeDir != "/srv" {
 		t.Fatalf("selected Docker server = %+v", cfg)
 	}
 
@@ -86,6 +86,33 @@ func TestDockerSettingsStoreTLSPEMWithoutReturningIt(t *testing.T) {
 	handler.ServeHTTP(viewerResponse, viewer)
 	if viewerResponse.Code != http.StatusForbidden {
 		t.Fatalf("viewer GET status = %d, want 403", viewerResponse.Code)
+	}
+}
+
+func TestComposeStorageDirectoryIsSavedPerServerWithoutDockerReload(t *testing.T) {
+	server, handler, _, tokens := routeTestServer(t)
+	reloads := 0
+	server.reloadDocker = func() error { reloads++; return nil }
+	send := func(dir string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{
+			"name": "本机 Docker", "host": "", "tls": false, "compose_dir": dir,
+		})
+		req := httptest.NewRequest(http.MethodPut, "/api/settings/docker", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+tokens[models.RoleAdmin])
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+	if res := send("/srv/stacks"); res.Code != http.StatusNoContent {
+		t.Fatalf("save = %d %s", res.Code, res.Body.String())
+	}
+	if res := send("relative/path"); res.Code != http.StatusBadRequest {
+		t.Fatalf("invalid path = %d %s", res.Code, res.Body.String())
+	}
+	cfg, err := server.store.Read()
+	if err != nil || cfg.DockerServers[0].ComposeDir != "/srv/stacks" || reloads != 0 {
+		t.Fatalf("settings = %+v, reloads = %d, error = %v", cfg, reloads, err)
 	}
 }
 

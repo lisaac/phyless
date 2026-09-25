@@ -162,7 +162,7 @@ func (s *Server) handleSystemSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]int{
 		"containers": total, "running": running, "images": len(images),
-		"compose": len(mergeComposeProjects(cfg.ComposeProjects, groupComposeContainers(containers))),
+		"compose": len(mergeFilesystemCompose(mergeComposeProjects(cfg.ComposeProjects, groupComposeContainers(containers)), cfg)),
 		"volumes": len(volumes.Volumes), "networks": len(networks),
 	})
 }

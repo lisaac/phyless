@@ -8,7 +8,7 @@ export const LABEL_CONFIG_FILES = "com.docker.compose.project.config_files";
 // Prefer the server-resolved label name. File matching is only a fallback for
 // older responses; registered display names are not Docker project names.
 export function containersOf(p: ComposeProject, all: ContainerSummary[]): ContainerSummary[] {
-  const name = p.project_name || (p.discovered ? p.name : undefined);
+  const name = p.project_name || (p.discovered && p.discovery_source !== "directory" ? p.name : undefined);
   if (name) return all.filter((c) => c.Labels?.[LABEL_PROJECT] === name);
   const files = p.compose_file.split(",").map((file) => file.trim()).filter(Boolean);
   if (!files.length) return [];

@@ -149,7 +149,7 @@ func emptyConfig() *Config {
 		Users:                []models.User{},
 		ComposeProjects:      []models.ComposeProject{},
 		Registries:           []models.Registry{},
-		DockerServers:        []models.DockerServer{{ID: models.LocalDockerServerID, Name: "本机 Docker"}},
+		DockerServers:        []models.DockerServer{{ID: models.LocalDockerServerID, Name: "本机 Docker", ComposeDir: "/srv"}},
 		Templates:            []models.Template{},
 		ActiveDockerServerID: models.LocalDockerServerID,
 	}
@@ -184,6 +184,11 @@ func normalizeDockerServers(cfg *Config) {
 		})
 	}
 	cfg.LegacyDocker = nil
+	for i := range cfg.DockerServers {
+		if cfg.DockerServers[i].ComposeDir == "" {
+			cfg.DockerServers[i].ComposeDir = "/srv"
+		}
+	}
 	for _, server := range cfg.DockerServers {
 		if server.ID == cfg.ActiveDockerServerID {
 			return

@@ -52,7 +52,7 @@ sudo ./phyless-linux-amd64 -C /var/lib/phyless
 接下来可以：
 
 - 在「容器」页点 **创建**，粘贴一条 `docker run` 命令即可建容器；
-- 在「Compose」页 **注册** 已有的 `compose.yaml` 项目（需要先挂载目录，见 [管理宿主机上的 Compose 项目](#管理宿主机上的-compose-项目)）；
+- 在「Compose」页新建项目，或选择已有的 Compose YAML 文件注册（容器部署需要先挂载目录，见 [管理宿主机上的 Compose 项目](#管理宿主机上的-compose-项目)）；
 - 服务器拉不动镜像时，在拉取对话框里选一个代理（见 [使用代理拉取镜像](#使用代理拉取镜像)）。
 
 ## 为什么用 phyless
@@ -92,7 +92,7 @@ Docker 主机与版本、操作系统和内核、总内存、存储驱动与可�
 
 ### Compose
 
-- 注册宿主机上已有的项目；自动发现正在运行但未注册的项目。
+- 新建项目时在当前服务器的 Compose 存储目录（默认 `/srv`）下创建同名目录；也可选择已有 YAML 文件注册。自动发现存储目录中的项目及正在运行但未注册的项目。
 - 查看项目下的服务与容器状态。
 - 在线编辑 `compose.yaml` 及项目目录内的其他文件（上传、下载、重命名）。
 - 操作：Up、Down、Stop、Restart、Pause、Pull、Build、Update（拉取并重建）；输出以流式日志显示在任务抽屉中。
@@ -208,7 +208,7 @@ sudo systemctl enable --now phyless
 docker compose up -d --build
 ```
 
-[`compose.yaml`](compose.yaml) 用本地源码构建镜像，把 `./data` 挂载到 `/data`，并挂载 Docker Socket。更新代码后重新执行同一条命令即可。`data/` 已被 Git 和构建上下文忽略，不要提交。
+[`compose.yaml`](compose.yaml) 用本地源码构建镜像，把 `./data` 挂载到 `/data`，把宿主机 `/srv` 挂载到容器内同一路径，并挂载 Docker Socket。更新代码后重新执行同一条命令即可。`data/` 已被 Git 和构建上下文忽略，不要提交。
 
 ### 管理宿主机上的 Compose 项目
 
@@ -221,7 +221,7 @@ docker run -d \
   -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v phyless-data:/data \
-  -v /srv/compose:/srv/compose \
+  -v /srv:/srv \
   ghcr.io/lisaac/phyless:latest
 ```
 
@@ -231,10 +231,10 @@ Compose 部署时在 `compose.yaml` 中加同样的挂载：
 services:
   phyless:
     volumes:
-      - /srv/compose:/srv/compose
+      - /srv:/srv
 ```
 
-然后在「Compose」页用 `/srv/compose/<项目>` 注册项目。路径必须一致，否则相对路径的 `build:`、`volumes:`、`env_file` 会解析到错误位置。
+然后可在「Compose」页新建项目，生成 `/srv/<项目>/compose.yaml`，或选择已有 YAML 文件注册。可在「Docker 连接」中修改每台服务器的 Compose 存储目录；容器部署时需要把该目录以相同的绝对路径挂载进 phyless，否则相对路径的 `build:`、`volumes:`、`env_file` 会解析到错误位置。
 
 ### 管理远程 Docker 主机
 

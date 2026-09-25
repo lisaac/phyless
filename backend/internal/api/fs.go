@@ -73,7 +73,11 @@ func (s *Server) handleFsPutFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := atomicWriteFile(fullPath, data, 0644); err != nil {
+	mode := os.FileMode(0644)
+	if filepath.Base(fullPath) == ".env" {
+		mode = 0600
+	}
+	if err := atomicWriteFile(fullPath, data, mode); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

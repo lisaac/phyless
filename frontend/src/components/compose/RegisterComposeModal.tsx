@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, Show } from "solid-js";
+import { Component, createEffect, createSignal, on, onCleanup, Show } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { CodeEditor } from "../shared/CodeEditor";
@@ -9,187 +9,208 @@ import { fetchTextFile } from "../../api/textFile";
 import { toast } from "../shared/Toast";
 import type { FileEntry } from "../../types";
 
-const COMPOSE_NAMES = ["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"];
-
-// Name fallback when the user leaves 名称 empty: last path segment.
 export const dirBasename = (dir: string) => dir.replace(/\/+$/, "").split("/").pop() || dir;
+const parentDir = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
+const newNamePattern = /^[a-z0-9][a-z0-9_-]*$/;
 
-function joinPath(dir: string, name: string): string {
-  return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
-}
-
-// Registers a compose project: name + a path-autocompleted base directory +
-// a compose.yaml file. Two distinct intents share this one dialog, and
-// behavior branches on whether <base_dir>/<file name> already exists:
-//
-//  - Doesn't exist yet: this is "write a brand new project" (e.g. handed off
-//    from CreateContainerModal's multi-service detection with a draft
-//    compose.yaml already in the box) — submitting WRITES composeContent()
-//    to that path, then registers it.
-//  - Already exists: this is "register a project that's already sitting on
-//    disk" — submitting does NOT write anything by default, just points
-//    base_dir/compose_file at the existing file. "加载现有内容" lets the user
-//    peek at that file's real content first, purely for review. To actually
-//    save edits over an existing file the user must tick 覆盖 (overwrite());
-//    without it the write is skipped regardless of what's in the box.
-//
-// This used to auto-load an existing file's content into the box the moment
-// a matching path was typed, which silently clobbered whatever draft the
-// user had (including one handed off from CreateContainerModal). Then it
-// was flipped to reject registration outright when the file already
-// existed — which broke the legitimate "register something already
-// written" case. Branching on existence instead of erroring covers both.
 export const RegisterComposeModal: Component<{
   open: boolean;
   onClose: () => void;
   onRegistered: () => void;
   initialCompose?: string;
 }> = (props) => {
+  const [mode, setMode] = createSignal<"new" | "existing">("new");
   const [name, setName] = createSignal("");
-  const [baseDir, setBaseDir] = createSignal("");
+  const [composePath, setComposePath] = createSignal("");
   const [composeContent, setComposeContent] = createSignal("");
-  const [composeName, setComposeName] = createSignal("compose.yaml");
-  const [envFile, setEnvFile] = createSignal("");
-  const [overwrite, setOverwrite] = createSignal(false);
-  const [saving, setSaving] = createSignal(false);
+  const [envContent, setEnvContent] = createSignal("");
+  const [loadedPath, setLoadedPath] = createSignal("");
+  const [originalCompose, setOriginalCompose] = createSignal("");
+  const [originalEnv, setOriginalEnv] = createSignal("");
+  const [existingEnv, setExistingEnv] = createSignal(false);
+  const [composeTruncated, setComposeTruncated] = createSignal(false);
+  const [envTruncated, setEnvTruncated] = createSignal(false);
+  const [loadError, setLoadError] = createSignal("");
   const [loading, setLoading] = createSignal(false);
-  // Names present in baseDir() right now, for the live "already exists"
-  // hint — submit() re-checks fresh against the server rather than trusting
-  // this, since it can be stale by the time the user actually clicks 注册.
-  const [dirNames, setDirNames] = createSignal<Set<string>>(new Set());
+  const [saving, setSaving] = createSignal(false);
 
-  createEffect(() => {
-    if (!props.open) return;
-    setName("");
-    setBaseDir("");
-    setComposeContent(props.initialCompose ?? "");
-    setComposeName("compose.yaml");
-    setEnvFile("");
-    setOverwrite(false);
-    setDirNames(new Set<string>());
-  });
-
-  // Auto-detect an existing compose file name / .env path whenever the
-  // directory changes — content itself is never touched here.
-  createEffect(() => {
-    const dir = baseDir().trim();
-    if (!dir) { setDirNames(new Set<string>()); return; }
-    void (async () => {
-      let entries: FileEntry[];
-      try { entries = await get<FileEntry[]>(`/api/fs/list?path=${encodeURIComponent(dir)}`); }
-      catch { setDirNames(new Set<string>()); return; } // directory doesn't exist yet (or isn't readable)
-      const names = new Set(entries.map((e) => e.name));
-      setDirNames(names);
-      const found = COMPOSE_NAMES.find((n) => names.has(n));
-      if (found) setComposeName(found);
-      if (names.has(".env")) setEnvFile(joinPath(dir, ".env"));
-    })();
-  });
-
-  const fileExists = () => dirNames().has(composeName().trim() || "compose.yaml");
-
-  const loadExisting = async () => {
-    const dir = baseDir().trim();
-    const cName = composeName().trim() || "compose.yaml";
-    setLoading(true);
-    try {
-      const result = await fetchTextFile(`/api/fs/file?path=${encodeURIComponent(joinPath(dir, cName))}`);
-      if (result) setComposeContent(result.text);
-    } catch (e) { toast.error((e as Error).message); }
-    finally { setLoading(false); }
+  const chooseMode = (next: "new" | "existing") => {
+    setMode(next);
+    if (next === "new") {
+      setComposeContent(props.initialCompose ?? "");
+      setEnvContent("");
+      setComposeTruncated(false);
+      setEnvTruncated(false);
+    }
   };
 
+  createEffect(on(() => props.open, (open) => {
+    if (!open) return;
+    setMode("new");
+    setName("");
+    setComposePath("");
+    setComposeContent(props.initialCompose ?? "");
+    setEnvContent("");
+    setLoadedPath("");
+    setLoadError("");
+  }));
+
+  createEffect(on(() => [props.open, mode(), composePath()] as const, ([open, selectedMode, path]) => {
+    if (!open || selectedMode !== "existing") return;
+    setLoadedPath("");
+    setLoadError("");
+    setComposeContent("");
+    setEnvContent("");
+    setLoading(false);
+    if (!/\.ya?ml$/i.test(path)) return;
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const dir = parentDir(path);
+        const entries = await get<FileEntry[]>("/api/fs/list?path=" + encodeURIComponent(dir), controller.signal);
+        if (!entries.some((entry) => !entry.is_dir && entry.name === dirBasename(path))) {
+          throw new Error("请选择已有的 YAML 文件");
+        }
+        const envPath = (dir === "/" ? "" : dir) + "/.env";
+        const hasEnv = entries.some((entry) => !entry.is_dir && entry.name === ".env");
+        const [compose, env] = await Promise.all([
+          fetchTextFile("/api/fs/file?path=" + encodeURIComponent(path), controller.signal),
+          hasEnv ? fetchTextFile("/api/fs/file?path=" + encodeURIComponent(envPath), controller.signal) : Promise.resolve(null),
+        ]);
+        if (controller.signal.aborted || !compose) return;
+        setComposeContent(compose.text);
+        setOriginalCompose(compose.text);
+        setComposeTruncated(compose.truncated);
+        setEnvContent(env?.text ?? "");
+        setOriginalEnv(env?.text ?? "");
+        setEnvTruncated(env?.truncated ?? false);
+        setExistingEnv(hasEnv);
+        setLoadedPath(path);
+      } catch (error) {
+        if (!controller.signal.aborted) setLoadError((error as Error).message);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 250);
+    onCleanup(() => { clearTimeout(timer); controller.abort(); });
+  }));
+
   const submit = async () => {
-    const dir = baseDir().trim();
-    const cName = composeName().trim() || "compose.yaml";
-    if (!dir) { toast.error("请填写路径"); return; }
-    const n = name().trim() || dirBasename(dir);
+    const creating = mode() === "new";
+    const path = composePath().trim();
+    const dir = parentDir(path);
+    const projectName = name().trim() || (creating ? "" : dirBasename(dir));
+    if (creating && !newNamePattern.test(projectName)) {
+      toast.error("名称需以小写字母或数字开头，只能包含小写字母、数字、_ 和 -");
+      return;
+    }
+    if (creating && !composeContent().trim()) { toast.error("请填写 compose.yaml"); return; }
+    if (!creating && loadedPath() !== path) { toast.error("请先选择并加载已有 YAML 文件"); return; }
+    if (!creating && ((composeTruncated() && composeContent() !== originalCompose()) ||
+      (envTruncated() && envContent() !== originalEnv()))) {
+      toast.error("文件过大，无法保存截断后的内容");
+      return;
+    }
+
     setSaving(true);
     try {
-      // Fresh check right before writing — dirNames() can be stale (typed
-      // the path, then changed the filename, or the directory changed on
-      // disk in between). If the file already exists, this registers it
-      // as-is and skips the write entirely — never overwrite something
-      // already on disk with whatever happens to be in the box.
-      let targetExists = false;
-      try {
-        const entries = await get<FileEntry[]>(`/api/fs/list?path=${encodeURIComponent(dir)}`);
-        targetExists = entries.some((e) => e.name === cName);
-      } catch { /* directory doesn't exist yet — nothing to conflict with, MkdirAll below creates it */ }
-
-      const composeFilePath = joinPath(dir, cName);
-      if (!targetExists || overwrite()) {
-        // /api/fs/file's PUT handler (backend/internal/api/fs.go) MkdirAlls the
-        // file's parent directory before writing, so a base_dir that
-        // doesn't exist yet gets created as a side effect of writing here.
-        await queued(`写入 ${composeFilePath}`, "PUT", `/api/fs/file?path=${encodeURIComponent(composeFilePath)}`, composeContent());
+      if (creating) {
+        await queued("新建 Compose " + projectName, "POST", "/api/compose/new", {
+          name: projectName, compose_content: composeContent(), env_content: envContent(),
+        });
+      } else {
+        const entries = await get<FileEntry[]>("/api/fs/list?path=" + encodeURIComponent(dir));
+        if (!entries.some((entry) => !entry.is_dir && entry.name === dirBasename(path))) {
+          throw new Error("所选 Compose 文件已不存在");
+        }
+        // Existing files stay untouched unless their editor was changed.
+        if (composeContent() !== originalCompose()) {
+          const latest = await fetchTextFile("/api/fs/file?path=" + encodeURIComponent(path));
+          if (!latest || latest.text !== originalCompose()) throw new Error("Compose 文件已在其他位置修改，请重新选择后再保存");
+          await queued("保存 " + path, "PUT", "/api/fs/file?path=" + encodeURIComponent(path), composeContent());
+        }
+        const envPath = (dir === "/" ? "" : dir) + "/.env";
+        if (envContent() !== originalEnv()) {
+          const envStillExists = entries.some((entry) => !entry.is_dir && entry.name === ".env");
+          if (envStillExists !== existingEnv()) throw new Error(".env 文件已在其他位置修改，请重新选择后再保存");
+          if (envStillExists) {
+            const latest = await fetchTextFile("/api/fs/file?path=" + encodeURIComponent(envPath));
+            if (!latest || latest.text !== originalEnv()) throw new Error(".env 文件已在其他位置修改，请重新选择后再保存");
+          }
+          await queued("保存 " + envPath, "PUT", "/api/fs/file?path=" + encodeURIComponent(envPath), envContent());
+        }
+        await queued("注册 Compose " + projectName, "POST", "/api/compose", {
+          name: projectName, base_dir: dir, compose_file: path,
+          env_file: existingEnv() || envContent() ? envPath : "",
+        });
       }
-      await queued(`注册 Compose ${n}`, "POST", "/api/compose", {
-        name: n,
-        base_dir: dir,
-        compose_file: composeFilePath,
-        env_file: envFile().trim(),
-      });
-      toast.success("已注册");
+      toast.success(creating ? "已新建并注册" : "已注册");
       props.onRegistered();
-    } catch (e) { toast.error((e as Error).message); }
+    } catch (error) { toast.error((error as Error).message); }
     finally { setSaving(false); }
   };
 
-  const fieldCls = "w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500";
+  const inputClass = "w-full border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500";
 
   return (
     <Modal open={props.open} onClose={props.onClose} title="注册 Compose 项目" wide>
-      <div class="flex flex-col gap-3">
-        <label class="block">
-          <span class="mb-1 block text-xs text-zinc-400">名称</span>
-          <input class={fieldCls} placeholder="留空则使用目录名" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+      <div class="mb-4 flex flex-wrap gap-5 border-b border-zinc-800 pb-4 text-sm">
+        <label class="flex cursor-pointer items-center gap-2">
+          <input type="radio" name="compose-mode" checked={mode() === "new"} onChange={() => chooseMode("new")} />
+          新建 Compose
         </label>
-        <label class="block">
-          <span class="mb-1 block text-xs text-zinc-400">路径</span>
-          <PathPicker value={baseDir()} onChange={setBaseDir} placeholder="/opt/stacks/app" />
-        </label>
-        {/* Not a <label> — a <label> wrapping both the filename input AND the
-            code editor below meant clicking anywhere in the editor (native
-            label→control focus behavior) redirected focus straight back to
-            the filename input, making the editor unclickable. */}
-        <div class="block">
-          <div class="mb-1 flex items-center justify-between gap-2">
-            <span class="text-xs text-zinc-400">compose.yaml</span>
-            <div class="flex items-center gap-1.5">
-              <span class="text-xs text-zinc-500">文件名</span>
-              <input
-                class={`${fieldCls} w-40`}
-                value={composeName()}
-                onInput={(e) => setComposeName(e.currentTarget.value)}
-                placeholder="compose.yaml"
-              />
-            </div>
-          </div>
-          <div class="h-64 border border-zinc-800">
-            <CodeEditor value={composeContent()} onChange={setComposeContent} language="yaml" />
-          </div>
-          <div class="mt-1 flex items-center justify-between gap-2">
-            <Show
-              when={fileExists()}
-              fallback={<p class="text-xs text-zinc-500">路径下不存在则会新建此文件</p>}
-            >
-              <label class="flex cursor-pointer items-center gap-1.5 text-xs text-amber-400">
-                <input type="checkbox" checked={overwrite()} onChange={(e) => setOverwrite(e.currentTarget.checked)} />
-                {overwrite() ? "将用下方内容覆盖现有文件" : "已检测到现有文件，默认不写入下方内容（勾选可覆盖）"}
-              </label>
-              <Button disabled={loading()} onClick={() => void loadExisting()}>加载现有内容</Button>
-            </Show>
-          </div>
-        </div>
-        <label class="block">
-          <span class="mb-1 block text-xs text-zinc-400">env 文件路径（可选）</span>
-          <input class={fieldCls} placeholder="/opt/stacks/app/.env" value={envFile()} onInput={(e) => setEnvFile(e.currentTarget.value)} />
+        <label class="flex cursor-pointer items-center gap-2">
+          <input type="radio" name="compose-mode" checked={mode() === "existing"} onChange={() => chooseMode("existing")} />
+          注册已有 Compose
         </label>
       </div>
-      <div class="mt-4 flex justify-end gap-2">
+      <div class="mb-4 grid gap-3 md:grid-cols-2">
+        <label class="block text-xs text-zinc-400">
+          名称 {mode() === "existing" && <span class="text-zinc-500">（可选，默认使用目录名）</span>}
+          <input class={"mt-1 " + inputClass} value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder={mode() === "new" ? "例如 my-app" : "留空使用目录名"} />
+        </label>
+        <Show when={mode() === "existing"} fallback={
+          <div class="self-end pb-2 text-xs text-zinc-500">
+            将在当前服务器的 Compose 存储目录中新建同名文件夹。
+          </div>
+        }>
+          <label class="block text-xs text-zinc-400">
+            已有 Compose YAML 文件
+            <div class="mt-1"><PathPicker value={composePath()} onChange={setComposePath} files placeholder="/srv/my-app/compose.yaml" /></div>
+          </label>
+        </Show>
+      </div>
+      <Show when={mode() === "existing" && (loading() || loadError())}>
+        <p class={"mb-3 text-xs " + (loadError() ? "text-red-400" : "text-zinc-500")}>
+          {loadError() || "正在读取项目文件…"}
+        </p>
+      </Show>
+      <div class="grid gap-4 md:grid-cols-2">
+        <section class="min-w-0">
+          <div class="mb-2 flex items-center justify-between text-xs text-zinc-400">
+            <span>{mode() === "new" ? "compose.yaml" : dirBasename(composePath()) || "Compose YAML"}</span>
+            <Show when={composeTruncated()}><span class="text-amber-400">内容已截断</span></Show>
+          </div>
+          <div class="h-64 md:h-[22rem]"><CodeEditor value={composeContent()} onChange={setComposeContent} language="yaml" /></div>
+        </section>
+        <section class="min-w-0">
+          <div class="mb-2 flex items-center justify-between text-xs text-zinc-400">
+            <span>.env</span>
+            <Show when={envTruncated()}><span class="text-amber-400">内容已截断</span></Show>
+          </div>
+          <div class="h-64 md:h-[22rem]"><CodeEditor value={envContent()} onChange={setEnvContent} language="text" /></div>
+        </section>
+      </div>
+      <p class="mt-2 text-xs text-zinc-500">
+        {mode() === "new" ? "留空 .env 则不会创建环境文件。" : "仅保存修改过的文件；没有 .env 时，填写内容会创建它。"}
+      </p>
+      <div class="mt-5 flex justify-end gap-2">
         <Button onClick={props.onClose}>取消</Button>
-        <Button variant="primary" disabled={saving()} onClick={() => void submit()}>注册</Button>
+        <Button variant="primary" disabled={saving() || loading() || (mode() === "existing" && loadedPath() !== composePath().trim())} onClick={() => void submit()}>
+          {mode() === "new" ? "新建并注册" : "注册已有项目"}
+        </Button>
       </div>
     </Modal>
   );

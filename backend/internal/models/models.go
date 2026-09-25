@@ -61,8 +61,9 @@ const LocalDockerServerID = "local"
 // DockerServer is one selectable Docker daemon. Embedding keeps the PEM text
 // fields flat in config.json while API responses can omit them explicitly.
 type DockerServer struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ComposeDir string `json:"compose_dir,omitempty"`
 	DockerEndpoint
 }
 

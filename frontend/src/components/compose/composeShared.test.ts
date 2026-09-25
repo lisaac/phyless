@@ -23,6 +23,10 @@ describe("Compose container matching", () => {
     expect(containersOf({ ...project, compose_file: "/stack/compose.yaml,/stack/different.yaml" }, containers)).toEqual([]);
     expect(containersOf({ ...project, compose_file: "" }, containers)).toEqual([]);
   });
+
+  it("does not attach same-name containers to a file discovered on disk", () => {
+    expect(containersOf({ ...project, name: "deployed", compose_file: "/other/compose.yaml", discovered: true, discovery_source: "directory" }, containers)).toEqual([]);
+  });
 });
 
 describe("servicesHaveBuild", () => {

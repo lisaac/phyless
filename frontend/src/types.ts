@@ -67,6 +67,7 @@ export interface ComposeProject {
   // Present on list responses: merged with projects discovered live from
   // each container's com.docker.compose.project label.
   discovered?: boolean;
+  discovery_source?: "container" | "directory";
   running?: number;
   total?: number;
   // List responses only: compose file is readable and a service declares build.
@@ -84,6 +85,7 @@ export interface DockerServer {
   name: string;
   host: string;
   tls: boolean;
+  compose_dir: string;
   has_ca_pem: boolean;
   has_cert_pem: boolean;
   has_key_pem: boolean;

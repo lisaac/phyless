@@ -139,6 +139,104 @@ func TestListComposePropagatesDiscoveryFailure(t *testing.T) {
 	}
 }
 
+func TestComposeStorageCreatesProjectWithoutOverwriting(t *testing.T) {
+	server, handler, _, tokens := routeTestServer(t)
+	root := filepath.Join(t.TempDir(), "stacks")
+	if err := server.store.Update(func(cfg *store.Config) error {
+		cfg.DockerServers[0].ComposeDir = root
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	send := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+tokens[models.RoleOperator])
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+	bodyBytes, _ := json.Marshal(map[string]string{
+		"name": "my-app", "compose_content": "services:\n  web:\n    image: nginx\n", "env_content": "TOKEN=secret\n",
+	})
+	body := string(bodyBytes)
+	if res := send(http.MethodPost, "/api/compose/new", body); res.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", res.Code, res.Body.String())
+	}
+	dir := filepath.Join(root, "my-app")
+	compose, err := os.ReadFile(filepath.Join(dir, "compose.yaml"))
+	if err != nil || string(compose) != "services:\n  web:\n    image: nginx\n" {
+		t.Fatalf("compose = %q, %v", compose, err)
+	}
+	env, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil || string(env) != "TOKEN=secret\n" {
+		t.Fatalf("env = %q, %v", env, err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, ".env")); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf(".env mode = %v, %v", info, err)
+	}
+	if res := send(http.MethodPost, "/api/compose/new", body); res.Code != http.StatusConflict {
+		t.Fatalf("duplicate create = %d %s", res.Code, res.Body.String())
+	}
+	invalidBytes, _ := json.Marshal(map[string]string{"name": "../bad", "compose_content": "services: {}"})
+	if res := send(http.MethodPost, "/api/compose/new", string(invalidBytes)); res.Code != http.StatusBadRequest {
+		t.Fatalf("invalid name = %d %s", res.Code, res.Body.String())
+	}
+	cfg, err := server.store.Read()
+	if err != nil || len(cfg.ComposeProjects) != 1 || cfg.ComposeProjects[0].BaseDir != dir {
+		t.Fatalf("registered project = %+v, %v", cfg, err)
+	}
+}
+
+func TestComposeDirectoryDiscoveryDeduplicatesRegisteredFiles(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"registered", "found"} {
+		dir := filepath.Join(root, name)
+		if err := os.Mkdir(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services: {}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registered := models.ComposeProject{
+		ID: "saved", Name: "registered", BaseDir: filepath.Join(root, "registered"),
+		ComposeFile: filepath.Join(root, "registered", "compose.yaml"),
+	}
+	server := newComposeDiscoveryServer(t, registered, nil)
+	if err := server.store.Update(func(cfg *store.Config) error {
+		cfg.DockerServers[0].ComposeDir = root
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	server.handleListCompose(res, httptest.NewRequest(http.MethodGet, "/api/compose", nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", res.Code, res.Body.String())
+	}
+	var projects []ComposeInfo
+	if err := json.Unmarshal(res.Body.Bytes(), &projects); err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("projects = %+v", projects)
+	}
+	var found ComposeInfo
+	for _, project := range projects {
+		if project.Name == "found" {
+			found = project
+		}
+	}
+	if !found.Discovered || found.DiscoverySource != "directory" || !strings.HasPrefix(found.ID, "disk:") || strings.Contains(found.ID, "/") {
+		t.Fatalf("discovered project = %+v", found)
+	}
+	resolved, err := server.resolveCompose(context.Background(), found.ID)
+	if err != nil || resolved.effective.ComposeFile != found.ComposeFile {
+		t.Fatalf("resolved = %+v, %v", resolved, err)
+	}
+}
+
 func TestComposeDetailIncludesDisabledServicesAndProjectName(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	dir := t.TempDir()

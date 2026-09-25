@@ -22,6 +22,9 @@ func TestReadWriteRoundTrip(t *testing.T) {
 	if cfg.Users == nil {
 		t.Fatal("expected non-nil Users slice")
 	}
+	if cfg.DockerServers[0].ComposeDir != "/srv" {
+		t.Fatalf("default Compose storage directory = %q", cfg.DockerServers[0].ComposeDir)
+	}
 
 	cfg.Users = append(cfg.Users, models.User{ID: "1", Username: "admin", Role: models.RoleAdmin})
 	if err := s.Write(cfg); err != nil {
@@ -39,6 +42,17 @@ func TestReadWriteRoundTrip(t *testing.T) {
 	// Verify file exists on disk
 	if _, err := os.Stat(f); err != nil {
 		t.Fatal("config file not created")
+	}
+}
+
+func TestLegacyDockerServerDefaultsComposeDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"docker_servers":[{"id":"local","name":"旧服务器"}],"active_docker_server_id":"local"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.New(path).Read()
+	if err != nil || cfg.DockerServers[0].ComposeDir != "/srv" {
+		t.Fatalf("legacy Compose storage directory = %+v, %v", cfg, err)
 	}
 }
 

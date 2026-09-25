@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"phyless/backend/internal/audit"
 )
 
 func TestReadBoundedRejectsOverflow(t *testing.T) {
@@ -82,6 +84,17 @@ func TestFsPutFileOverflowLeavesOldFile(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != old {
 		t.Fatalf("old file changed: %q err=%v", got, err)
+	}
+}
+
+func TestFsPutNewEnvFileUsesPrivateMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	r := httptest.NewRequest("PUT", "/api/fs/file?path="+path, strings.NewReader("TOKEN=secret\n"))
+	w := httptest.NewRecorder()
+	(&Server{audit: audit.New(filepath.Join(t.TempDir(), "audit.log"))}).handleFsPutFile(w, r)
+	info, err := os.Stat(path)
+	if w.Code != 204 || err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("write status=%d mode=%v err=%v", w.Code, info, err)
 	}
 }
 
