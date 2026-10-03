@@ -136,6 +136,17 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
         <div class="mt-2 text-[10px] text-zinc-600" title="构建时间 · commit">
           {__BUILD_TIME__} · {__GIT_HASH__}
         </div>
+        <a
+          href="https://github.com/lisaac/phyless"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="mt-2 inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+        >
+          GitHub
+          <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 3h6v6M10 14 21 3M21 14v7H3V3h7" />
+          </svg>
+        </a>
       </div>
     </nav>
   );
