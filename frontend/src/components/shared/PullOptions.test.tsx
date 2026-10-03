@@ -82,6 +82,19 @@ describe("pull options", () => {
     expect(pull.value.downloadMode).toBe("browser");
   });
 
+  it("exposes shared Worker settings for search without changing the pull mode or payload", () => {
+    const pull = createPullOptions();
+    render(() => <PullOptions options={pull} allowBrowser showBrowserSettings />);
+    const worker = screen.getByPlaceholderText("https://your-worker.workers.dev");
+    fireEvent.input(worker, { target: { value: "https://worker.example" } });
+    fireEvent.blur(worker);
+    expect(pull.value.workerUrl).toBe("https://worker.example");
+    expect(pull.value.downloadMode).toBe("proxy");
+    expect(pull.value.useProxy).toBe(false);
+    expect(pull.payload()).toEqual({});
+    expect(screen.queryByText(/限制：仅支持 Linux/)).toBeNull();
+  });
+
   it("persists credentials entered after opting in and reloads them on reset", () => {
     saveWorkerUrl("https://worker.example");
     const pull = createPullOptions();

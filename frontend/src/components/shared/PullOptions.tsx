@@ -260,6 +260,8 @@ export const PullOptions: Component<{
   // Expose the browser-download mode. Only entry points that actually handle a
   // browser-pull task (image pull, compose) set this; others stay proxy-only.
   allowBrowser?: boolean;
+  // Remote search uses the same Worker/account without changing the pull mode.
+  showBrowserSettings?: boolean;
 }> = (props) => {
   const [registries] = createResource(() => get<Registry[]>("/api/registries"));
   const platformListId = createUniqueId();
@@ -354,7 +356,7 @@ export const PullOptions: Component<{
         </Show>
       </div>
 
-      <Show when={browserMode()}>
+      <Show when={browserMode() || props.showBrowserSettings}>
         <div class="space-y-3">
           <div>
             <span class="mb-1 block text-xs text-zinc-500">CF worker 地址</span>
@@ -403,7 +405,9 @@ export const PullOptions: Component<{
             记住凭据（仅此浏览器，明文存于 localStorage，XSS 可读取）
           </label>
           <p class="text-[11px] text-zinc-600">凭据按 CF worker 地址保存；切换地址会载入对应凭据，新地址保持为空。凭据不会发送给 phyless 服务端。</p>
-          <p class="text-[11px] text-zinc-600">限制：仅支持 Linux 的 tag 镜像；digest、foreign layer 不支持。Compose Build 仅预拉可静态解析的 Dockerfile FROM。</p>
+          <Show when={browserMode()}>
+            <p class="text-[11px] text-zinc-600">限制：仅支持 Linux 的 tag 镜像；digest、foreign layer 不支持。Compose Build 仅预拉可静态解析的 Dockerfile FROM。</p>
+          </Show>
         </div>
       </Show>
 

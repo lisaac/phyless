@@ -7,6 +7,7 @@ import { Button } from "../shared/Button";
 import { confirmAction } from "../shared/ConfirmModal";
 import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
+import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { FileBrowser } from "../shared/FileBrowser";
@@ -110,6 +111,7 @@ export const ImageListPage: Component = () => {
   const view = createListView(store.items, (img) => `${(img.RepoTags ?? []).join(" ")} ${img.Id}`);
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
+  const [showRemoteSearch, setShowRemoteSearch] = createSignal(false);
   const [showRemoteImport, setShowRemoteImport] = createSignal(false);
   const pull = createPullOptions();
   const [remoteImportURL, setRemoteImportURL] = createSignal("");
@@ -134,7 +136,7 @@ export const ImageListPage: Component = () => {
   onCleanup(() => store.stopPolling());
   onCleanup(() => download.cancel());
 
-  const closePullInput = () => { setShowPullInput(false); pull.reset(); };
+  const closePullInput = () => { setShowPullInput(false); setShowRemoteSearch(false); pull.reset(); };
   const closeRemoteImport = () => {
     setShowRemoteImport(false); setRemoteImportURL(""); setRemoteImportRef(""); setRemoteImportFile(undefined);
   };
@@ -511,7 +513,18 @@ export const ImageListPage: Component = () => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={(el: any) => setTimeout(() => el?.focus(), 50)}
         />
-        <PullOptions options={pull} showPlatform allowBrowser />
+        <button type="button" class="mb-3 text-xs text-indigo-400 hover:text-indigo-300" aria-expanded={showRemoteSearch()} onClick={() => setShowRemoteSearch((value) => !value)}>
+          {showRemoteSearch() ? "收起远程搜索" : "搜索远程镜像"}
+        </button>
+        <Show when={showRemoteSearch()}>
+          <RemoteImageSearch
+            initialRef={pullRef()}
+            workerUrl={pull.value.workerUrl}
+            creds={pull.value.creds}
+            onSelect={(ref) => { setPullRef(ref); setShowRemoteSearch(false); }}
+          />
+        </Show>
+        <PullOptions options={pull} showPlatform allowBrowser showBrowserSettings={showRemoteSearch()} />
         <div class="flex justify-end gap-2">
           <Button onClick={closePullInput}>取消</Button>
           <Button variant="primary" onClick={startPull}>拉取</Button>

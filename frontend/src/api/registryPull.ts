@@ -175,7 +175,7 @@ export async function registryResponseError(resp: Response, action: string): Pro
   return new Error(`${action}失败（${resp.status}）${suffix}`);
 }
 
-async function authorizedGet(
+export async function authorizedGet(
   workerUrl: string,
   target: string,
   accept: string,
@@ -237,7 +237,7 @@ export async function authHeaderFromChallenge(workerUrl: string, wwwAuthenticate
   return "Bearer " + (await fetchToken(workerUrl, challenge, creds, signal));
 }
 
-async function readBounded(resp: Response, limit: number): Promise<Uint8Array> {
+export async function readBounded(resp: Response, limit: number): Promise<Uint8Array> {
   const len = resp.headers.get("Content-Length");
   if (len && Number(len) > limit) {
     await resp.body?.cancel();
