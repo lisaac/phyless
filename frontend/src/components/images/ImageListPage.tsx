@@ -11,6 +11,8 @@ import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { FileBrowser } from "../shared/FileBrowser";
+import { TarTextViewer } from "../shared/TarTextViewer";
+import { confirmOpenText } from "../../api/textFile";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { get, getToken } from "../../api/client";
@@ -135,6 +137,11 @@ export const ImageListPage: Component = () => {
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
   onCleanup(() => download.cancel());
+  const [viewFile, setViewFile] = createSignal<{ id: string; path: string } | null>(null);
+  const viewUrl = () => {
+    const v = viewFile();
+    return v ? `/api/images/files/download?id=${encodeURIComponent(v.id)}&path=${encodeURIComponent(v.path)}&token=${encodeURIComponent(getToken() ?? "")}` : null;
+  };
 
   const closePullInput = () => { setShowPullInput(false); setShowRemoteSearch(false); pull.reset(); };
   const closeRemoteImport = () => {
@@ -574,11 +581,13 @@ export const ImageListPage: Component = () => {
                 `/api/images/files/download?id=${encodeURIComponent(img().Id)}&path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
                 `${name}.tar`,
               )}
+              onOpenFile={async (path) => { if (await confirmOpenText(path)) setViewFile({ id: img().Id, path }); }}
             />
           )}
         </Show>
       </Modal>
       <DownloadStatusWidget task={download} />
+      <TarTextViewer url={viewUrl()} path={viewFile()?.path ?? ""} onClose={() => setViewFile(null)} />
 
       <CreateContainerModal
         open={!!createFrom()}

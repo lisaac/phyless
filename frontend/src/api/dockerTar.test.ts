@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildDockerLoadTar, fullImageName, tarHeader, type BuildInput } from "./dockerTar";
+import { buildDockerLoadTar, fullImageName, readTarFirstFile, tarHeader, type BuildInput } from "./dockerTar";
+import { decodeText } from "./textFile";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -170,5 +171,67 @@ describe("buildDockerLoadTar", () => {
       openLayer: async () => streamOf(enc.encode("toolong")),
     });
     await expect(collect(buildDockerLoadTar(input))).rejects.toThrow(/longer than declared/);
+  });
+});
+
+// ── readTarFirstFile ──
+const pad = (n: number) => new Uint8Array((512 - (n % 512)) % 512);
+
+// Splits the archive into small chunks so entries straddle chunk boundaries.
+function stream(parts: Uint8Array[], chunk = 100): ReadableStream<Uint8Array> {
+  const all = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
+  let o = 0;
+  for (const p of parts) { all.set(p, o); o += p.byteLength; }
+  let i = 0;
+  return new ReadableStream({
+    pull(c) { if (i >= all.byteLength) c.close(); else { c.enqueue(all.slice(i, i + chunk)); i += chunk; } },
+  });
+}
+
+const entry = (name: string, body: Uint8Array, type = "0") => [tarHeader(name, body.byteLength, type), body, pad(body.byteLength)];
+
+describe("readTarFirstFile", () => {
+  it("reads a plain file", async () => {
+    const f = await readTarFirstFile(stream([...entry("a.txt", enc.encode("hello")), new Uint8Array(1024)]), 1024);
+    expect(f.kind).toBe("file");
+    if (f.kind === "file") expect(new TextDecoder().decode(f.bytes)).toBe("hello");
+  });
+
+  it("skips a PAX header", async () => {
+    const rec = "20 path=long/name.c\n";
+    const f = await readTarFirstFile(stream([...entry("PaxHeader", enc.encode(rec), "x"), ...entry("x.c", enc.encode("int x;"))]), 1024);
+    expect(f.kind === "file" && new TextDecoder().decode(f.bytes)).toBe("int x;");
+  });
+
+  it("truncates at the limit and cancels the rest", async () => {
+    const body = enc.encode("x".repeat(5000));
+    let cancelled = false;
+    const s = stream(entry("big", body));
+    const wrapped = new ReadableStream<Uint8Array>({
+      start() {},
+      async pull(c) { const r = s.getReader(); const { value, done } = await r.read(); r.releaseLock(); done ? c.close() : c.enqueue(value); },
+      cancel() { cancelled = true; },
+    });
+    const f = await readTarFirstFile(wrapped, 1000);
+    expect(f.kind === "file" && [f.bytes.byteLength, f.size, f.truncated]).toEqual([1000, 5000, true]);
+    expect(cancelled).toBe(true);
+  });
+
+  it("reports a symlink target", async () => {
+    const h = tarHeader("ln", 0, "2");
+    h.set(enc.encode("/etc/real"), 157);
+    const f = await readTarFirstFile(stream([h, new Uint8Array(1024)]), 1024);
+    expect(f).toEqual({ kind: "link", target: "/etc/real" });
+  });
+});
+
+describe("decodeText", () => {
+  it("flags NUL bytes and invalid UTF-8 as binary", () => {
+    expect(decodeText(new Uint8Array([0x41, 0, 0x42]), 3, false).kind).toBe("binary");
+    expect(decodeText(new Uint8Array([0xff, 0xfe]), 2, false).kind).toBe("binary");
+  });
+  it("tolerates a multibyte char cut by truncation", () => {
+    const b = enc.encode("中文").subarray(0, 4);
+    expect(decodeText(b, 6, true)).toMatchObject({ kind: "text", text: "中" });
   });
 });

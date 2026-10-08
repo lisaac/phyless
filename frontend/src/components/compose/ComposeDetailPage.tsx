@@ -2,7 +2,7 @@ import { Component, createSignal, createResource, createEffect, onMount, onClean
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { get, imageInspectUrl, isApiNotFound } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
-import { looksTextFile, fetchTextFile } from "../../api/textFile";
+import { confirmOpenText, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { createResourceStore } from "../../stores/resource";
 import { canSaveFile, createLatestFileRequest } from "../../stores/latestFile";
@@ -195,7 +195,7 @@ export const ComposeDetailPage: Component = () => {
   });
 
   const openFile = async (path: string) => {
-    if (!looksTextFile(path) && !await confirmAction(`${path.split("/").pop()} 看起来不是文本文件，仍要打开？`, { title: "打开非文本文件", confirmText: "继续打开" })) return;
+    if (!await confirmOpenText(path)) return;
     setSelectedFile(path);
   };
 

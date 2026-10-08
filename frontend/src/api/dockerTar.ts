@@ -206,3 +206,96 @@ function writeOctal(target: Uint8Array, offset: number, length: number, value: n
   writeStr(target, offset, length - 1, raw);
   target[offset + length - 1] = 0;
 }
+
+// ── Reading: first real entry of a `docker cp`-style tar ───────────────────
+
+export type TarFile =
+  | { kind: "file"; bytes: Uint8Array; size: number; truncated: boolean }
+  | { kind: "link"; target: string }
+  | { kind: "dir" };
+
+const dec = new TextDecoder();
+
+// Pulls exactly n bytes off a stream without concatenating every chunk into
+// one growing buffer — consumed chunks are dropped as soon as they're copied.
+class ByteQueue {
+  private chunks: Uint8Array[] = [];
+  private len = 0;
+  constructor(private reader: ReadableStreamDefaultReader<Uint8Array>) {}
+  async take(n: number): Promise<Uint8Array> {
+    while (this.len < n) {
+      const { value, done } = await this.reader.read();
+      if (done) throw new Error("tar 数据不完整");
+      this.chunks.push(value);
+      this.len += value.byteLength;
+    }
+    const out = new Uint8Array(n);
+    let o = 0;
+    while (o < n) {
+      const c = this.chunks[0];
+      const k = Math.min(c.byteLength, n - o);
+      out.set(c.subarray(0, k), o);
+      o += k;
+      if (k === c.byteLength) this.chunks.shift();
+      else this.chunks[0] = c.subarray(k);
+    }
+    this.len -= n;
+    return out;
+  }
+}
+
+function cstr(h: Uint8Array, off: number, len: number): string {
+  const end = h.subarray(off, off + len).indexOf(0);
+  return dec.decode(h.subarray(off, end < 0 ? off + len : off + end));
+}
+
+function tarSize(h: Uint8Array): number {
+  // GNU base-256 for sizes past the 8GB octal limit.
+  if (h[124] & 0x80) {
+    let n = 0;
+    for (let i = 125; i < 136; i++) n = n * 256 + h[i];
+    return n;
+  }
+  return parseInt(cstr(h, 124, 12).trim() || "0", 8);
+}
+
+// PAX records: "<len> key=value\n" repeated.
+function paxRecords(body: Uint8Array): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of dec.decode(body).split("\n")) {
+    const m = /^\d+ ([^=]+)=(.*)$/.exec(line);
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
+
+const pad512 = (n: number) => (512 - (n % 512)) % 512;
+
+// Reads the first real entry (skipping PAX/GNU extension headers), keeping at
+// most `limit` bytes of its body. Always cancels the stream before returning
+// so the rest of a large file never crosses the network or sits in memory.
+export async function readTarFirstFile(src: ReadableStream<Uint8Array>, limit: number): Promise<TarFile> {
+  const reader = src.getReader();
+  const q = new ByteQueue(reader);
+  try {
+    let pax: Record<string, string> = {};
+    for (;;) {
+      const h = await q.take(512);
+      if (h.every((b) => b === 0)) throw new Error("tar 为空");
+      const type = String.fromCharCode(h[156] || 0x30);
+      const size = pax.size != null ? Number(pax.size) : tarSize(h);
+      if (type === "x" || type === "g" || type === "L" || type === "K") {
+        const body = await q.take(size + pad512(size));
+        if (type === "x") pax = paxRecords(body.subarray(0, size));
+        continue;
+      }
+      if (type === "5") return { kind: "dir" };
+      if (type === "2" || type === "1") return { kind: "link", target: pax.linkpath ?? cstr(h, 157, 100) };
+      const keep = Math.min(size, limit);
+      return { kind: "file", bytes: await q.take(keep), size, truncated: size > limit };
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}

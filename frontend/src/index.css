@@ -175,9 +175,11 @@ html:not(.dark) .text-zinc-300      { color: #334155; }
 html:not(.dark) .text-zinc-400      { color: #64748b; }
 html:not(.dark) .text-zinc-500      { color: #94a3b8; }
 html:not(.dark) .text-zinc-600      { color: #94a3b8; }
+html:not(.dark) .text-zinc-700      { color: #cbd5e1; }
 
 html:not(.dark) .hover\:bg-zinc-800:hover   { background-color: #f1f5f9; }
 html:not(.dark) .hover\:bg-zinc-700:hover   { background-color: #e2e8f0; }
+html:not(.dark) .hover\:bg-zinc-800\/60:hover { background-color: #f1f5f9; }
 html:not(.dark) .hover\:text-zinc-100:hover { color: #0f172a; }
 html:not(.dark) .hover\:text-zinc-200:hover { color: #1e293b; }
 html:not(.dark) .hover\:text-zinc-300:hover { color: #334155; }

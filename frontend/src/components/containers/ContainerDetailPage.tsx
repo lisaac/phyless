@@ -19,6 +19,8 @@ import { LogsView } from "../shared/LogsView";
 import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/TimeRangePicker";
 import { ContainerStats } from "./ContainerStats";
 import { FileBrowser } from "../shared/FileBrowser";
+import { TarTextViewer } from "../shared/TarTextViewer";
+import { confirmOpenText } from "../../api/textFile";
 import { inspectToRunCmd, displayImage } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
 import { setTabLabel, removeTab } from "../../stores/tabs";
@@ -276,6 +278,12 @@ export const ContainerDetailPage: Component = () => {
       `${name}.tar`,
     );
   onCleanup(() => download.cancel());
+  const [viewPath, setViewPath] = createSignal<string | null>(null);
+  const viewUrl = () => {
+    const p = viewPath();
+    return p ? `/api/containers/${id()}/files/download?path=${encodeURIComponent(p)}&token=${encodeURIComponent(getToken() ?? "")}` : null;
+  };
+  const openFile = async (path: string) => { if (await confirmOpenText(path)) setViewPath(path); };
   const uploadFile = async (sub: string, file: File) => {
     const t = await enqueue({
       title: `上传 ${file.name}`,
@@ -727,6 +735,7 @@ export const ContainerDetailPage: Component = () => {
           instanceKey={id()}
           listPath={listFiles}
           onDownload={downloadFile}
+          onOpenFile={openFile}
           onUpload={hasRole("operator") ? uploadFile : undefined}
           onDelete={hasRole("operator") ? deleteFile : undefined}
           onRename={hasRole("operator") ? renameFile : undefined}
@@ -767,6 +776,7 @@ export const ContainerDetailPage: Component = () => {
 
       {/* ── Download progress — non-blocking floating card ───────────────── */}
       <DownloadStatusWidget task={download} />
+      <TarTextViewer url={viewUrl()} path={viewPath() ?? ""} onClose={() => setViewPath(null)} />
     </div>
     </Show>
   );
