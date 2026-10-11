@@ -206,3 +206,31 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* Light mode: resp-table row separator */
 html:not(.dark) .resp-table tr { border-bottom-color: #e2e8f0; }
+
+/* Translucent zinc surfaces (remote search, registry accounts, sticky footers).
+   Exact-token selectors so hover:/focus: variants are not caught. */
+html:not(.dark) [class~="bg-zinc-950/40"],
+html:not(.dark) [class~="bg-zinc-950/30"]  { background-color: #f8fafc; }
+html:not(.dark) [class~="bg-zinc-800/80"],
+html:not(.dark) [class~="bg-zinc-800/70"],
+html:not(.dark) [class~="bg-zinc-800/60"]  { background-color: #fff; }
+html:not(.dark) [class~="bg-zinc-900/95"]  { background-color: rgba(255,255,255,.95); }
+html:not(.dark) [class~="bg-zinc-500/25"]  { background-color: #e2e8f0; }
+html:not(.dark) [class~="border-b-zinc-800/70"] { border-bottom-color: #e2e8f0; }
+html:not(.dark) .hover\:bg-zinc-800\/50:hover { background-color: #f1f5f9; }
+
+/* Accent text: the dark theme's 300/400 tints are too pale on white. */
+html:not(.dark) .text-indigo-300, html:not(.dark) .text-indigo-400   { color: #4f46e5; }
+html:not(.dark) .text-emerald-300, html:not(.dark) .text-emerald-400 { color: #047857; }
+html:not(.dark) .text-sky-300, html:not(.dark) .text-sky-400         { color: #0369a1; }
+html:not(.dark) .text-amber-300, html:not(.dark) .text-amber-400     { color: #b45309; }
+html:not(.dark) .text-red-300, html:not(.dark) .text-red-400         { color: #dc2626; }
+html:not(.dark) .text-rose-300  { color: #be123c; }
+html:not(.dark) .text-orange-300 { color: #c2410c; }
+html:not(.dark) .hover\:text-indigo-300:hover, html:not(.dark) .hover\:text-indigo-400:hover { color: #3730a3; }
+html:not(.dark) .hover\:text-red-300:hover, html:not(.dark) .hover\:text-red-400:hover { color: #b91c1c; }
+
+/* Error panels */
+html:not(.dark) [class~="bg-red-950/20"]     { background-color: #fef2f2; }
+html:not(.dark) [class~="border-red-900/50"] { border-color: #fecaca; }
+html:not(.dark) .hover\:bg-red-950\/40:hover { background-color: #fee2e2; }
