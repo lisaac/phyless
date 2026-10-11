@@ -1,6 +1,7 @@
 import { Component, createSignal, createEffect } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
+import { openPopup } from "../../api/fileSources";
 
 // Shared by ContainerListPage (per-row button) and ContainerDetailPage
 // (action bar button): pick a shell command + user, then open a standalone,
@@ -20,11 +21,7 @@ export const ConsoleModal: Component<{ target: { id: string; name: string } | nu
     if (cmd()) params.set("cmd", cmd());
     if (user()) params.set("user", user());
     params.set("name", t.name);
-    window.open(
-      `/terminal/${t.id}?${params.toString()}`,
-      "_blank",
-      "width=960,height=600,menubar=no,toolbar=no,location=no,status=no,resizable=yes",
-    );
+    openPopup(`/terminal/${t.id}?${params.toString()}`);
     props.onClose();
   };
 

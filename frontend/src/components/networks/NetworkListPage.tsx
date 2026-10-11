@@ -11,6 +11,7 @@ import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import type { NetworkSummary } from "../../types";
+import { JsonView } from "../shared/JsonView";
 
 const fmtDate = (s?: string): string => {
   if (!s) return "—";
@@ -171,9 +172,7 @@ export const NetworkListPage: Component = () => {
 
       <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor()?.Name ?? ""}`} wide>
         <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
-          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
-            {JSON.stringify(inspectData(), null, 2)}
-          </pre>
+          <JsonView data={inspectData()} />
         </Show>
       </Modal>
     </div>

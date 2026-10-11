@@ -7,14 +7,16 @@ import { ComposeIcon } from "../compose/composeShared";
 import { Modal } from "../shared/Modal";
 import { confirmAction } from "../shared/ConfirmModal";
 import { FileBrowser } from "../shared/FileBrowser";
+import { fileSource } from "../../api/fileSources";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
-import { get, getToken } from "../../api/client";
+import { get } from "../../api/client";
 import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
 import { UpdateBadge } from "./UpdateBadge";
 import { toUpgradeTarget, type UpgradeTarget } from "./UpgradeContainerModal";
 import { containerName, findContainer, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
-import type { ContainerSummary, FileEntry } from "../../types";
+import type { ContainerSummary } from "../../types";
+import { JsonView } from "../shared/JsonView";
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
 // be dropped anywhere — including inside ComposeListPage's expanded project
@@ -143,6 +145,7 @@ export const ContainerRow: Component<{
             {name() || <span class="text-zinc-400">(unnamed)</span>}
           </a>
         </div>
+        <div class="select-all font-mono text-[11px] text-zinc-500" title={c().Id} onClick={(e) => e.stopPropagation()}>{c().Id.slice(0, 12)}</div>
         <div class="flex max-w-[12rem] items-center gap-1">
           <span class="min-w-0 truncate text-[11px] text-zinc-400" title={c().Image}>{displayImage(c().Image, c().Labels)}</span>
           <UpdateBadge check={update()} />
@@ -314,9 +317,7 @@ export const ContainerRow: Component<{
 
       <Modal open={showInspect()} onClose={() => setShowInspect(false)} title={`Inspect · ${name() || c().Id.slice(0, 12)}`} wide>
         <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
-          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
-            {JSON.stringify(inspectData(), null, 2)}
-          </pre>
+          <JsonView data={inspectData()} />
         </Show>
       </Modal>
 
@@ -324,11 +325,9 @@ export const ContainerRow: Component<{
         <FileBrowser
           instanceKey={c().Id}
           initialPath={browsePath() ?? "/"}
-          listPath={(sub) => get<FileEntry[]>(`/api/containers/${c().Id}/files?path=${encodeURIComponent(sub)}`)}
-          onDownload={(sub, fname) => download.start(
-            `/api/containers/${c().Id}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
-            `${fname}.tar`,
-          )}
+          listPath={(sub) => fileSource("container", c().Id).listPath(sub)}
+          onDownload={(sub, fname) => download.start(fileSource("container", c().Id).downloadUrl!(sub), `${fname}.tar`)}
+          popout={{ kind: "container", id: c().Id, name: name() || c().Id.slice(0, 12) }}
         />
       </Modal>
       <DownloadStatusWidget task={download} />

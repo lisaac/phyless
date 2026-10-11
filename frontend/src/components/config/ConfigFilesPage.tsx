@@ -1,16 +1,15 @@
 import { Component, createSignal, Show, onCleanup } from "solid-js";
 import { FileBrowser } from "../shared/FileBrowser";
+import { fileSource } from "../../api/fileSources";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
-import { get } from "../../api/client";
-import { enqueue, queued } from "../../stores/taskQueue";
+import { queued } from "../../stores/taskQueue";
 import { confirmOpenText, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import { canSaveFile, createLatestFileRequest } from "../../stores/latestFile";
-import type { FileEntry } from "../../types";
 
 // pick CodeMirror language from extension
 function langFor(name: string): "yaml" | "json" | "text" {
@@ -33,8 +32,7 @@ export const ConfigFilesPage: Component = () => {
   const [saving, setSaving] = createSignal(false);
   const fileRequest = createLatestFileRequest();
 
-  const listFiles = (sub: string) =>
-    get<FileEntry[]>(`/api/config/files?path=${encodeURIComponent(sub)}`);
+  const files = fileSource("config", "-");
 
   const openFile = async (path: string) => {
     if (!await confirmOpenText(path)) return;
@@ -79,15 +77,12 @@ export const ConfigFilesPage: Component = () => {
   // Create/delete/rename operate directly on /etc (backend/internal/api/config.go's
   // handleConfig{Delete,Rename}File) — creating is just a PUT with empty
   // content, same endpoint the editor already saves through.
-  const createFile = async (path: string) => {
-    await queued(`新建 ${path}`, "PUT", `/api/config/files/content?path=${encodeURIComponent(path)}`, "", { key: "config" });
-  };
   const deleteFile = async (path: string) => {
-    await queued(`删除 ${path}`, "DELETE", `/api/config/files?path=${encodeURIComponent(path)}`, undefined, { key: "config" });
+    await files.remove!(path);
     if (openPath() === path) setOpenPath("");
   };
   const renameFile = async (oldPath: string, newPath: string) => {
-    await queued(`重命名 ${oldPath}`, "POST", "/api/config/files/rename", { old_path: oldPath, new_path: newPath }, { key: "config" });
+    await files.rename!(oldPath, newPath);
     if (openPath() === oldPath) setOpenPath(newPath);
   };
 
@@ -95,17 +90,6 @@ export const ConfigFilesPage: Component = () => {
   // for upload (XHR, since fetch() has no upload-progress events), and the
   // tar-streaming endpoint for download (fetch + a reader loop, since the
   // exact tar size isn't known upfront to compute a percentage).
-  const uploadFile = async (sub: string, file: File) => {
-    const t = await enqueue({
-      title: `上传 ${file.name}`,
-      url: `/api/config/files/content?path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`,
-      method: "PUT",
-      file,
-      key: "config",
-    }).done;
-    if (t.status !== "done") throw new Error(t.error);
-  };
-
   const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
   let downloadController: AbortController | undefined;
   let downloadGeneration = 0;
@@ -138,13 +122,14 @@ export const ConfigFilesPage: Component = () => {
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div class="h-[calc(100vh-13rem)] overflow-auto border border-zinc-800 p-2">
           <FileBrowser
-            listPath={listFiles}
+            listPath={files.listPath}
             onOpenFile={openFile}
-            onCreate={hasRole("operator") ? createFile : undefined}
+            onCreate={hasRole("operator") ? files.create : undefined}
             onDelete={hasRole("operator") ? deleteFile : undefined}
             onRename={hasRole("operator") ? renameFile : undefined}
-            onUpload={hasRole("operator") ? uploadFile : undefined}
+            onUpload={hasRole("operator") ? files.upload : undefined}
             onDownload={downloadFile}
+            popout={{ kind: "config", id: "-", name: "本机配置" }}
           />
         </div>
         <div class="sticky top-4 flex h-[calc(100vh-13rem)] flex-col">

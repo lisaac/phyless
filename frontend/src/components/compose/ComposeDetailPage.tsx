@@ -10,6 +10,7 @@ import { removeTab, setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
 import { FileBrowser } from "../shared/FileBrowser";
+import { fileSource } from "../../api/fileSources";
 import { LogsView } from "../shared/LogsView";
 import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/TimeRangePicker";
 import { KV, Sec } from "../shared/KV";
@@ -25,8 +26,9 @@ import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { containersOf, representative, ActBtn, ComposeIcon, servicesHaveBuild, type ComposeVerb } from "./composeShared";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { confirmAction } from "../shared/ConfirmModal";
-import { enqueue, queued } from "../../stores/taskQueue";
-import type { ComposeProject, ContainerSummary, FileEntry } from "../../types";
+import { queued } from "../../stores/taskQueue";
+import type { ComposeProject, ContainerSummary } from "../../types";
+import { JsonView } from "../shared/JsonView";
 
 type Tab = "info" | "inspect" | "files" | "logs";
 const TABS: { key: Tab; label: string }[] = [
@@ -128,15 +130,13 @@ export const ComposeDetailPage: Component = () => {
   // host filesystem (backend/internal/api/compose.go's handleCompose{Delete,Rename}
   // File) — creating is just a PUT with empty content, same endpoint the
   // editor already saves through.
-  const createFile = async (path: string) => {
-    await queued(`新建 ${path}`, "PUT", `/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(path)}`, "", { key: `compose:${id()}` });
-  };
+  const files = () => fileSource("compose", id());
   const deleteFile = async (path: string) => {
-    await queued(`删除 ${path}`, "DELETE", `/api/compose/files?id=${encodeURIComponent(id())}&path=${encodeURIComponent(path)}`, undefined, { key: `compose:${id()}` });
+    await files().remove!(path);
     if (selectedFile() === path) setSelectedFile(null);
   };
   const renameFile = async (oldPath: string, newPath: string) => {
-    await queued(`重命名 ${oldPath}`, "POST", `/api/compose/files/rename?id=${encodeURIComponent(id())}`, { old_path: oldPath, new_path: newPath }, { key: `compose:${id()}` });
+    await files().rename!(oldPath, newPath);
     if (selectedFile() === oldPath) setSelectedFile(newPath);
   };
 
@@ -144,17 +144,6 @@ export const ComposeDetailPage: Component = () => {
   // for upload (XHR, since fetch() has no upload-progress events), and the
   // new tar-streaming endpoint for download (fetch + a reader loop, since
   // the exact tar size isn't known upfront to compute a percentage).
-  const uploadFile = async (sub: string, file: File) => {
-    const t = await enqueue({
-      title: `上传 ${file.name}`,
-      url: `/api/compose/files/content?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub.endsWith("/") ? sub + file.name : sub + "/" + file.name)}`,
-      method: "PUT",
-      file,
-      key: `compose:${id()}`,
-    }).done;
-    if (t.status !== "done") throw new Error(t.error);
-  };
-
   const [downloadState, setDownloadState] = createSignal({ active: false, filename: "", bytes: 0, done: false, error: "" });
   let downloadController: AbortController | undefined;
   let downloadGeneration = 0;
@@ -366,9 +355,7 @@ export const ComposeDetailPage: Component = () => {
 
       <Show when={tab() === "inspect"}>
         <Show when={!detailResult.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
-          <pre class="max-h-[calc(100vh-16rem)] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
-            {JSON.stringify(detail(), null, 2)}
-          </pre>
+          <JsonView data={detail()} class="max-h-[calc(100vh-16rem)]" />
         </Show>
       </Show>
 
@@ -376,14 +363,15 @@ export const ComposeDetailPage: Component = () => {
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div class="h-[calc(100vh-19rem)] overflow-auto border border-zinc-800 p-2">
             <FileBrowser
-              listPath={(sub) => get<FileEntry[]>(`/api/compose/files?id=${encodeURIComponent(id())}&path=${encodeURIComponent(sub)}`)}
+              listPath={(sub) => files().listPath(sub)}
               onOpenFile={openFile}
-              onCreate={hasRole("operator") ? createFile : undefined}
+              onCreate={hasRole("operator") ? files().create : undefined}
               onDelete={hasRole("operator") ? deleteFile : undefined}
               onRename={hasRole("operator") ? renameFile : undefined}
-              onUpload={hasRole("operator") ? uploadFile : undefined}
+              onUpload={hasRole("operator") ? files().upload : undefined}
               onDownload={downloadFile}
               instanceKey={id()}
+              popout={{ kind: "compose", id: id(), name: project()?.name ?? id() }}
             />
           </div>
           <div class="sticky top-4 flex h-[calc(100vh-19rem)] flex-col">

@@ -1,6 +1,7 @@
 import { Component, createSignal, createResource, createEffect, For, Show, Suspense, createMemo } from "solid-js";
 import type { FileEntry } from "../../types";
 import { confirmAction } from "./ConfirmModal";
+import { filesWindowUrl, openPopup, type FileSourceRef } from "../../api/fileSources";
 
 function fmtSize(b: number): string {
   if (b < 1024) return `${b}B`;
@@ -52,6 +53,9 @@ interface FileBrowserProps {
   // refetch — leaving the previous container's stale listing on screen while
   // every action (delete/rename/copy) silently targets the new container.
   instanceKey?: string;
+  // Shows a "独立窗口" button that reopens this browser (at the current path)
+  // in a standalone popup — see FilesWindowPage.
+  popout?: FileSourceRef;
 }
 
 // The resource + its eager `sorted` memo are created in the component body,
@@ -237,6 +241,16 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
             ↑ 上传
             <input type="file" class="hidden" onChange={(e) => upload(e.currentTarget.files?.[0])} />
           </label>
+        </Show>
+
+        <Show when={props.popout}>
+          {(ref) => (
+            <button
+              class="shrink-0 px-2 py-0.5 text-xs text-zinc-500 hover:text-zinc-200 transition-colors"
+              title="在独立窗口中打开"
+              onClick={() => openPopup(filesWindowUrl(ref(), path()), 1000, 700)}
+            >⧉ 独立窗口</button>
+          )}
         </Show>
       </div>
 

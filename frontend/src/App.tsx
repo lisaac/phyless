@@ -13,6 +13,7 @@ const OverviewPage = lazy(() => import("./components/overview/OverviewPage").the
 const ContainerListPage = lazy(() => import("./components/containers/ContainerListPage").then((m) => ({ default: m.ContainerListPage })));
 const ContainerDetailPage = lazy(() => import("./components/containers/ContainerDetailPage").then((m) => ({ default: m.ContainerDetailPage })));
 const TerminalWindowPage = lazy(() => import("./components/containers/TerminalWindowPage").then((m) => ({ default: m.TerminalWindowPage })));
+const FilesWindowPage = lazy(() => import("./components/shared/FilesWindowPage").then((m) => ({ default: m.FilesWindowPage })));
 const ImageListPage = lazy(() => import("./components/images/ImageListPage").then((m) => ({ default: m.ImageListPage })));
 const ComposeListPage = lazy(() => import("./components/compose/ComposeListPage").then((m) => ({ default: m.ComposeListPage })));
 const ComposeDetailPage = lazy(() => import("./components/compose/ComposeDetailPage").then((m) => ({ default: m.ComposeDetailPage })));
@@ -55,8 +56,9 @@ export const App: Component = () => {
       <Router>
         <Route path="/login" component={LoginPage} />
         {/* Outside Guard/Layout on purpose — opened as a chrome-less popup
-            window (see ConsoleModal), not part of the normal app navigation. */}
+            window (see ConsoleModal / FileBrowser), not part of the normal app navigation. */}
         <Route path="/terminal/:id" component={TerminalWindowPage} />
+        <Route path="/files/:kind/:id" component={FilesWindowPage} />
         <Route path="/" component={Guard}>
           <Route path="/" component={() => <Navigate href="/overview" />} />
           <Route path="/overview" component={OverviewPage} />

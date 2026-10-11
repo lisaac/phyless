@@ -11,6 +11,7 @@ import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { FileBrowser } from "../shared/FileBrowser";
+import { fileSource } from "../../api/fileSources";
 import { TarTextViewer } from "../shared/TarTextViewer";
 import { confirmOpenText } from "../../api/textFile";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
@@ -18,7 +19,8 @@ import { createDownloadTask } from "../../api/download";
 import { get, getToken } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
-import type { ImageSummary, FileEntry } from "../../types";
+import type { ImageSummary } from "../../types";
+import { JsonView } from "../shared/JsonView";
 
 // "<none> | repo@1234567890ab" — the digest names where an untagged image came from.
 const digestHint = (img: ImageSummary) => {
@@ -140,7 +142,7 @@ export const ImageListPage: Component = () => {
   const [viewFile, setViewFile] = createSignal<{ id: string; path: string } | null>(null);
   const viewUrl = () => {
     const v = viewFile();
-    return v ? `/api/images/files/download?id=${encodeURIComponent(v.id)}&path=${encodeURIComponent(v.path)}&token=${encodeURIComponent(getToken() ?? "")}` : null;
+    return v ? fileSource("image", v.id).downloadUrl!(v.path) : null;
   };
 
   const closePullInput = () => { setShowPullInput(false); setShowRemoteSearch(false); pull.reset(); };
@@ -564,9 +566,7 @@ export const ImageListPage: Component = () => {
           when={!inspectResult.loading && !inspectError()}
           fallback={<p class={inspectError() ? "text-xs text-red-400" : "text-xs text-zinc-500"}>{inspectError() ? `加载失败：${(inspectError() as Error).message}` : "加载中…"}</p>}
         >
-          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
-            {JSON.stringify(inspectData(), null, 2)}
-          </pre>
+          <JsonView data={inspectData()} />
         </Show>
       </Modal>
 
@@ -576,11 +576,9 @@ export const ImageListPage: Component = () => {
           {(img) => (
             <FileBrowser
               instanceKey={img().Id}
-              listPath={(sub) => get<FileEntry[]>(`/api/images/files?id=${encodeURIComponent(img().Id)}&path=${encodeURIComponent(sub)}`)}
-              onDownload={(sub, name) => download.start(
-                `/api/images/files/download?id=${encodeURIComponent(img().Id)}&path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
-                `${name}.tar`,
-              )}
+              listPath={(sub) => fileSource("image", img().Id).listPath(sub)}
+              onDownload={(sub, name) => download.start(fileSource("image", img().Id).downloadUrl!(sub), `${name}.tar`)}
+              popout={{ kind: "image", id: img().Id, name: imgLabel(img()) }}
               onOpenFile={async (path) => { if (await confirmOpenText(path)) setViewFile({ id: img().Id, path }); }}
             />
           )}

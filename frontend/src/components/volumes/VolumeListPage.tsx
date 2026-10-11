@@ -4,6 +4,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
+import { fileSource } from "../../api/fileSources";
 import { IBtn, Ico } from "../shared/ActionButton";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
@@ -12,7 +13,8 @@ import { confirmAction } from "../shared/ConfirmModal";
 import { hasRole } from "../../stores/auth";
 import { midPath } from "../containers/containerActions";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import type { VolumeSummary, FileEntry } from "../../types";
+import type { VolumeSummary } from "../../types";
+import { JsonView } from "../shared/JsonView";
 
 const fmtDate = (s?: string): string => {
   if (!s) return "—";
@@ -47,8 +49,6 @@ export const VolumeListPage: Component = () => {
     try { await queued(`删除卷 ${n}`, "DELETE", `/api/volumes/${encodeURIComponent(n)}`); await store.refresh(); }
     catch (e) { toast.error((e as Error).message); }
   };
-  const listFiles = (sub: string) =>
-    get<FileEntry[]>(`/api/volumes/${encodeURIComponent(browse()!.Name)}/files?path=${encodeURIComponent(sub)}`);
 
   return (
     <div>
@@ -140,15 +140,19 @@ export const VolumeListPage: Component = () => {
 
       <Modal open={!!browse()} onClose={() => setBrowse(null)} title={`浏览 ${browse()?.Name ?? ""}`} wide>
         <Show when={browse()}>
-          <FileBrowser listPath={listFiles} />
+          {(v) => (
+            <FileBrowser
+              instanceKey={v().Name}
+              listPath={(sub) => fileSource("volume", v().Name).listPath(sub)}
+              popout={{ kind: "volume", id: v().Name, name: v().Name }}
+            />
+          )}
         </Show>
       </Modal>
 
       <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor()?.Name ?? ""}`} wide>
         <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
-          <pre class="max-h-[70vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-400">
-            {JSON.stringify(inspectData(), null, 2)}
-          </pre>
+          <JsonView data={inspectData()} />
         </Show>
       </Modal>
     </div>

@@ -4,14 +4,14 @@ import { EditorState, Transaction, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { yaml } from "@codemirror/lang-yaml";
 import { json } from "@codemirror/lang-json";
-import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import { syntaxHighlighting, HighlightStyle, foldGutter } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 
 type Lang = "yaml" | "json" | "text";
 
 function langExt(lang: Lang) {
   if (lang === "yaml") return [yaml()];
-  if (lang === "json") return [json()];
+  if (lang === "json") return [json(), foldGutter()];
   return [];
 }
 
@@ -24,6 +24,7 @@ const darkTheme = EditorView.theme({
   // Whitespace dots (highlightWhitespace) default to near-invisible — nudge
   // them to a faint but legible zinc so the effect is actually visible.
   ".cm-highlightSpace::before": { color: "#3f3f46" },
+  ".cm-gutters": { backgroundColor: "#09090b", border: "none", color: "#52525b" },
 }, { dark: true });
 
 const lightTheme = EditorView.theme({
@@ -33,6 +34,7 @@ const lightTheme = EditorView.theme({
   ".cm-content": { caretColor: "#3f3f46", color: "#18181b" },
   ".cm-line": { color: "#18181b" },
   ".cm-highlightSpace::before": { color: "#d4d4d8" },
+  ".cm-gutters": { backgroundColor: "#fafafa", border: "none", color: "#a1a1aa" },
 });
 
 // Colors keyed to the app's own zinc/indigo/emerald palette rather than a
@@ -84,7 +86,8 @@ export const CodeEditor: Component<{
           ...langExt(props.language ?? "text"),
           themeCompartment.of(isDark() ? darkTheme : lightTheme),
           highlightCompartment.of(isDark() ? darkHighlight : lightHighlight),
-          highlightWhitespace(),
+          // Whitespace dots help when editing; in a read-only viewer they are just noise.
+          ...(props.readOnly ? [] : [highlightWhitespace()]),
           EditorView.editable.of(!props.readOnly),
           EditorView.updateListener.of((u) => {
             // Only fire onChange for user-initiated edits (input, paste, delete).

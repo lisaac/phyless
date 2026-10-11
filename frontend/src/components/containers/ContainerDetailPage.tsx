@@ -3,7 +3,7 @@ import {
 } from "solid-js";
 import { A, useParams, useSearchParams, useNavigate } from "@solidjs/router";
 import { get, getToken, imageInspectUrl, isApiNotFound } from "../../api/client";
-import { enqueue, queued, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
+import { queued, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { createContainerActions } from "./containerActions";
 import { toast } from "../shared/Toast";
 import { UpgradeContainerModal, type UpgradeTarget } from "./UpgradeContainerModal";
@@ -20,6 +20,7 @@ import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/Time
 import { ContainerStats } from "./ContainerStats";
 import { FileBrowser } from "../shared/FileBrowser";
 import { TarTextViewer } from "../shared/TarTextViewer";
+import { fileSource } from "../../api/fileSources";
 import { confirmOpenText } from "../../api/textFile";
 import { inspectToRunCmd, displayImage } from "../../api/inspect";
 import { hasRole } from "../../stores/auth";
@@ -30,7 +31,8 @@ import { confirmAction } from "../shared/ConfirmModal";
 import { Tabs } from "../shared/Tabs";
 import { ContainerIcon } from "./ContainerIcon";
 import { ComposeIcon } from "../compose/composeShared";
-import type { FileEntry, NetworkSummary } from "../../types";
+import type { NetworkSummary } from "../../types";
+import { JsonView } from "../shared/JsonView";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 // Labels: system-ui (zinc-500, uppercase, 10px)
@@ -269,36 +271,16 @@ export const ContainerDetailPage: Component = () => {
   };
 
   // ── File actions ──────────────────────────────────────────────────────────────
-  const listFiles = (sub: string) =>
-    get<FileEntry[]>(`/api/containers/${id()}/files?path=${encodeURIComponent(sub)}`);
+  const files = () => fileSource("container", id());
   const download = createDownloadTask();
-  const downloadFile = (sub: string, name: string) =>
-    download.start(
-      `/api/containers/${id()}/files/download?path=${encodeURIComponent(sub)}&token=${encodeURIComponent(getToken() ?? "")}`,
-      `${name}.tar`,
-    );
+  const downloadFile = (sub: string, name: string) => download.start(files().downloadUrl!(sub), `${name}.tar`);
   onCleanup(() => download.cancel());
   const [viewPath, setViewPath] = createSignal<string | null>(null);
   const viewUrl = () => {
     const p = viewPath();
-    return p ? `/api/containers/${id()}/files/download?path=${encodeURIComponent(p)}&token=${encodeURIComponent(getToken() ?? "")}` : null;
+    return p ? files().downloadUrl!(p) : null;
   };
   const openFile = async (path: string) => { if (await confirmOpenText(path)) setViewPath(path); };
-  const uploadFile = async (sub: string, file: File) => {
-    const t = await enqueue({
-      title: `上传 ${file.name}`,
-      url: `/api/containers/${id()}/files/upload?path=${encodeURIComponent(sub)}&name=${encodeURIComponent(file.name)}`,
-      file,
-      key: id(),
-    }).done;
-    if (t.status !== "done") throw new Error(t.error);
-  };
-  const deleteFile = async (path: string) => {
-    await queued(`删除文件 ${path}`, "DELETE", `/api/containers/${id()}/files?path=${encodeURIComponent(path)}`, undefined, { key: id() });
-  };
-  const renameFile = async (oldPath: string, newPath: string) => {
-    await queued(`重命名 ${oldPath}`, "POST", `/api/containers/${id()}/files/rename`, { old_path: oldPath, new_path: newPath }, { key: id() });
-  };
 
   // ── Network actions ────────────────────────────────────────────────────────────
   const [netDlg, setNetDlg] = createSignal(false);
@@ -733,12 +715,13 @@ export const ContainerDetailPage: Component = () => {
       <Show when={tab() === "files"}>
         <FileBrowser
           instanceKey={id()}
-          listPath={listFiles}
+          listPath={(sub) => files().listPath(sub)}
           onDownload={downloadFile}
           onOpenFile={openFile}
-          onUpload={hasRole("operator") ? uploadFile : undefined}
-          onDelete={hasRole("operator") ? deleteFile : undefined}
-          onRename={hasRole("operator") ? renameFile : undefined}
+          onUpload={hasRole("operator") ? files().upload : undefined}
+          onDelete={hasRole("operator") ? files().remove : undefined}
+          onRename={hasRole("operator") ? files().rename : undefined}
+          popout={{ kind: "container", id: id(), name: name() }}
           onCopyToContainer={hasRole("operator") ? (path) => setCopySource({ containerId: id(), path }) : undefined}
           initialPath={fileInitialPath()}
           onPathChange={onFilePathChange}
@@ -753,9 +736,7 @@ export const ContainerDetailPage: Component = () => {
 
       {/* ── Tab: Inspect ──────────────────────────────────────────────────── */}
       <Show when={tab() === "inspect"}>
-        <pre class="max-h-[75vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs text-zinc-400 leading-5">
-          {JSON.stringify(inspect(), null, 2)}
-        </pre>
+        <JsonView data={inspect()} class="max-h-[75vh]" />
       </Show>
 
       {/* ── Run/Compose modal (reuse CreateContainerModal) ────────────────── */}
