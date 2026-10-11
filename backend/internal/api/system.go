@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 
+	"phyless/backend/internal/docker"
 	"phyless/backend/internal/docker/imagefs"
 )
 
@@ -63,7 +64,7 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 		MinAPIVersion:    version.MinAPIVersion,
 		OperatingSystem:  info.OperatingSystem,
 		OSType:           strings.ToLower(info.OSType),
-		Architecture:     normalizeArch(info.Architecture),
+		Architecture:     docker.DaemonPlatform(info.OSType, info.Architecture).Architecture,
 		KernelVersion:    info.KernelVersion,
 		NCPU:             info.NCPU,
 		MemTotal:         info.MemTotal,
@@ -100,26 +101,8 @@ func (s *Server) handleSystemPlatform(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "无法获取 Docker 平台信息")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"os":           strings.ToLower(info.OSType),
-		"architecture": normalizeArch(info.Architecture),
-	})
-}
-
-// normalizeArch maps the aliases Docker commonly reports to the values used in
-// OCI platform selection (matching containerd/platforms normalization).
-func normalizeArch(raw string) string {
-	arch := strings.ToLower(strings.TrimSpace(raw))
-	switch arch {
-	case "x86_64":
-		return "amd64"
-	case "aarch64":
-		return "arm64"
-	case "armv7l", "armhf":
-		return "arm"
-	default:
-		return arch
-	}
+	p := docker.DaemonPlatform(info.OSType, info.Architecture)
+	writeJSON(w, http.StatusOK, map[string]string{"os": p.OS, "architecture": p.Architecture, "variant": p.Variant})
 }
 
 // Summary skips usage joins, sorting and Compose YAML loads required by list views.

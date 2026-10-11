@@ -62,22 +62,38 @@ func RequestTransport(ctx context.Context) (*http.Transport, error) {
 
 // getImage is the manifest-only registry lookup shared by proxied pulls and
 // update checks: the tag's descriptor (index or manifest) and the platform
-// image under it. desc is nil when the registry request itself failed.
-func getImage(ctx context.Context, ref name.Reference, platform v1.Platform, auth authn.Authenticator, rt *metadataLimitTransport) (*remote.Descriptor, v1.Image, error) {
-	desc, err := remote.Get(ref,
-		remote.WithAuth(auth),
-		remote.WithContext(ctx),
-		remote.WithPlatform(platform),
-		remote.WithTransport(rt),
+// image under it. With fallback (the platform was derived from the daemon, not
+// chosen by the user) it tries compatible variants in Docker's order. It
+// returns the platform actually selected. desc is nil when the request failed.
+func getImage(ctx context.Context, ref name.Reference, platform v1.Platform, fallback bool, auth authn.Authenticator, rt *metadataLimitTransport) (*remote.Descriptor, v1.Image, v1.Platform, error) {
+	candidates := []v1.Platform{platform}
+	if fallback {
+		candidates = compatiblePlatforms(platform)
+	}
+	var (
+		desc *remote.Descriptor
+		img  v1.Image
+		err  error
 	)
-	if err != nil {
-		return nil, nil, err
+	for _, candidate := range candidates {
+		desc, err = remote.Get(ref,
+			remote.WithAuth(auth),
+			remote.WithContext(ctx),
+			remote.WithPlatform(candidate),
+			remote.WithTransport(rt),
+		)
+		if err != nil {
+			return nil, nil, platform, err
+		}
+		if desc.Size < 0 || desc.Size > maxMetadataSize {
+			return nil, nil, platform, errors.New("image manifest is too large")
+		}
+		img, err = desc.Image()
+		if err == nil || !strings.Contains(err.Error(), "no child with platform") {
+			return desc, img, candidate, err
+		}
 	}
-	if desc.Size < 0 || desc.Size > maxMetadataSize {
-		return nil, nil, errors.New("image manifest is too large")
-	}
-	img, err := desc.Image()
-	return desc, img, err
+	return desc, img, platform, err
 }
 
 // ResolveRemoteImage reads manifests only — no config or layer blobs.
@@ -94,7 +110,7 @@ func ResolveRemoteImage(ctx context.Context, t *http.Transport, ref, platform, r
 	if err != nil {
 		return RemoteImage{}, err
 	}
-	desc, img, err := getImage(ctx, parsed, normalizePullPlatform(*p), auth, &metadataLimitTransport{inner: t})
+	desc, img, _, err := getImage(ctx, parsed, normalizePullPlatform(*p), false, auth, &metadataLimitTransport{inner: t})
 	if err != nil {
 		return RemoteImage{}, registryCheckError(err)
 	}

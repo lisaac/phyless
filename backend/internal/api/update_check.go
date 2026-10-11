@@ -164,7 +164,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		if t.platform == "" {
 			if daemonPlatform == "" {
 				if sys, err := s.docker.Info(ctx); err == nil && sys.OSType != "" && sys.Architecture != "" {
-					daemonPlatform = strings.ToLower(sys.OSType + "/" + sys.Architecture)
+					daemonPlatform = docker.DaemonPlatform(sys.OSType, sys.Architecture).String()
 				}
 			}
 			t.platform = daemonPlatform

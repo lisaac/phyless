@@ -253,7 +253,9 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 		return nil, err
 	}
 	metadataTransport := &metadataLimitTransport{inner: transport}
-	desc, img, err := getImage(pullCtx, parsed, platform, authnConfig, metadataTransport)
+	// A 32-bit ARM fallback (e.g. v7 → v6) is verified against what was chosen.
+	// A user-chosen platform is exact; only the daemon's own may fall back.
+	desc, img, platform, err := getImage(pullCtx, parsed, platform, strings.TrimSpace(options.Platform) == "", authnConfig, metadataTransport)
 	if err != nil {
 		transport.CloseIdleConnections()
 		if desc == nil {
@@ -317,11 +319,43 @@ func (c *Client) pullPlatform(ctx context.Context, raw string) (v1.Platform, err
 	if info.OSType == "" || info.Architecture == "" {
 		return v1.Platform{}, errors.New("Docker daemon platform is unavailable")
 	}
-	p := normalizePullPlatform(v1.Platform{OS: strings.ToLower(info.OSType), Architecture: strings.ToLower(info.Architecture)})
+	p := DaemonPlatform(info.OSType, info.Architecture)
 	if p.OS != "linux" || p.Architecture == "" {
 		return v1.Platform{}, errors.New("proxied image pull supports Linux daemon platforms only")
 	}
 	return p, nil
+}
+
+// DaemonPlatform is the platform `docker pull` would pick on a daemon whose
+// /info reports osType and arch. Docker reports `uname -m` (x86_64, aarch64,
+// armv7l, armv6l, i686); containerd/platforms only knows some of those
+// aliases, and a 32-bit ARM variant matters for manifest selection.
+func DaemonPlatform(osType, arch string) v1.Platform {
+	arch = strings.ToLower(strings.TrimSpace(arch))
+	variant := ""
+	switch {
+	case arch == "i486" || arch == "i586" || arch == "i686":
+		arch = "386"
+	case strings.HasPrefix(arch, "armv") && len(arch) >= 5 && arch[4] >= '5' && arch[4] <= '8':
+		variant = "v" + arch[4:5]
+		arch = "arm"
+	}
+	return normalizePullPlatform(v1.Platform{OS: strings.ToLower(strings.TrimSpace(osType)), Architecture: arch, Variant: variant})
+}
+
+// compatiblePlatforms is the selection order Docker uses for a platform: a
+// 32-bit ARM daemon runs older ARM variants too (v7 → v6 → v5).
+func compatiblePlatforms(p v1.Platform) []v1.Platform {
+	if p.Architecture != "arm" || len(p.Variant) != 2 || p.Variant[0] != 'v' {
+		return []v1.Platform{p}
+	}
+	out := []v1.Platform{}
+	for v := p.Variant[1]; v >= '5'; v-- {
+		q := p
+		q.Variant = "v" + string(v)
+		out = append(out, q)
+	}
+	return out
 }
 
 // normalizePullPlatform bridges go-containerregistry's platform type to the
