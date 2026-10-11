@@ -94,8 +94,10 @@ describe("pull options", () => {
     expect(url.value).toBe("http://proxy.example:8080");
     expect(pull.payload()).toEqual({ proxy_url: "http://proxy.example:8080" });
 
+    // Mode is global: a fresh/reset form starts in the last chosen mode.
     pull.reset();
-    expect(pull.value.useProxy).toBe(false);
+    expect(pull.value.useProxy).toBe(true);
+    expect(createPullOptions().value.useProxy).toBe(true);
     expect(pull.value.proxyUrl).toBe("http://proxy.example:8080");
   });
 });

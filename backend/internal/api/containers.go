@@ -302,8 +302,10 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	// Empty policy = "missing", same as `docker run`: pull only when the image
+	// (for the requested platform) is not local, instead of failing the create.
 	pull := body.PullPolicy == "always"
-	if body.PullPolicy == "missing" {
+	if body.PullPolicy == "missing" || body.PullPolicy == "" {
 		local, err := s.docker.ImageInspect(ctx, body.Image)
 		if err != nil && !errdefs.IsNotFound(err) {
 			dockercontainer.EmitError(w, err)

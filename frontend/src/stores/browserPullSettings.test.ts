@@ -7,8 +7,8 @@ import {
   setWorkerUrl,
   saveWorkerUrl,
   removeWorkerUrl,
-  getDownloadMode,
-  setDownloadMode,
+  getPullMode,
+  setPullMode,
   getRememberedAccounts,
   rememberAccounts,
 } from "./browserPullSettings";
@@ -50,13 +50,15 @@ describe("worker url persistence", () => {
   });
 });
 
-describe("download mode", () => {
-  it("defaults to proxy and round-trips browser", () => {
-    expect(getDownloadMode()).toBe("proxy");
-    setDownloadMode("browser");
-    expect(getDownloadMode()).toBe("browser");
-    setDownloadMode("proxy");
-    expect(getDownloadMode()).toBe("proxy");
+describe("pull mode", () => {
+  it("defaults to none, round-trips all modes, reads legacy proxy as none", () => {
+    expect(getPullMode()).toBe("none");
+    setPullMode("server");
+    expect(getPullMode()).toBe("server");
+    setPullMode("browser");
+    expect(getPullMode()).toBe("browser");
+    localStorage.setItem("phyless_pull_download_mode", "proxy");
+    expect(getPullMode()).toBe("none");
   });
 });
 

@@ -1,6 +1,6 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, pullModeLabel, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
 import { Button, Chip } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
@@ -24,7 +24,7 @@ const RESTART_OPTS = [
 ];
 
 const PULL_OPTS = [
-  { value: "", label: "默认" },
+  { value: "", label: "默认（missing）" },
   { value: "always", label: "always" },
   { value: "missing", label: "missing" },
   { value: "never", label: "never" },
@@ -406,7 +406,13 @@ export const CreateContainerModal: Component<{
       </div>
 
       <Show when={!isMulti()}>
-        <PullOptions options={pull} showPlatform allowBrowser />
+        {/* Pull mode is global (remembered in this browser); collapsed by default, summary shows the current mode. */}
+        <details class="mb-3">
+          <summary class="cursor-pointer select-none py-1 text-xs text-zinc-500 hover:text-zinc-300">
+            拉取代理：<span class="text-zinc-300">{pullModeLabel(pull.value)}</span>
+          </summary>
+          <PullOptions options={pull} showPlatform allowBrowser />
+        </details>
       </Show>
 
       {/* ── Save template bar ─────────────────────────────────────────────── */}
@@ -450,7 +456,7 @@ export const CreateContainerModal: Component<{
           </div>
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {rg("重启策略", "restart_policy", RESTART_OPTS, "容器退出后的重启行为：no/always/unless-stopped/on-failure")}
-            {rg("拉取策略", "pull_policy", PULL_OPTS, "创建前是否拉取最新镜像：always/missing/never")}
+            {rg("拉取策略", "pull_policy", PULL_OPTS, "创建前是否拉取镜像：默认同 missing（本地没有才拉取）/always（总是拉取最新）/never（只用本地）")}
           </div>
           <div>
             <span class="mb-1 block text-xs text-zinc-500 cursor-help" title="额外的运行时标志，控制 stdin/tty/权限等行为">运行标志</span>

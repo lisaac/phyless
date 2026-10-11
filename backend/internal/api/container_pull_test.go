@@ -61,7 +61,8 @@ func TestCreatePullPoliciesAndErrors(t *testing.T) {
 		inspectErr                        error
 		pullFailure, wantPull, wantCreate bool
 	}{
-		{"empty", "", nil, false, false, true},
+		{"empty-present", "", nil, false, false, true},
+		{"empty-missing", "", errdefs.NotFound(errors.New("missing")), false, true, true},
 		{"always", "always", nil, false, true, true},
 		{"never", "never", nil, false, false, true},
 		{"present", "missing", nil, false, false, true},

@@ -112,15 +112,20 @@ export function removeWorkerUrl(raw: string): string[] {
   return urls;
 }
 
-export function getDownloadMode(): DownloadMode {
+// Global pull mode remembered in this browser: the default for every pull form.
+// Legacy "proxy" (pre three-way mode) reads as "none".
+export type PullMode = "none" | "server" | "browser";
+
+export function getPullMode(): PullMode {
   try {
-    return localStorage.getItem(MODE_KEY) === "browser" ? "browser" : "proxy";
+    const v = localStorage.getItem(MODE_KEY);
+    return v === "browser" || v === "server" ? v : "none";
   } catch {
-    return "proxy";
+    return "none";
   }
 }
 
-export function setDownloadMode(mode: DownloadMode): void {
+export function setPullMode(mode: PullMode): void {
   try {
     localStorage.setItem(MODE_KEY, mode);
   } catch {

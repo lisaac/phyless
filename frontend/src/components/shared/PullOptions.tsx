@@ -6,8 +6,9 @@ import { toast } from "./Toast";
 import { Ico } from "./ActionButton";
 import {
   type DownloadMode,
-  getDownloadMode,
-  setDownloadMode,
+  type PullMode,
+  getPullMode,
+  setPullMode as savePullMode,
   getWorkerUrl,
   getWorkerUrls,
   removeWorkerUrl,
@@ -73,7 +74,12 @@ export function browserSecret(value: PullOptionsValue): TaskSpec["secret"] {
   return creds ? { creds } : undefined;
 }
 
-type PullMode = "none" | "server" | "browser";
+const PULL_MODE_LABEL: Record<PullMode, string> = { none: "不使用代理", server: "服务端代理", browser: "浏览器代理导入" };
+
+/** Human label of the form's current pull mode, e.g. for a collapsed summary. */
+export function pullModeLabel(value: PullOptionsValue): string {
+  return PULL_MODE_LABEL[value.downloadMode === "browser" ? "browser" : value.useProxy ? "server" : "none"];
+}
 
 const PULL_PROXY_STORAGE_KEY = "phyless_pull_proxy_url";
 const PULL_PROXY_LIST_STORAGE_KEY = "phyless_pull_proxy_urls";
@@ -179,15 +185,16 @@ export function pullOptionsPayload(value: PullOptionsValue): Record<string, unkn
 }
 
 // One state holder shared by every pull form (image pull, create container,
-// upgrade, compose up/pull). reset() is what callers run on close: the proxy
-// mode is off per open, while saved URLs come back from this browser's memory.
+// upgrade, compose up/pull). reset() is what callers run on close: the pull
+// mode and saved URLs come back from this browser's memory (global, not per form).
 export function createPullOptions() {
   const fresh = (): Required<PullOptionsValue> => {
     const workerUrl = getWorkerUrl();
+    const mode = getPullMode();
     const remembered = getRememberedAccounts(workerUrl);
     return {
-      proxyUrl: readPullProxyUrl(), useProxy: false, registryIds: [], platform: "",
-      downloadMode: getDownloadMode(), workerUrl,
+      proxyUrl: readPullProxyUrl(), useProxy: mode === "server", registryIds: [], platform: "",
+      downloadMode: mode === "browser" ? "browser" : "proxy", workerUrl,
       creds: remembered?.accounts ?? [], browserUse: remembered?.use ?? [], revealed: {},
       rememberCreds: !!remembered, addAccount: "",
     };
@@ -325,7 +332,7 @@ export const PullOptions: Component<{
     const browser = mode === "browser";
     set("downloadMode", browser ? "browser" : "proxy");
     set("useProxy", mode === "server");
-    setDownloadMode(browser ? "browser" : "proxy");
+    savePullMode(mode);
   };
   const browserMode = () => pullMode() === "browser";
   const serverProxyMode = () => pullMode() === "server";
@@ -375,7 +382,7 @@ export const PullOptions: Component<{
   return (
     <div class="space-y-3 border-t border-zinc-800 pt-3">
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span class="text-xs text-zinc-400">本次拉取选项</span>
+        <span class="text-xs text-zinc-400">拉取选项</span>
         <label class="flex items-center gap-1.5 text-xs text-zinc-400" title="直接使用服务端现有网络连接">
           <input type="radio" name={modeName} checked={pullMode() === "none"} onChange={() => setPullMode("none")} />
           不使用代理
