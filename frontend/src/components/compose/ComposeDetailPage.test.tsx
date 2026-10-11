@@ -13,7 +13,7 @@ vi.mock("../../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../api/client")>(),
   get: mock.get,
 }));
-vi.mock("../../stores/resource", () => ({
+vi.mock("../../stores/resource", async (importOriginal) => ({ settled: (await importOriginal<typeof import("../../stores/resource")>()).settled,
   createResourceStore: () => ({ items: () => [], startPolling: vi.fn(), stopPolling: vi.fn() }),
 }));
 vi.mock("../../stores/tabs", async (importOriginal) => ({

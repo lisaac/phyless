@@ -1,8 +1,19 @@
-import { createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor, type Resource } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { get } from "../api/client";
 import { SETTLED_EVENT } from "./taskQueue";
 import { REFRESH_EVENT, autoRefresh, refreshSeconds } from "./refresh";
+
+/** Read a createResource value WITHOUT triggering <Suspense>: undefined until
+ *  the first load resolves (or on error — check res.error), then the latest
+ *  value, kept through refetches. Each route renders under one page-level
+ *  <Suspense> (App.tsx), so a bare `res()` read while pending blanks the whole
+ *  page — including any open modal — whenever a resource mounts or refetches.
+ *  Only `res.state`/`res.loading`/`res.error` and `res.latest` once resolved
+ *  are suspense-free; never read `res()` in components. */
+export function settled<T>(res: Resource<T>): T | undefined {
+  return res.state === "ready" || res.state === "refreshing" ? res.latest : undefined;
+}
 
 export interface ResourceStore<T> {
   items: Accessor<T>;

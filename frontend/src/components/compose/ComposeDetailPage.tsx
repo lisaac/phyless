@@ -4,7 +4,7 @@ import { get, imageInspectUrl, isApiNotFound } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { confirmOpenText, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
-import { createResourceStore } from "../../stores/resource";
+import { createResourceStore, settled } from "../../stores/resource";
 import { canSaveFile, createLatestFileRequest } from "../../stores/latestFile";
 import { createTabState, removeTab, setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
@@ -60,8 +60,8 @@ export const ComposeDetailPage: Component = () => {
     try { return { data: await get<any>(`/api/compose/detail?id=${encodeURIComponent(i)}`) }; }
     catch (error) { return { error }; }
   });
-  const detail = () => detailResult()?.data;
-  const detailError = () => detailResult()?.error;
+  const detail = () => settled(detailResult)?.data;
+  const detailError = () => settled(detailResult)?.error;
 
   createEffect(() => {
     if (!isApiNotFound(detailError())) return;

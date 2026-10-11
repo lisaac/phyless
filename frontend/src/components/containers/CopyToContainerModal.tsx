@@ -5,6 +5,7 @@ import { enqueue } from "../../stores/taskQueue";
 import { get } from "../../api/client";
 import { containerName } from "./containerActions";
 import type { ContainerSummary } from "../../types";
+import { settled } from "../../stores/resource";
 
 // Copies a file/dir from one container's filesystem straight into another's,
 // via the backend's copy-to endpoint (CopyFromContainer piped into
@@ -39,7 +40,7 @@ export const CopyToContainerModal: Component<{
     }
   });
 
-  const others = () => (containers() ?? []).filter((c) => c.Id !== props.source?.containerId);
+  const others = () => (settled(containers) ?? []).filter((c) => c.Id !== props.source?.containerId);
   const targetContainerLabel = () => {
     const c = others().find((x) => x.Id === targetId());
     return c ? containerName(c) : "";

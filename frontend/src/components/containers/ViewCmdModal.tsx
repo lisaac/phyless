@@ -2,6 +2,7 @@ import { Component, createResource } from "solid-js";
 import { get, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
 import { CreateContainerModal } from "./CreateContainerModal";
+import { settled } from "../../stores/resource";
 
 export const ViewCmdModal: Component<{ target: { id: string; name: string } | null; onClose: () => void }> = (props) => {
   const [cmd] = createResource(() => props.target, async (t) => {
@@ -18,7 +19,7 @@ export const ViewCmdModal: Component<{ target: { id: string; name: string } | nu
     <CreateContainerModal
       open={!!props.target && !cmd.loading}
       onClose={props.onClose}
-      initialRun={cmd() ?? ""}
+      initialRun={settled(cmd) ?? ""}
     />
   );
 };

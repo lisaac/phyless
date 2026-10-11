@@ -11,7 +11,7 @@ vi.mock("@solidjs/router", () => ({ A: (props: { children: unknown }) => props.c
 vi.mock("../../api/client", () => ({ get, getToken: () => "token" }));
 vi.mock("../../stores/auth", () => ({ hasRole: () => true }));
 vi.mock("../../stores/taskQueue", () => ({ enqueue, queued: vi.fn(), isPending: () => false, SETTLED_EVENT: "settled" }));
-vi.mock("../../stores/resource", () => ({ createResourceStore: () => ({
+vi.mock("../../stores/resource", async (importOriginal) => ({ settled: (await importOriginal<typeof import("../../stores/resource")>()).settled, createResourceStore: () => ({
   items: () => [{ Id: "sha256:abc", RepoTags: ["example/app:v2"], RepoDigests: [], Size: 123, Created: 1, UsedBy: [] }],
   loading: () => false, error: () => "", startPolling: vi.fn(), stopPolling: vi.fn(), refresh: vi.fn(),
 }) }));

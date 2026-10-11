@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { Suspense } from "solid-js";
+import { get } from "../../api/client";
 import {
   PullOptions,
   createPullOptions,
@@ -99,5 +101,17 @@ describe("pull options", () => {
     expect(pull.value.useProxy).toBe(true);
     expect(createPullOptions().value.useProxy).toBe(true);
     expect(pull.value.proxyUrl).toBe("http://proxy.example:8080");
+  });
+
+  it("switching mode never suspends the page while accounts/platform load", () => {
+    vi.mocked(get).mockReturnValue(new Promise(() => {}) as never); // fetches stay pending
+    const pull = createPullOptions();
+    render(() => <Suspense fallback={<p>page-fallback</p>}><PullOptions options={pull} showPlatform allowBrowser /></Suspense>);
+    expect(screen.queryByText("page-fallback")).toBeNull();
+    fireEvent.click(screen.getByLabelText("浏览器代理导入"));
+    expect(screen.queryByText("page-fallback")).toBeNull();
+    fireEvent.click(screen.getByLabelText("服务端代理"));
+    expect(screen.queryByText("page-fallback")).toBeNull();
+    vi.mocked(get).mockResolvedValue([] as never);
   });
 });

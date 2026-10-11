@@ -1,7 +1,7 @@
 import { Component, createSignal, createResource, onMount, onCleanup, Show, For } from "solid-js";
 import { enqueue, queued, isPending, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { A } from "@solidjs/router";
-import { createResourceStore } from "../../stores/resource";
+import { createResourceStore, settled } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { confirmAction } from "../shared/ConfirmModal";
@@ -133,8 +133,8 @@ export const ImageListPage: Component = () => {
     try { return { data: await get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`) }; }
     catch (error) { return { error }; }
   });
-  const inspectData = () => inspectResult()?.data;
-  const inspectError = () => inspectResult()?.error;
+  const inspectData = () => settled(inspectResult)?.data;
+  const inspectError = () => settled(inspectResult)?.error;
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());

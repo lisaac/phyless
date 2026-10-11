@@ -33,6 +33,7 @@ import { ContainerIcon } from "./ContainerIcon";
 import { ComposeIcon } from "../compose/composeShared";
 import type { NetworkSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
+import { settled } from "../../stores/resource";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 // Labels: system-ui (zinc-500, uppercase, 10px)
@@ -141,8 +142,8 @@ export const ContainerDetailPage: Component = () => {
     try { return { data: await get<any>(`/api/containers/${i}/inspect`) }; }
     catch (error) { return { error }; }
   });
-  const inspect = () => inspectResult()?.data;
-  const inspectError = () => inspectResult()?.error;
+  const inspect = () => settled(inspectResult)?.data;
+  const inspectError = () => settled(inspectResult)?.error;
 
   createEffect(() => {
     if (!isApiNotFound(inspectError())) return;
@@ -582,7 +583,7 @@ export const ContainerDetailPage: Component = () => {
             <Show when={netDlg()}>
               {(() => {
                 const connected = new Set(Object.keys(inspect()?.NetworkSettings?.Networks ?? {}));
-                const available = (networks() ?? []).filter(
+                const available = (settled(networks) ?? []).filter(
                   (n) => !connected.has(n.Name) && n.Name !== "none" && n.Name !== "ingress"
                 );
                 return (

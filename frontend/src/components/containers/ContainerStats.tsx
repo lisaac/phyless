@@ -3,6 +3,7 @@ import { connectWS, reportWSError } from "../../api/ws";
 import { get } from "../../api/client";
 import { cpuPercent, memUsageMB, memLimitMB, networkBytes, networkRates, type NetworkSample } from "../../api/stats";
 import { Sparkline } from "./Sparkline";
+import { settled } from "../../stores/resource";
 
 function fmtBytes(b: number): string {
   if (b < 1024) return `${b}B`;
@@ -85,7 +86,7 @@ export const ContainerStats: Component<{ id: string }> = (props) => {
           <span class="text-xs text-zinc-500">进程列表</span>
           <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => refetchProcs()}>刷新</button>
         </div>
-        <Show when={procs()}>
+        <Show when={settled(procs)}>
           {(p) => (
             <table class="w-full text-left">
               <thead>
@@ -107,7 +108,7 @@ export const ContainerStats: Component<{ id: string }> = (props) => {
             </table>
           )}
         </Show>
-        <Show when={!procs() && !procs.loading}>
+        <Show when={!settled(procs) && !procs.loading}>
           <p class="text-xs text-zinc-500">无法获取进程列表（容器可能已停止）</p>
         </Show>
       </div>

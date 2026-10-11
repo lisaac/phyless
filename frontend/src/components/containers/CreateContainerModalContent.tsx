@@ -13,6 +13,7 @@ import { emptyForm, formToPayload, formToRunCmd, parseRunIntoForm, type CreateFo
 import { inspectToRunCmd, displayImage } from "../../api/inspect";
 import { RegisterComposeModal } from "../compose/RegisterComposeModal";
 import type { ImageSummary, NetworkSummary, ContainerSummary, Template } from "../../types";
+import { settled } from "../../stores/resource";
 
 type Tab = "form" | "cmd";
 
@@ -148,12 +149,12 @@ export const CreateContainerModal: Component<{
   );
 
   const imageOptions = () =>
-    (allImages() ?? []).flatMap((img) => img.RepoTags ?? []).filter(Boolean);
+    (settled(allImages) ?? []).flatMap((img) => img.RepoTags ?? []).filter(Boolean);
   const networkOptions = () => [
     { value: "", label: "默认 (bridge)" },
     { value: "host", label: "host" },
     { value: "none", label: "none" },
-    ...(networks() ?? []).map((n) => ({ value: n.Name, label: n.Name })),
+    ...(settled(networks) ?? []).map((n) => ({ value: n.Name, label: n.Name })),
   ];
 
   const switchTab = (newTab: Tab) => {
@@ -341,24 +342,24 @@ export const CreateContainerModal: Component<{
             onChange={(e) => {
               const id = e.currentTarget.value;
               setSelectedTplId(id);
-              const tpl = (templates() ?? []).find((t) => t.id === id);
+              const tpl = (settled(templates) ?? []).find((t) => t.id === id);
               if (tpl) loadTemplate(tpl.cmd);
             }}
           >
             <option value="">选择模板…</option>
-            <For each={templates() ?? []}>
+            <For each={settled(templates) ?? []}>
               {(t) => <option value={t.id}>{t.name}</option>}
             </For>
           </select>
           <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-zinc-500">▾</span>
           </div>
-          <Show when={(templates() ?? []).length > 0}>
+          <Show when={(settled(templates) ?? []).length > 0}>
             <details class="relative shrink-0">
               <summary class="cursor-pointer border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-500 hover:text-zinc-200 list-none">
                 管理
               </summary>
               <div class="absolute right-0 z-10 mt-1 w-52 border border-zinc-700 bg-zinc-950 p-2 shadow-2xl">
-                <For each={templates() ?? []}>
+                <For each={settled(templates) ?? []}>
                   {(t) => (
                     <div class="flex items-center justify-between py-1 text-xs">
                       <span class="truncate text-zinc-300">{t.name}</span>
@@ -384,7 +385,7 @@ export const CreateContainerModal: Component<{
             }}
           >
             <option value="">从现有容器复制…</option>
-            <For each={containers() ?? []}>
+            <For each={settled(containers) ?? []}>
               {(c) => (
                 <option value={c.Id}>
                   {(c.Names[0] ?? "").replace(/^\//, "")} — {displayImage(c.Image, c.Labels)}

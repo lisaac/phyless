@@ -9,6 +9,7 @@ import type { Registry } from "../../types";
 import { Ico } from "./ActionButton";
 import { confirmAction } from "./ConfirmModal";
 import { browserAccount, type CredEntry, persistBrowserAccounts, type PullOptionsState } from "./PullOptions";
+import { settled } from "../../stores/resource";
 
 const KNOWN: Record<string, { label: string; cls: string }> = {
   "docker.io": { label: "Docker Hub", cls: "bg-sky-500/15 text-sky-300" },
@@ -222,7 +223,7 @@ export const FrontendAccounts: Component<{ options: PullOptionsState }> = (props
   let root: HTMLDivElement | undefined;
   onCleanup(() => controllers.forEach((c) => c.abort()));
 
-  const servers = () => registries() ?? [];
+  const servers = () => settled(registries) ?? [];
   const keyHost = (key: string): string => {
     const id = key.slice(2);
     if (key.startsWith("b:")) return value.creds.find((c) => c.id === id)?.host ?? "";
@@ -371,7 +372,7 @@ export const ServerAccounts: Component<{ options: PullOptionsState }> = (props) 
   const [editing, setEditing] = createSignal("");
   const [adding, setAdding] = createSignal<string | null>(null);
   const [status, setStatus] = createStore<Record<string, Status | undefined>>({});
-  const list = () => registries() ?? [];
+  const list = () => settled(registries) ?? [];
   const byId = (id: string) => list().find((r) => r.id === id);
 
   const selected = (host: string) => {

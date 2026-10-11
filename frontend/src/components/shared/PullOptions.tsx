@@ -19,6 +19,7 @@ import {
 } from "../../stores/browserPullSettings";
 import { registryCredsHost, type RegistryCreds } from "../../api/registryPull";
 import { FrontendAccounts, ServerAccounts } from "./RegistryAccounts";
+import { settled } from "../../stores/resource";
 
 export interface PullOptionsValue {
   proxyUrl?: string;
@@ -463,7 +464,7 @@ export const PullOptions: Component<{
           <input
             list={platformListId}
             class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 font-mono text-sm outline-none transition-colors focus:border-indigo-500"
-            placeholder={daemon() ? `${daemon()}（当前 Docker daemon）` : "留空使用 Docker daemon 平台"}
+            placeholder={settled(daemon) ? `${settled(daemon)}（当前 Docker daemon）` : "留空使用 Docker daemon 平台"}
             value={value.platform}
             onInput={(e) => set("platform", e.currentTarget.value)}
           />

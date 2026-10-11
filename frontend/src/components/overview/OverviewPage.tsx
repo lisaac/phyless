@@ -2,7 +2,7 @@ import { Component, For, Show, createResource, onMount, onCleanup } from "solid-
 import { useNavigate } from "@solidjs/router";
 import { get } from "../../api/client";
 import { fmtBytes } from "../../api/download";
-import { createPollingResource } from "../../stores/resource";
+import { createPollingResource, settled } from "../../stores/resource";
 import { REFRESH_EVENT } from "../../stores/refresh";
 import type { DockerInfo } from "../../types";
 import { ContainerIcon } from "../containers/ContainerIcon";
@@ -34,7 +34,7 @@ export const OverviewPage: Component = () => {
     { label: "网络", value: `${summary.items().networks}`, sub: "总数", to: "/networks", icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="5" cy="12" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="19" cy="18" r="2" /><path d="m7 11 10-4M7 13l10 4" /></svg> },
   ];
   const infoRows = () => {
-    const info = dockerInfo();
+    const info = settled(dockerInfo);
     if (!info) return [];
     const apiVersion = info.min_api_version ? `${info.api_version}（最低 ${info.min_api_version}）` : info.api_version;
     const cgroup = [info.cgroup_driver, info.cgroup_version && `v${info.cgroup_version}`].filter(Boolean).join(" / ");
@@ -79,7 +79,7 @@ export const OverviewPage: Component = () => {
         </For>
       </div>
 
-      <Show when={dockerInfo()} fallback={<Show when={dockerInfo.error}><p class="mt-6 text-sm text-red-400" role="status">无法加载 Docker 信息</p></Show>}>
+      <Show when={settled(dockerInfo)} fallback={<Show when={dockerInfo.error}><p class="mt-6 text-sm text-red-400" role="status">无法加载 Docker 信息</p></Show>}>
         <section class="mt-6 border border-zinc-800 bg-zinc-900">
           <h2 class="border-b border-zinc-800 px-4 py-3 text-sm font-semibold text-zinc-200">Docker 信息</h2>
           <dl class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
