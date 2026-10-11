@@ -99,7 +99,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
               </div>
             </label>
           </Show>
-          <PullOptions options={pull} multipleRegistries allowBrowser />
+          <PullOptions options={pull} allowBrowser />
           <div class="mt-4 flex justify-end gap-2">
             <Button onClick={close}>取消</Button>
             <Button variant="primary" onClick={start}>{VERB_LABEL[t().verb]}</Button>

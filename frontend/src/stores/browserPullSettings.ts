@@ -8,7 +8,7 @@
 // them). They are never sent to the phyless server. Remembering is off by
 // default and can be cleared from the pull dialog.
 
-import { registryCredsHost, type Creds, type RegistryCreds } from "../api/registryPull";
+import { registryCredsHost, type Creds } from "../api/registryPull";
 
 const WORKER_KEY = "phyless_pull_worker_url";
 const WORKER_LIST_KEY = "phyless_pull_worker_urls";
@@ -97,7 +97,7 @@ export function saveWorkerUrl(raw: string): string[] {
 export function removeWorkerUrl(raw: string): string[] {
   const value = validWorkerUrl(raw);
   const urls = getWorkerUrls().filter((url) => url !== value);
-  rememberCreds(value, null);
+  rememberAccounts(value, null);
   try {
     if (urls.length) {
       localStorage.setItem(WORKER_LIST_KEY, JSON.stringify(urls));
@@ -134,59 +134,59 @@ function isCreds(value: unknown): value is Creds {
     !!(value as Creds).username && !!(value as Creds).secret;
 }
 
-// Credentials of one Worker, keyed by normalized registry host. A legacy
-// single-account entry had no host; it is kept as Docker Hub's.
-function readHostCreds(value: unknown): RegistryCreds {
-  if (isCreds(value)) return { "docker.io": { username: value.username, secret: value.secret } };
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const out: RegistryCreds = {};
-  for (const [raw, creds] of Object.entries(value)) {
-    const host = registryCredsHost(raw);
-    if (host && isCreds(creds)) out[host] = { username: creds.username, secret: creds.secret };
+/** A registry account saved in this browser for the frontend proxy. */
+export interface StoredAccount { id: string; host: string; username: string; secret: string }
+/** One Worker's accounts plus which account each registry uses:
+ *  "b:<id>" (a browser account) or "s:<registry id>" (a phyless server account,
+ *  whose secret is fetched on use and never stored here). */
+export interface RememberedAccounts { accounts: StoredAccount[]; use: string[] }
+
+export const newAccountId = () => (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)).replace(/-/g, "").slice(0, 12);
+const useKeyPattern = /^[bs]:[\w-]{1,64}$/;
+
+function readAccounts(value: unknown): RememberedAccounts | null {
+  if (!value || typeof value !== "object" || !Array.isArray((value as RememberedAccounts).accounts)) return null;
+  const raw = value as { accounts: unknown[]; use?: unknown };
+  const accounts: StoredAccount[] = [];
+  for (const a of raw.accounts) {
+    const host = registryCredsHost(String((a as StoredAccount)?.host ?? ""));
+    const id = String((a as StoredAccount)?.id ?? "");
+    if (host && /^[\w-]{1,64}$/.test(id) && isCreds(a)) accounts.push({ id, host, username: a.username, secret: a.secret });
   }
-  return out;
+  const use = Array.isArray(raw.use) ? raw.use.filter((k): k is string => typeof k === "string" && useKeyPattern.test(k)) : [];
+  return accounts.length || use.length ? { accounts, use } : null;
 }
 
-function readCreds(): Record<string, RegistryCreds> {
+function readCreds(): Record<string, RememberedAccounts> {
   try {
-    const raw = localStorage.getItem(CREDS_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    // Migrate the oldest one-credential shape to the browser's current Worker.
-    if (isCreds(parsed)) {
-      const workerUrl = getWorkerUrl();
-      if (!workerUrl) return {};
-      const creds = { [workerUrl]: readHostCreds(parsed) };
-      localStorage.setItem(CREDS_KEY, JSON.stringify(creds));
-      return creds;
-    }
+    const parsed: unknown = JSON.parse(localStorage.getItem(CREDS_KEY) ?? "{}");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const creds: Record<string, RegistryCreds> = {};
+    const all: Record<string, RememberedAccounts> = {};
     for (const [url, value] of Object.entries(parsed)) {
       const workerUrl = validWorkerUrl(url);
-      const hosts = readHostCreds(value);
-      if (workerUrl && Object.keys(hosts).length) creds[workerUrl] = hosts;
+      const data = workerUrl ? readAccounts(value) : null;
+      if (data) all[workerUrl] = data;
     }
-    return creds;
+    return all;
   } catch {
     return {};
   }
 }
 
-export function getRememberedCreds(workerUrl: string): RegistryCreds | null {
+export function getRememberedAccounts(workerUrl: string): RememberedAccounts | null {
   const url = validWorkerUrl(workerUrl);
   if (!url) return null;
-  const creds = readCreds()[url];
-  return creds ? structuredClone(creds) : null;
+  const data = readCreds()[url];
+  return data ? structuredClone(data) : null;
 }
 
-export function rememberCreds(workerUrl: string, creds: RegistryCreds | null): void {
+export function rememberAccounts(workerUrl: string, data: RememberedAccounts | null): void {
   const url = validWorkerUrl(workerUrl);
   if (!url) return;
   try {
     const all = readCreds();
-    const hosts = readHostCreds(creds);
-    if (Object.keys(hosts).length) all[url] = hosts;
+    const read = data ? readAccounts(data) : null;
+    if (read) all[url] = read;
     else delete all[url];
     if (Object.keys(all).length) localStorage.setItem(CREDS_KEY, JSON.stringify(all));
     else localStorage.removeItem(CREDS_KEY);

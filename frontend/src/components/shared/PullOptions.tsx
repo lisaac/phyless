@@ -12,44 +12,59 @@ import {
   getWorkerUrls,
   removeWorkerUrl,
   saveWorkerUrl,
-  getRememberedCreds,
-  rememberCreds,
+  getRememberedAccounts,
+  rememberAccounts,
   validWorkerUrl,
 } from "../../stores/browserPullSettings";
 import { registryCredsHost, type RegistryCreds } from "../../api/registryPull";
-import { RegistryAccounts, ServerAccounts } from "./RegistryAccounts";
+import { FrontendAccounts, ServerAccounts } from "./RegistryAccounts";
 
 export interface PullOptionsValue {
   proxyUrl?: string;
   // Derived from the selected mode; the remembered URL alone never sends a proxy.
   useProxy?: boolean;
-  registryId?: string;
+  // Server-stored accounts for server-side pulls: at most one per registry.
   registryIds?: string[];
   platform?: string;
   // Browser-download mode: pull the image in the browser (via the CF worker)
   // and stream it into the daemon, instead of the server-side proxy path.
   downloadMode?: DownloadMode;
   workerUrl?: string;
-  // Private registry accounts for the browser path, one per registry host.
+  // Accounts saved in this browser for the frontend proxy (several per
+  // registry allowed), and which account each registry uses: "b:<id>" or
+  // "s:<server registry id>" — at most one key per registry.
   creds?: CredEntry[];
+  browserUse?: string[];
+  // Secrets of server accounts picked for the frontend proxy; memory only.
+  revealed?: Record<string, CredEntry>;
   rememberCreds?: boolean;
   // Set by the search panel to open the account form for a registry host.
   addAccount?: string;
 }
 
-export interface CredEntry { host: string; username: string; secret: string }
+export interface CredEntry { id: string; host: string; username: string; secret: string }
 
-const credEntries = (creds: RegistryCreds | null): CredEntry[] =>
-  Object.entries(creds ?? {}).map(([host, c]) => ({ host, ...c }));
+/** The account a frontend-proxy key points at, if it is usable now. */
+export function browserAccount(value: PullOptionsValue, key: string): CredEntry | undefined {
+  const id = key.slice(2);
+  return key.startsWith("b:") ? value.creds?.find((c) => c.id === id) : value.revealed?.[id];
+}
 
-/** Complete entries as a host → account map; undefined when there are none. */
+/** The picked accounts as a host → account map; undefined when there are none. */
 export function browserCreds(value: PullOptionsValue): RegistryCreds | undefined {
   const out: RegistryCreds = {};
-  for (const entry of value.creds ?? []) {
-    const host = registryCredsHost(entry.host);
+  for (const key of value.browserUse ?? []) {
+    const entry = browserAccount(value, key);
+    const host = entry && registryCredsHost(entry.host);
     if (host && entry.username && entry.secret) out[host] = { username: entry.username, secret: entry.secret };
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+/** Saves this browser's accounts and picks for the Worker, when remembering is
+ *  on. Server-account secrets are never part of it. */
+export function persistBrowserAccounts(value: PullOptionsValue): void {
+  if (value.rememberCreds && value.workerUrl) rememberAccounts(value.workerUrl, { accounts: value.creds ?? [], use: value.browserUse ?? [] });
 }
 
 /** Task-spec secret carrying browser credentials (never persisted). */
@@ -158,7 +173,6 @@ function clearPullProxyUrls(): void {
 export function pullOptionsPayload(value: PullOptionsValue): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (value.useProxy && value.proxyUrl?.trim()) out.proxy_url = value.proxyUrl.trim();
-  if (value.registryId) out.registry_id = value.registryId;
   if (value.registryIds?.length) out.registry_ids = value.registryIds;
   if (value.platform?.trim()) out.platform = value.platform.trim();
   return out;
@@ -170,11 +184,12 @@ export function pullOptionsPayload(value: PullOptionsValue): Record<string, unkn
 export function createPullOptions() {
   const fresh = (): Required<PullOptionsValue> => {
     const workerUrl = getWorkerUrl();
-    const remembered = getRememberedCreds(workerUrl);
+    const remembered = getRememberedAccounts(workerUrl);
     return {
-      proxyUrl: readPullProxyUrl(), useProxy: false, registryId: "", registryIds: [], platform: "",
+      proxyUrl: readPullProxyUrl(), useProxy: false, registryIds: [], platform: "",
       downloadMode: getDownloadMode(), workerUrl,
-      creds: credEntries(remembered), rememberCreds: !!remembered, addAccount: "",
+      creds: remembered?.accounts ?? [], browserUse: remembered?.use ?? [], revealed: {},
+      rememberCreds: !!remembered, addAccount: "",
     };
   };
   const [value, set] = createStore(fresh());
@@ -289,7 +304,6 @@ const SavedAddressInput: Component<{
 export const PullOptions: Component<{
   options: PullOptionsState;
   showPlatform?: boolean;
-  multipleRegistries?: boolean;
   // Expose the browser-download mode. Only entry points that actually handle a
   // browser-pull task (image pull, compose) set this; others stay proxy-only.
   allowBrowser?: boolean;
@@ -317,10 +331,11 @@ export const PullOptions: Component<{
   const serverProxyMode = () => pullMode() === "server";
 
   const setWorker = (workerUrl: string) => {
-    const creds = getRememberedCreds(workerUrl);
+    const remembered = getRememberedAccounts(workerUrl);
     set("workerUrl", workerUrl);
-    set("creds", credEntries(creds));
-    set("rememberCreds", !!creds);
+    set("creds", remembered?.accounts ?? []);
+    set("browserUse", remembered?.use ?? []);
+    set("rememberCreds", !!remembered);
   };
 
   const saveWorker = () => {
@@ -392,7 +407,7 @@ export const PullOptions: Component<{
             />
             <p class="mt-1 text-[11px] text-zinc-600">浏览器经此 worker 访问 registry；地址列表仅保存在此浏览器，且不含用户名/密码。</p>
           </div>
-          <RegistryAccounts options={props.options} />
+          <FrontendAccounts options={props.options} />
           <label class="flex items-center gap-1.5 text-xs text-zinc-500">
             <input
               type="checkbox"
@@ -400,12 +415,13 @@ export const PullOptions: Component<{
               onChange={(e) => {
                 const on = e.currentTarget.checked;
                 set("rememberCreds", on);
-                rememberCreds(value.workerUrl, on ? browserCreds(value) ?? null : null);
+                if (on) persistBrowserAccounts(value);
+                else rememberAccounts(value.workerUrl, null);
               }}
             />
             记住凭据（仅此浏览器，明文存于 localStorage，XSS 可读取）
           </label>
-          <p class="text-[11px] text-zinc-600">每个镜像只使用其所在 registry 的账号；Docker Hub 账号同时用于搜索。账号按前端代理地址分组保存，切换地址会载入对应账号，不会发送给 phyless 服务端。</p>
+          <p class="text-[11px] text-zinc-600">每个镜像只使用其所在 registry 选中的账号；Docker Hub 账号同时用于搜索。浏览器账号按前端代理地址保存在此浏览器，切换地址会载入对应账号。</p>
           <Show when={browserMode()}>
             <p class="text-[11px] text-zinc-600">限制：仅支持 Linux 的 tag 镜像；digest、foreign layer 不支持。Compose Build 仅预拉可静态解析的 Dockerfile FROM。</p>
           </Show>
@@ -430,7 +446,7 @@ export const PullOptions: Component<{
             </div>
           </Show>
 
-        <ServerAccounts options={props.options} multiple={props.multipleRegistries} />
+        <ServerAccounts options={props.options} />
         </div>
       </Show>
 

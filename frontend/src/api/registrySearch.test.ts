@@ -223,7 +223,7 @@ describe("Docker Hub account", () => {
 });
 
 describe("server route", () => {
-  const S = { kind: "server" as const, proxyUrl: " http://proxy:7890 ", registryId: "reg-1" };
+  const S = { kind: "server" as const, proxyUrl: " http://proxy:7890 ", registryIds: ["reg-1"] };
   const sent = (call: unknown[]) => ({ url: call[0], init: call[1] as RequestInit, body: JSON.parse((call[1] as RequestInit).body as string) });
 
   it("relays Hub search and tags through phyless with the pull proxy, never the Worker or Hub login", async () => {
@@ -238,7 +238,7 @@ describe("server route", () => {
     expect(first.url).toBe("/api/images/remote");
     expect(first.init.method).toBe("POST");
     expect((first.init.headers as Record<string, string>).Authorization).toBe("Bearer jwt-phyless");
-    expect(first.body).toEqual({ url: expect.stringMatching(/^https:\/\/hub\.docker\.com\/v2\/search\/repositories\/\?query=nginx/), proxy_url: "http://proxy:7890", registry_id: "reg-1" });
+    expect(first.body).toEqual({ url: expect.stringMatching(/^https:\/\/hub\.docker\.com\/v2\/search\/repositories\/\?query=nginx/), proxy_url: "http://proxy:7890", registry_ids: ["reg-1"] });
     expect(new URL(sent(fetch.mock.calls[1]).body.url).searchParams.get("name")).toBe("1.27");
     expect(search.items[0].name).toBe("nginx");
     expect(search.auth).toEqual({});
@@ -324,9 +324,9 @@ describe("describeTag", () => {
       .mockResolvedValueOnce(json({ config: { digest: d("e"), size: 10 }, layers: [{ size: 90 }] }))
       .mockResolvedValueOnce(json({ created: "bad", architecture: "arm", variant: "v7" }));
     vi.stubGlobal("fetch", fetch);
-    const result = await describeTag("registry.example/team/app:v1", { kind: "server", registryId: "r1" }, signal());
+    const result = await describeTag("registry.example/team/app:v1", { kind: "server", registryIds: ["r1"] }, signal());
     const first = JSON.parse(fetch.mock.calls[0][1].body);
-    expect(first).toEqual({ url: "https://registry.example/v2/team/app/manifests/v1", accept: expect.stringContaining("image.index"), registry_id: "r1" });
+    expect(first).toEqual({ url: "https://registry.example/v2/team/app/manifests/v1", accept: expect.stringContaining("image.index"), registry_ids: ["r1"] });
     expect(JSON.parse(fetch.mock.calls[1][1].body).url).toBe(`https://registry.example/v2/team/app/blobs/${d("e")}`);
     expect(result).toEqual({ updated: undefined, size: 100, platforms: ["arm/v7"], digest: undefined, labels: {} });
   });

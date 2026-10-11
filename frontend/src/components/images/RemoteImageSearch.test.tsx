@@ -242,7 +242,7 @@ describe("remote image search", () => {
   });
 
   it("follows a server route without any Worker, and says which path it uses", async () => {
-    const [route, setRoute] = createSignal<{ kind: "server"; proxyUrl?: string; registryId?: string }>({ kind: "server" });
+    const [route, setRoute] = createSignal<{ kind: "server"; proxyUrl?: string; registryIds?: string[] }>({ kind: "server" });
     search.mockResolvedValue({ items: [repo("nginx", true)], hasMore: false, total: 1, auth: {} });
     render(() => <RemoteImageSearch initialRef="nginx" route={route()} onSelect={vi.fn()} onAddAccount={vi.fn()} />);
     await tick();
@@ -250,7 +250,7 @@ describe("remote image search", () => {
     expect(screen.getByText("服务端直连")).toBeTruthy();
     expect(screen.queryByText("搜索需要 CF Worker")).toBeNull();
     expect(screen.queryByRole("button", { name: "添加 Docker Hub 账号" })).toBeNull();
-    setRoute({ kind: "server", registryId: "reg-1" });
+    setRoute({ kind: "server", registryIds: ["reg-1"] });
     await tick();
     expect(search).toHaveBeenCalledTimes(1);
     setRoute({ kind: "server", proxyUrl: "http://proxy.lan:7890" });
@@ -283,7 +283,7 @@ describe("remote image search", () => {
     render(() => <RemoteImageSearch initialRef="ghcr.io/o/app" route={{ kind: "server" }} onSelect={vi.fn()} />);
     await tick();
     expect(describeTagMock).toHaveBeenCalledTimes(4);
-    expect(describeTagMock.mock.calls[0].slice(0, 2)).toEqual(["ghcr.io/o/app:latest", { kind: "server", proxyUrl: "", registryId: "" }]);
+    expect(describeTagMock.mock.calls[0].slice(0, 2)).toEqual(["ghcr.io/o/app:latest", { kind: "server", proxyUrl: "", registryIds: [] }]);
     expect(screen.getAllByLabelText("读取镜像信息")).toHaveLength(7);
     release();
     await vi.advanceTimersByTimeAsync(0);

@@ -1,14 +1,14 @@
-import { type Component, createEffect, createResource, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
+import { type Component, createEffect, createResource, createSignal, createUniqueId, For, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
 import { get, request } from "../../api/client";
 import { registryCredsHost } from "../../api/registryPull";
+import { verifyRegistryCreds } from "../../api/registrySearch";
+import { newAccountId, validWorkerUrl } from "../../stores/browserPullSettings";
 import { queued } from "../../stores/taskQueue";
 import type { Registry } from "../../types";
-import { confirmAction } from "./ConfirmModal";
-import { verifyRegistryCreds } from "../../api/registrySearch";
-import { rememberCreds, validWorkerUrl } from "../../stores/browserPullSettings";
 import { Ico } from "./ActionButton";
-import { browserCreds, type CredEntry, type PullOptionsState } from "./PullOptions";
+import { confirmAction } from "./ConfirmModal";
+import { browserAccount, type CredEntry, persistBrowserAccounts, type PullOptionsState } from "./PullOptions";
 
 const KNOWN: Record<string, { label: string; cls: string }> = {
   "docker.io": { label: "Docker Hub", cls: "bg-sky-500/15 text-sky-300" },
@@ -22,35 +22,38 @@ const ICON_TRASH = "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3";
 const ICON_CHECK = "M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4";
 
 type Status = { state: "checking" | "ok" | "error"; message?: string };
+type Draft = { host: string; username: string; secret: string };
 
 const inputCls = "w-full min-w-0 border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs outline-none transition-colors focus:border-indigo-500";
+const hostOf = (r: Registry) => registryCredsHost(r.url) || r.url;
+const errorText = (e: unknown, fallback: string) => e instanceof Error ? e.message : fallback;
 
 /** Inline add/edit form. Typing stays in local signals, so the list never re-renders mid-edit. */
 export const AccountEditor: Component<{
-  initial: CredEntry;
+  initial: Draft;
   isNew: boolean;
   /** Editing a server account: a blank password keeps the stored one. */
   keepSecretHint?: boolean;
-  onSave: (entry: CredEntry) => string | Promise<string>;
+  onSave: (draft: Draft) => string | Promise<string>;
   onCancel: () => void;
 }> = (props) => {
   const [host, setHost] = createSignal(props.initial.host);
   const [username, setUsername] = createSignal(props.initial.username);
   const [secret, setSecret] = createSignal(props.initial.secret);
   const [error, setError] = createSignal("");
-  const listId = createUniqueId();
   const [saving, setSaving] = createSignal(false);
+  const listId = createUniqueId();
   const save = async () => {
     if (saving()) return;
     setSaving(true);
     try { setError(await props.onSave({ host: host(), username: username().trim(), secret: secret() })); } finally { setSaving(false); }
   };
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter") { e.preventDefault(); save(); }
+    if (e.key === "Enter") { e.preventDefault(); void save(); }
     if (e.key === "Escape") { e.stopPropagation(); props.onCancel(); }
   };
   return (
-    <div class="space-y-2 rounded-md border border-indigo-500/40 bg-indigo-500/5 p-2.5" onKeyDown={onKeyDown}>
+    <div class="space-y-2 border-t border-indigo-500/30 bg-indigo-500/5 p-2.5" onKeyDown={onKeyDown}>
       <span class="block text-[11px] text-zinc-400">{props.isNew ? "添加仓库账号" : "编辑仓库账号"}</span>
       <input
         class={`${inputCls} font-mono ${host().trim() && !registryCredsHost(host()) ? "border-red-500/60" : ""}`}
@@ -83,7 +86,7 @@ export const AccountEditor: Component<{
           onInput={(e) => setSecret(e.currentTarget.value)}
         />
       </div>
-      <Show when={host().trim() === "docker.io" || registryCredsHost(host()) === "docker.io"}>
+      <Show when={registryCredsHost(host()) === "docker.io"}>
         <p class="text-[11px] text-zinc-500">推荐使用 Docker Hub Personal Access Token（只读权限即可）。</p>
       </Show>
       <Show when={error()}><p class="text-[11px] text-red-400">{error()}</p></Show>
@@ -95,180 +98,288 @@ export const AccountEditor: Component<{
   );
 };
 
-/** One account: registry badge, user, verification state and actions. With
- *  `select`, clicking the card toggles it for this pull (server accounts). */
-export const AccountCard: Component<{
+/** One account row inside a registry group. */
+export interface PickerRow {
+  key: string;
   host: string;
   username: string;
+  /** Where it is saved, when a group mixes sources. */
+  source?: "浏览器" | "服务端";
   status?: Status;
-  select?: { kind: "radio" | "checkbox"; checked: boolean; onToggle: () => void };
+  /** Replaces the row while it is being edited. */
+  editor?: JSX.Element;
   onVerify: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}
+
+const StatusChip: Component<{ status?: Status }> = (props) => (
+  <Show when={props.status}>
+    <span class={`shrink-0 rounded px-1.5 text-[10px] leading-4 ${
+      props.status?.state === "ok" ? "bg-emerald-500/10 text-emerald-300" : props.status?.state === "error" ? "bg-red-500/10 text-red-300" : "bg-zinc-800 text-zinc-400"
+    }`}>{props.status?.state === "ok" ? "✓ 可用" : props.status?.state === "error" ? "✗ 失败" : "验证中…"}</span>
+  </Show>
+);
+
+/** Accounts grouped by registry; each registry uses one account or none. */
+export const AccountPicker: Component<{
+  rows: PickerRow[];
+  selected: (host: string) => string;
+  onSelect: (host: string, key: string) => void;
+  onAdd: (host: string) => void;
+  /** An add form: inside its registry's group, or below the groups. */
+  adding?: { host: string; editor: JSX.Element };
 }> = (props) => {
-  const known = () => KNOWN[props.host];
+  const name = createUniqueId();
+  const hosts = () => {
+    const seen = [...new Set([...props.rows.map((r) => r.host), ...(props.adding?.host ? [props.adding.host] : [])])];
+    const rank = (h: string) => { const i = PRESETS.indexOf(h); return i < 0 ? PRESETS.length : i; };
+    return seen.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  };
+  const rowCls = (on: boolean) => `flex cursor-pointer items-center gap-2 px-2.5 py-1.5 transition-colors ${on ? "bg-indigo-500/10" : "hover:bg-zinc-800/50"}`;
   return (
-    <div class={`rounded-md border px-2.5 py-2 transition-colors ${props.select?.checked ? "border-indigo-500/60 bg-indigo-500/10" : "border-zinc-800 bg-zinc-950/40"}`}>
-      <div class="flex items-center gap-2.5">
-        <Show when={props.select}>
-          {(sel) => (
-            <input
-              type={sel().kind}
-              class="shrink-0"
-              aria-label={`本次拉取使用 ${props.username} @ ${props.host}`}
-              checked={sel().checked}
-              onChange={() => sel().onToggle()}
-            />
-          )}
-        </Show>
-        <span class={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold uppercase ${known()?.cls ?? "bg-indigo-500/15 text-indigo-300"}`} aria-hidden="true">
-          {(known()?.label ?? props.host).slice(0, 2)}
-        </span>
-        <div class={`min-w-0 flex-1 ${props.select ? "cursor-pointer" : ""}`} onClick={() => props.select?.onToggle()}>
-          <div class="flex min-w-0 items-center gap-1.5">
-            <span class="truncate text-xs text-zinc-200">{known()?.label ?? props.host}</span>
-            <Show when={props.status}>
-              <span class={`shrink-0 rounded px-1.5 text-[10px] leading-4 ${
-                props.status?.state === "ok" ? "bg-emerald-500/10 text-emerald-300" : props.status?.state === "error" ? "bg-red-500/10 text-red-300" : "bg-zinc-800 text-zinc-400"
-              }`}>{props.status?.state === "ok" ? "✓ 可用" : props.status?.state === "error" ? "✗ 失败" : "验证中…"}</span>
-            </Show>
+    <div class="space-y-2">
+      <For each={hosts()}>{(host) => {
+        const known = () => KNOWN[host];
+        const rows = () => props.rows.filter((r) => r.host === host);
+        return (
+          <div class="overflow-hidden rounded-md border border-zinc-800" role="radiogroup" aria-label={`${known()?.label ?? host} 账号`}>
+            <div class="flex items-center gap-2 bg-zinc-950/40 px-2.5 py-1.5">
+              <span class={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-[10px] font-semibold uppercase ${known()?.cls ?? "bg-indigo-500/15 text-indigo-300"}`} aria-hidden="true">
+                {(known()?.label ?? host).slice(0, 2)}
+              </span>
+              <span class="truncate text-xs text-zinc-200">{known()?.label ?? host}</span>
+              <Show when={known()}><span class="truncate font-mono text-[10px] text-zinc-600">{host}</span></Show>
+              <button type="button" class="ml-auto shrink-0 text-[11px] text-indigo-400 hover:text-indigo-300" aria-label={`为 ${host} 添加账号`} onClick={() => props.onAdd(host)}>+ 账号</button>
+            </div>
+            <label class={`border-t border-zinc-800/60 ${rowCls(props.selected(host) === "")}`}>
+              <input type="radio" name={`${name}-${host}`} aria-label={`${host} 不使用账号`} checked={props.selected(host) === ""} onChange={() => props.onSelect(host, "")} />
+              <span class="text-xs text-zinc-400">不使用账号（匿名）</span>
+            </label>
+            <For each={rows()}>{(row) => (
+              <Show when={!row.editor} fallback={row.editor}>
+                <div class="border-t border-zinc-800/60">
+                  <label class={rowCls(props.selected(host) === row.key)}>
+                    <input
+                      type="radio"
+                      name={`${name}-${host}`}
+                      aria-label={`使用 ${row.username} @ ${host}${row.source ? `（${row.source}）` : ""}`}
+                      checked={props.selected(host) === row.key}
+                      onChange={() => props.onSelect(host, row.key)}
+                    />
+                    <span class="min-w-0 truncate font-mono text-xs text-zinc-200" title={`${row.username} @ ${host}`}>{row.username}</span>
+                    <Show when={row.source}>
+                      <span class={`shrink-0 rounded px-1 text-[10px] leading-4 ${row.source === "服务端" ? "bg-indigo-500/10 text-indigo-300" : "bg-zinc-800 text-zinc-400"}`}>{row.source}</span>
+                    </Show>
+                    <StatusChip status={row.status} />
+                    <span class="ml-auto flex shrink-0 text-zinc-500">
+                      <button type="button" class="p-1 transition-colors hover:text-zinc-200 disabled:opacity-40" title="验证账号" aria-label={`验证账号 ${row.username} @ ${host}`} disabled={row.status?.state === "checking"} onClick={(e) => { e.preventDefault(); row.onVerify(); }}><Ico path={ICON_CHECK} /></button>
+                      <Show when={row.onEdit}>
+                        <button type="button" class="p-1 transition-colors hover:text-zinc-200" title="编辑" aria-label={`编辑账号 ${row.username} @ ${host}`} onClick={(e) => { e.preventDefault(); row.onEdit!(); }}><Ico path={ICON_EDIT} /></button>
+                      </Show>
+                      <Show when={row.onDelete}>
+                        <button type="button" class="p-1 transition-colors hover:text-red-400" title="删除" aria-label={`删除账号 ${row.username} @ ${host}`} onClick={(e) => { e.preventDefault(); row.onDelete!(); }}><Ico path={ICON_TRASH} /></button>
+                      </Show>
+                    </span>
+                  </label>
+                  <Show when={row.status?.state === "error" && row.status?.message}>
+                    <p class="break-words px-2.5 pb-1.5 pl-8 text-[11px] text-red-400">{row.status?.message}</p>
+                  </Show>
+                </div>
+              </Show>
+            )}</For>
+            <Show when={props.adding?.host === host}>{props.adding!.editor}</Show>
           </div>
-          <div class="truncate font-mono text-[11px] text-zinc-500" title={`${props.username} @ ${props.host}`}>
-            {known() ? `${props.username} · ${props.host}` : props.username}
-          </div>
-        </div>
-        <div class="flex shrink-0 text-zinc-500">
-          <button type="button" class="p-1 transition-colors hover:text-zinc-200 disabled:opacity-40" title="验证账号" aria-label={`验证账号 ${props.host}`} disabled={props.status?.state === "checking"} onClick={props.onVerify}><Ico path={ICON_CHECK} /></button>
-          <button type="button" class="p-1 transition-colors hover:text-zinc-200" title="编辑" aria-label={`编辑账号 ${props.host}`} onClick={props.onEdit}><Ico path={ICON_EDIT} /></button>
-          <button type="button" class="p-1 transition-colors hover:text-red-400" title="删除" aria-label={`删除账号 ${props.host}`} onClick={props.onDelete}><Ico path={ICON_TRASH} /></button>
-        </div>
-      </div>
-      <Show when={props.status?.state === "error" && props.status?.message}>
-        <p class="mt-1.5 break-words text-[11px] text-red-400">{props.status?.message}</p>
+        );
+      }}</For>
+      <Show when={props.adding && !props.adding.host}>
+        <div class="overflow-hidden rounded-md border border-zinc-800">{props.adding!.editor}</div>
       </Show>
     </div>
   );
 };
 
-/** Browser-side registry accounts: one per host, verified through the Worker. */
-export const RegistryAccounts: Component<{ options: PullOptionsState }> = (props) => {
+const EmptyAccounts: Component<{ text: string; onAdd: (host: string) => void }> = (props) => (
+  <div class="rounded-md border border-dashed border-zinc-700 px-3 py-3 text-center">
+    <p class="text-[11px] text-zinc-500">{props.text}</p>
+    <div class="mt-2 flex flex-wrap justify-center gap-3">
+      <button type="button" class="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => props.onAdd("docker.io")}>+ 添加 Docker Hub 账号</button>
+      <button type="button" class="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => props.onAdd("")}>+ 其他 registry</button>
+    </div>
+  </div>
+);
+
+/** Frontend-proxy accounts: ones saved in this browser plus phyless server
+ *  accounts. A picked server account's secret is fetched for this pull only
+ *  (memory, never localStorage). Verification goes through the Worker. */
+export const FrontendAccounts: Component<{ options: PullOptionsState }> = (props) => {
   const { value, set } = props.options;
+  const [registries] = createResource(() => get<Registry[]>("/api/registries").catch(() => [] as Registry[]));
   const [editing, setEditing] = createSignal("");
-  const [adding, setAdding] = createSignal<CredEntry | null>(null);
+  const [adding, setAdding] = createSignal<string | null>(null);
   const [status, setStatus] = createStore<Record<string, Status | undefined>>({});
   const controllers = new Map<string, AbortController>();
   let root: HTMLDivElement | undefined;
   onCleanup(() => controllers.forEach((c) => c.abort()));
 
-  const persist = () => { if (value.rememberCreds) rememberCreds(value.workerUrl, browserCreds(value) ?? null); };
+  const servers = () => registries() ?? [];
+  const keyHost = (key: string): string => {
+    const id = key.slice(2);
+    if (key.startsWith("b:")) return value.creds.find((c) => c.id === id)?.host ?? "";
+    const r = servers().find((x) => x.id === id);
+    return r ? hostOf(r) : value.revealed[id]?.host ?? "";
+  };
+  const selected = (host: string) => value.browserUse.find((k) => keyHost(k) === host) ?? "";
 
-  const verify = async (entry: CredEntry) => {
-    const workerUrl = validWorkerUrl(value.workerUrl);
-    if (!workerUrl) { setStatus(entry.host, { state: "error", message: "请先填写前端代理地址（CF worker）" }); return; }
-    controllers.get(entry.host)?.abort();
-    const controller = new AbortController();
-    controllers.set(entry.host, controller);
-    setStatus(entry.host, { state: "checking" });
-    try {
-      await verifyRegistryCreds(workerUrl, entry.host, { username: entry.username, secret: entry.secret }, controller.signal);
-      if (!controller.signal.aborted) setStatus(entry.host, { state: "ok" });
-    } catch (e) {
-      if (!controller.signal.aborted) setStatus(entry.host, { state: "error", message: e instanceof Error ? e.message : "验证失败" });
+  const reveal = async (id: string): Promise<CredEntry> => {
+    const cached = value.revealed[id];
+    if (cached) return cached;
+    const r = await request<{ url: string; username: string; password: string }>("POST", `/api/registries/${encodeURIComponent(id)}/credentials`);
+    const entry = { id, host: registryCredsHost(r.url) || r.url, username: r.username, secret: r.password };
+    set("revealed", id, entry);
+    return entry;
+  };
+
+  const select = (host: string, key: string) => {
+    set("browserUse", (keys) => [...keys.filter((k) => keyHost(k) !== host), ...(key ? [key] : [])]);
+    persistBrowserAccounts(value);
+    if (key.startsWith("s:")) {
+      reveal(key.slice(2)).catch((e) => {
+        setStatus(key, { state: "error", message: `无法取用服务端账号：${errorText(e, "请求失败")}` });
+        set("browserUse", (keys) => keys.filter((k) => k !== key));
+        persistBrowserAccounts(value);
+      });
     }
   };
 
-  const save = (original: string, draft: CredEntry): string => {
+  // Picks remembered from an earlier visit still need their server secret.
+  onMount(() => {
+    for (const key of value.browserUse) {
+      if (!key.startsWith("s:")) continue;
+      reveal(key.slice(2)).catch(() => {
+        set("browserUse", (keys) => keys.filter((k) => k !== key));
+        persistBrowserAccounts(value);
+      });
+    }
+  });
+
+  const verify = async (key: string) => {
+    const workerUrl = validWorkerUrl(value.workerUrl);
+    if (!workerUrl) { setStatus(key, { state: "error", message: "请先填写前端代理地址（CF worker）" }); return; }
+    controllers.get(key)?.abort();
+    const controller = new AbortController();
+    controllers.set(key, controller);
+    setStatus(key, { state: "checking" });
+    try {
+      const account = key.startsWith("s:") ? await reveal(key.slice(2)) : browserAccount(value, key);
+      if (!account) throw new Error("账号不存在");
+      await verifyRegistryCreds(workerUrl, account.host, { username: account.username, secret: account.secret }, controller.signal);
+      if (!controller.signal.aborted) setStatus(key, { state: "ok" });
+    } catch (e) {
+      if (!controller.signal.aborted) setStatus(key, { state: "error", message: errorText(e, "验证失败") });
+    }
+  };
+
+  const save = (id: string, draft: Draft): string => {
     const host = registryCredsHost(draft.host);
     if (!host) return "请输入有效的 registry 地址，如 docker.io、ghcr.io、registry.example.com:5000";
     if (!draft.username || !draft.secret) return "请填写用户名和密码 / Token";
-    if (host !== original && value.creds.some((c) => c.host === host)) return `已存在 ${host} 的账号，请直接编辑`;
-    const entry = { host, username: draft.username, secret: draft.secret };
-    set("creds", (list) => original ? list.map((c) => c.host === original ? entry : c) : [...list, entry]);
-    persist();
+    const entry: CredEntry = { id: id || newAccountId(), host, username: draft.username, secret: draft.secret };
+    const key = `b:${entry.id}`;
+    const wasUsed = value.browserUse.includes(key);
+    set("creds", (list) => id ? list.map((c) => c.id === id ? entry : c) : [...list, entry]);
+    // A new account, or an edited one still in use, becomes its registry's pick.
+    if (!id || wasUsed) select(host, key);
+    else persistBrowserAccounts(value);
     setEditing(""); setAdding(null);
-    void verify(entry);
+    void verify(key);
     return "";
   };
 
-  const remove = (host: string) => {
-    controllers.get(host)?.abort();
-    set("creds", (list) => list.filter((c) => c.host !== host));
-    setStatus(host, undefined);
-    persist();
+  const remove = (id: string) => {
+    const key = `b:${id}`;
+    controllers.get(key)?.abort();
+    set("browserUse", (keys) => keys.filter((k) => k !== key));
+    set("creds", (list) => list.filter((c) => c.id !== id));
+    setStatus(key, undefined);
+    persistBrowserAccounts(value);
   };
 
-  const startAdd = (host = "") => { setEditing(""); setAdding({ host, username: "", secret: "" }); };
+  const startAdd = (host: string) => { setEditing(""); setAdding(host); };
 
   // The search panel asks for an account (e.g. Docker Hub after a 429).
   createEffect(() => {
     const host = value.addAccount;
     if (!host) return;
     set("addAccount", "");
-    const existing = value.creds.find((c) => c.host === host);
-    if (existing) { setAdding(null); setEditing(host); } else startAdd(host);
+    startAdd(host);
     setTimeout(() => root?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }), 0);
   });
+
+  const rows = (): PickerRow[] => [
+    ...value.creds.map((c): PickerRow => {
+      const key = `b:${c.id}`;
+      return {
+        key, host: c.host, username: c.username, source: "浏览器", status: status[key],
+        editor: editing() === key
+          ? <AccountEditor initial={{ host: c.host, username: c.username, secret: c.secret }} isNew={false} onSave={(d) => save(c.id, d)} onCancel={() => setEditing("")} />
+          : undefined,
+        onVerify: () => verify(key),
+        onEdit: () => { setAdding(null); setEditing(key); },
+        onDelete: () => remove(c.id),
+      };
+    }),
+    ...servers().map((r): PickerRow => {
+      const key = `s:${r.id}`;
+      return { key, host: hostOf(r), username: r.username, source: "服务端", status: status[key], onVerify: () => verify(key) };
+    }),
+  ];
 
   return (
     <div ref={root}>
       <div class="mb-1.5 flex items-center justify-between">
-        <span class="text-xs text-zinc-500">仓库账号<Show when={value.creds.length}>（{value.creds.length}）</Show></span>
-        <Show when={value.creds.length && !adding()}>
-          <button type="button" class="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => startAdd()}>+ 添加</button>
+        <span class="text-xs text-zinc-500">前端代理仓库账号</span>
+        <Show when={rows().length && adding() === null}>
+          <button type="button" class="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => startAdd("")}>+ 添加</button>
         </Show>
       </div>
-      <div class="space-y-1.5">
-        <For each={value.creds}>{(entry) => {
-          const st = () => status[entry.host];
-          return (
-            <Show when={editing() !== entry.host} fallback={
-              <AccountEditor initial={entry} isNew={false} onSave={(d) => save(entry.host, d)} onCancel={() => setEditing("")} />
-            }>
-              <AccountCard
-                host={entry.host}
-                username={entry.username}
-                status={st()}
-                onVerify={() => verify(entry)}
-                onEdit={() => { setAdding(null); setEditing(entry.host); }}
-                onDelete={() => remove(entry.host)}
-              />
-            </Show>
-          );
-        }}</For>
-        <Show when={adding()}>
-          {(draft) => <AccountEditor initial={{ ...draft() }} isNew onSave={(d) => save("", d)} onCancel={() => setAdding(null)} />}
-        </Show>
-        <Show when={!value.creds.length && !adding()}>
-          <div class="rounded-md border border-dashed border-zinc-700 px-3 py-3 text-center">
-            <p class="text-[11px] text-zinc-500">未添加账号：Docker Hub 将匿名访问，共享 Worker 出口 IP 的限额，容易触发 429。</p>
-            <div class="mt-2 flex flex-wrap justify-center gap-3">
-              <button type="button" class="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => startAdd("docker.io")}>+ 添加 Docker Hub 账号</button>
-              <button type="button" class="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => startAdd()}>+ 其他 registry</button>
-            </div>
-          </div>
-        </Show>
-      </div>
+      <Show when={rows().length || adding() !== null} fallback={
+        <EmptyAccounts text="未添加账号：Docker Hub 将匿名访问，共享 Worker 出口 IP 的限额，容易触发 429。" onAdd={startAdd} />
+      }>
+        <AccountPicker
+          rows={rows()}
+          selected={selected}
+          onSelect={select}
+          onAdd={startAdd}
+          adding={adding() === null ? undefined : {
+            host: registryCredsHost(adding()!) || "",
+            editor: <AccountEditor initial={{ host: adding()!, username: "", secret: "" }} isNew onSave={(d) => save("", d)} onCancel={() => setAdding(null)} />,
+          }}
+        />
+        <p class="mt-1.5 text-[11px] text-zinc-600">每个 registry 选一个账号，未选则匿名。「浏览器」账号只保存在此浏览器；「服务端」账号由 phyless 保存，选用时临时取用（记入审计）、不写入浏览器，在「不使用代理 / 服务端代理」下管理。</p>
+      </Show>
     </div>
   );
 };
 
 /** Server-side registry accounts (stored by phyless, shared by all users).
- *  Checked cards are the credentials this pull sends; none means anonymous.
- *  Verification follows the pull mode: direct, or through the server proxy. */
-export const ServerAccounts: Component<{ options: PullOptionsState; multiple?: boolean }> = (props) => {
+ *  Each registry uses one picked account or none; verification follows the
+ *  pull mode: direct, or through the server proxy. */
+export const ServerAccounts: Component<{ options: PullOptionsState }> = (props) => {
   const { value, set } = props.options;
   const [registries, { refetch }] = createResource(() => get<Registry[]>("/api/registries"));
   const [editing, setEditing] = createSignal("");
-  const [adding, setAdding] = createSignal<CredEntry | null>(null);
+  const [adding, setAdding] = createSignal<string | null>(null);
   const [status, setStatus] = createStore<Record<string, Status | undefined>>({});
-  const hostOf = (r: Registry) => registryCredsHost(r.url) || r.url;
   const list = () => registries() ?? [];
+  const byId = (id: string) => list().find((r) => r.id === id);
 
-  const checked = (id: string) => props.multiple ? value.registryIds.includes(id) : value.registryId === id;
-  const toggle = (id: string) => {
-    if (props.multiple) set("registryIds", (ids) => ids.includes(id) ? ids.filter((v) => v !== id) : [...ids, id]);
-    else set("registryId", value.registryId === id ? "" : id);
+  const selected = (host: string) => {
+    const id = value.registryIds.find((x) => { const r = byId(x); return r && hostOf(r) === host; });
+    return id ? `s:${id}` : "";
   };
+  const select = (host: string, key: string) =>
+    set("registryIds", (ids) => [...ids.filter((x) => { const r = byId(x); return !r || hostOf(r) !== host; }), ...(key ? [key.slice(2)] : [])]);
 
   const verify = async (id: string) => {
     setStatus(id, { state: "checking" });
@@ -276,11 +387,11 @@ export const ServerAccounts: Component<{ options: PullOptionsState; multiple?: b
       await request("POST", `/api/registries/${encodeURIComponent(id)}/test`, value.useProxy && value.proxyUrl.trim() ? { proxy_url: value.proxyUrl.trim() } : {});
       setStatus(id, { state: "ok" });
     } catch (e) {
-      setStatus(id, { state: "error", message: e instanceof Error ? e.message : "验证失败" });
+      setStatus(id, { state: "error", message: errorText(e, "验证失败") });
     }
   };
 
-  const save = async (original: Registry | null, draft: CredEntry): Promise<string> => {
+  const save = async (original: Registry | null, draft: Draft): Promise<string> => {
     const host = registryCredsHost(draft.host);
     if (!host) return "请输入有效的 registry 地址，如 docker.io、ghcr.io、registry.example.com:5000";
     if (!draft.username || (!original && !draft.secret)) return "请填写用户名和密码 / Token";
@@ -289,14 +400,14 @@ export const ServerAccounts: Component<{ options: PullOptionsState; multiple?: b
       if (original) await queued(`更新仓库账号 ${host}`, "PUT", `/api/registries/${encodeURIComponent(original.id)}`, body);
       else await queued(`添加仓库账号 ${host}`, "POST", "/api/registries", body);
     } catch (e) {
-      return e instanceof Error ? e.message : "保存失败";
+      return errorText(e, "保存失败");
     }
     const before = new Set(list().map((r) => r.id));
     const next = (await refetch()) ?? [];
     const saved = original ?? next.find((r) => !before.has(r.id));
     setEditing(""); setAdding(null);
     if (saved) {
-      if (!original && !checked(saved.id)) toggle(saved.id);
+      if (!original) select(host, `s:${saved.id}`);
       void verify(saved.id);
     }
     return "";
@@ -306,57 +417,52 @@ export const ServerAccounts: Component<{ options: PullOptionsState; multiple?: b
     if (!await confirmAction(`删除服务端保存的 ${hostOf(r)} 账号 ${r.username}？所有用户都将无法再使用它。`, { title: "删除仓库账号", confirmText: "删除", danger: true })) return;
     try {
       await queued(`删除仓库账号 ${hostOf(r)}`, "DELETE", `/api/registries/${encodeURIComponent(r.id)}`);
-      if (checked(r.id)) toggle(r.id);
+      set("registryIds", (ids) => ids.filter((x) => x !== r.id));
       setStatus(r.id, undefined);
       await refetch();
     } catch (e) {
-      setStatus(r.id, { state: "error", message: e instanceof Error ? e.message : "删除失败" });
+      setStatus(r.id, { state: "error", message: errorText(e, "删除失败") });
     }
   };
 
-  const startAdd = (host = "") => { setEditing(""); setAdding({ host, username: "", secret: "" }); };
+  const startAdd = (host: string) => { setEditing(""); setAdding(host); };
+
+  const rows = (): PickerRow[] => list().map((r) => ({
+    key: `s:${r.id}`, host: hostOf(r), username: r.username, status: status[r.id],
+    editor: editing() === r.id
+      ? <AccountEditor initial={{ host: hostOf(r), username: r.username, secret: "" }} isNew={false} keepSecretHint onSave={(d) => save(r, d)} onCancel={() => setEditing("")} />
+      : undefined,
+    onVerify: () => verify(r.id),
+    onEdit: () => { setAdding(null); setEditing(r.id); },
+    onDelete: () => remove(r),
+  }));
 
   return (
     <div>
       <div class="mb-1.5 flex items-center justify-between">
-        <span class="text-xs text-zinc-500" title="保存在 phyless 服务端，所有用户共享">服务端仓库账号<Show when={list().length}>（{list().length}）</Show></span>
-        <Show when={list().length && !adding()}>
-          <button type="button" class="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => startAdd()}>+ 添加</button>
+        <span class="text-xs text-zinc-500" title="保存在 phyless 服务端，所有用户共享">服务端仓库账号</span>
+        <Show when={list().length && adding() === null}>
+          <button type="button" class="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => startAdd("")}>+ 添加</button>
         </Show>
       </div>
-      <div class="space-y-1.5">
-        <Show when={registries.error}><p class="text-[11px] text-red-400">仓库账号加载失败</p></Show>
-        <For each={list()}>{(r) => (
-          <Show when={editing() !== r.id} fallback={
-            <AccountEditor initial={{ host: hostOf(r), username: r.username, secret: "" }} isNew={false} keepSecretHint onSave={(d) => save(r, d)} onCancel={() => setEditing("")} />
-          }>
-            <AccountCard
-              host={hostOf(r)}
-              username={r.username}
-              status={status[r.id]}
-              select={{ kind: props.multiple ? "checkbox" : "radio", checked: checked(r.id), onToggle: () => toggle(r.id) }}
-              onVerify={() => verify(r.id)}
-              onEdit={() => { setAdding(null); setEditing(r.id); }}
-              onDelete={() => remove(r)}
-            />
-          </Show>
-        )}</For>
-        <Show when={adding()}>
-          {(draft) => <AccountEditor initial={{ ...draft() }} isNew onSave={(d) => save(null, d)} onCancel={() => setAdding(null)} />}
+      <Show when={registries.error}><p class="text-[11px] text-red-400">仓库账号加载失败</p></Show>
+      <Show when={list().length || adding() !== null} fallback={
+        <Show when={!registries.loading && !registries.error}>
+          <EmptyAccounts text="未添加账号：拉取私有镜像，或避免 Docker Hub 匿名拉取限额时需要。" onAdd={startAdd} />
         </Show>
-        <Show when={!registries.loading && !registries.error && !list().length && !adding()}>
-          <div class="rounded-md border border-dashed border-zinc-700 px-3 py-3 text-center">
-            <p class="text-[11px] text-zinc-500">未添加账号：拉取私有镜像，或避免 Docker Hub 匿名拉取限额时需要。</p>
-            <div class="mt-2 flex flex-wrap justify-center gap-3">
-              <button type="button" class="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => startAdd("docker.io")}>+ 添加 Docker Hub 账号</button>
-              <button type="button" class="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => startAdd()}>+ 其他 registry</button>
-            </div>
-          </div>
-        </Show>
-        <Show when={list().length}>
-          <p class="text-[11px] text-zinc-600">{props.multiple ? "勾选的账号按镜像所在 registry 自动使用" : "选中的账号用于本次拉取"}，未选则匿名。账号保存在 phyless 服务端，所有用户共享。</p>
-        </Show>
-      </div>
+      }>
+        <AccountPicker
+          rows={rows()}
+          selected={selected}
+          onSelect={select}
+          onAdd={startAdd}
+          adding={adding() === null ? undefined : {
+            host: registryCredsHost(adding()!) || "",
+            editor: <AccountEditor initial={{ host: adding()!, username: "", secret: "" }} isNew onSave={(d) => save(null, d)} onCancel={() => setAdding(null)} />,
+          }}
+        />
+        <p class="mt-1.5 text-[11px] text-zinc-600">每个 registry 选一个账号用于本次拉取，未选则匿名。账号保存在 phyless 服务端，所有用户共享。</p>
+      </Show>
     </div>
   );
 };

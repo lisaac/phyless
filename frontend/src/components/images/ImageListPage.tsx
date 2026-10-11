@@ -549,7 +549,7 @@ export const ImageListPage: Component = () => {
               initialRef={pullRef()}
               route={isBrowserDownload(pull.value)
                 ? { kind: "worker", workerUrl: pull.value.workerUrl, creds: browserCreds(pull.value) }
-                : { kind: "server", proxyUrl: pull.value.useProxy ? pull.value.proxyUrl : "", registryId: pull.value.registryId }}
+                : { kind: "server", proxyUrl: pull.value.useProxy ? pull.value.proxyUrl : "", registryIds: [...pull.value.registryIds] }}
               selectedRef={pullRef()}
               isLocal={(ref) => localTags().has(ref)}
               onSelect={setPullRef}

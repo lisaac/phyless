@@ -38,7 +38,7 @@ export const CheckUpdatesModal: Component<{
         <p class="mb-3 text-xs text-zinc-500">
           将检查 {props.targets!.length} 个容器：只读取 registry 的 manifest 比对镜像，不下载、不重建。网络路径与拉取相同，请选择与升级时一致的代理。
         </p>
-        <PullOptions options={pull} allowBrowser multipleRegistries />
+        <PullOptions options={pull} allowBrowser />
         <div class="mt-4 flex justify-end gap-2">
           <Button onClick={close}>取消</Button>
           <Button variant="primary" onClick={start}>检查</Button>

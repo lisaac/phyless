@@ -4,7 +4,7 @@ import { authorizedGet, credsFor, parseImageRef, proxied, proxiedGet, readBounde
 /** Where remote lookups go — the same path the chosen pull mode uses. */
 export type RemoteRoute =
   | { kind: "worker"; workerUrl: string; creds?: RegistryCreds }
-  | { kind: "server"; proxyUrl?: string; registryId?: string };
+  | { kind: "server"; proxyUrl?: string; registryIds?: string[] };
 
 const REPOSITORY_PAGE_SIZE = 20;
 const HUB_TAG_PAGE_SIZE = 50;
@@ -139,7 +139,7 @@ async function serverGet(route: Extract<RemoteRoute, { kind: "server" }>, target
     return await fetch("/api/images/remote", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ url: target, accept, proxy_url: route.proxyUrl?.trim() || undefined, registry_id: route.registryId || undefined }),
+      body: JSON.stringify({ url: target, accept, proxy_url: route.proxyUrl?.trim() || undefined, registry_ids: route.registryIds?.length ? route.registryIds : undefined }),
       signal,
     });
   } catch (error) {
@@ -297,7 +297,7 @@ export async function listRegistryTags(ref: string, route: RemoteRoute, signal: 
       return { ...await listV2Tags(parsed, route, signal), notice: "Docker Hub API 限额已满，已改用 registry 接口：仅显示标签名，按版本号排序" };
     }
     // Private Hub repositories are invisible to the anonymous Hub API.
-    const hasAccount = route.kind === "worker" ? !!credsFor(route.creds, ref) : !!route.registryId;
+    const hasAccount = route.kind === "worker" ? !!credsFor(route.creds, ref) : !!route.registryIds?.length;
     if (hasAccount && /（40[134]）/.test(text)) return listV2Tags(parsed, route, signal);
     throw error;
   }

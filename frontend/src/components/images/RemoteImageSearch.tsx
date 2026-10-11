@@ -132,7 +132,7 @@ export const RemoteImageSearch: Component<{
   // Only the target registry's account; serialized so unrelated edits don't refetch.
   const tagRoute = createMemo(() => {
     const r = props.route;
-    if (r.kind === "server") return JSON.stringify({ kind: "server", proxyUrl: r.proxyUrl?.trim() ?? "", registryId: r.registryId ?? "" });
+    if (r.kind === "server") return JSON.stringify({ kind: "server", proxyUrl: r.proxyUrl?.trim() ?? "", registryIds: r.registryIds ?? [] });
     const mine = credsFor(r.creds, tagTarget());
     return JSON.stringify({ kind: "worker", workerUrl: worker(), creds: mine ? Object.fromEntries(Object.entries(r.creds ?? {}).filter(([, c]) => c === mine)) : undefined });
   });

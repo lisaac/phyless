@@ -9,8 +9,8 @@ import {
   removeWorkerUrl,
   getDownloadMode,
   setDownloadMode,
-  getRememberedCreds,
-  rememberCreds,
+  getRememberedAccounts,
+  rememberAccounts,
 } from "./browserPullSettings";
 
 beforeEach(() => localStorage.clear());
@@ -42,11 +42,11 @@ describe("worker url persistence", () => {
     expect(saveWorkerUrl("https://one.example")).toEqual(["https://one.example"]);
     expect(saveWorkerUrl("https://two.example")).toEqual(["https://two.example", "https://one.example"]);
     expect(saveWorkerUrl("https://one.example")).toEqual(["https://one.example", "https://two.example"]);
-    rememberCreds("https://one.example", { "docker.io": { username: "u", secret: "s" } });
+    rememberAccounts("https://one.example", { accounts: [{ id: "a1", host: "docker.io", username: "u", secret: "s" }], use: ["b:a1"] });
     expect(removeWorkerUrl("https://one.example")).toEqual(["https://two.example"]);
     expect(getWorkerUrls()).toEqual(["https://two.example"]);
     expect(getWorkerUrl()).toBe("https://two.example");
-    expect(getRememberedCreds("https://one.example")).toBeNull();
+    expect(getRememberedAccounts("https://one.example")).toBeNull();
   });
 });
 
@@ -60,32 +60,32 @@ describe("download mode", () => {
   });
 });
 
-describe("remembered credentials", () => {
-  it("round-trips per worker and per registry host, and clears with its address", () => {
+describe("remembered accounts", () => {
+  const hub = { id: "a1", host: "docker.io", username: "hub-user", secret: "hub-secret" };
+  const hub2 = { id: "a2", host: "docker.io", username: "second", secret: "s2" };
+  const gh = { id: "a3", host: "ghcr.io", username: "gh-user", secret: "gh-secret" };
+  it("round-trips several accounts per registry and the picks, per worker", () => {
     const one = "https://one.example";
     const two = "https://two.example";
-    expect(getRememberedCreds(one)).toBeNull();
-    rememberCreds(one, { "docker.io": { username: "hub-user", secret: "hub-secret" }, "ghcr.io": { username: "gh-user", secret: "gh-secret" } });
-    rememberCreds(two, { "registry.example:5000": { username: "two-user", secret: "two-secret" } });
-    expect(getRememberedCreds(one)).toEqual({ "docker.io": { username: "hub-user", secret: "hub-secret" }, "ghcr.io": { username: "gh-user", secret: "gh-secret" } });
-    expect(getRememberedCreds(two)).toEqual({ "registry.example:5000": { username: "two-user", secret: "two-secret" } });
-    rememberCreds(one, null);
-    expect(getRememberedCreds(one)).toBeNull();
-    expect(getRememberedCreds(two)).toEqual({ "registry.example:5000": { username: "two-user", secret: "two-secret" } });
+    expect(getRememberedAccounts(one)).toBeNull();
+    rememberAccounts(one, { accounts: [hub, hub2, gh], use: ["b:a2", "s:r9"] });
+    rememberAccounts(two, { accounts: [gh], use: [] });
+    expect(getRememberedAccounts(one)).toEqual({ accounts: [hub, hub2, gh], use: ["b:a2", "s:r9"] });
+    expect(getRememberedAccounts(two)).toEqual({ accounts: [gh], use: [] });
+    rememberAccounts(one, null);
+    expect(getRememberedAccounts(one)).toBeNull();
+    expect(getRememberedAccounts(two)).toEqual({ accounts: [gh], use: [] });
   });
-  it("does not store incomplete credentials or invalid hosts, and normalizes Hub aliases", () => {
-    rememberCreds("https://one.example", { "docker.io": { username: "u", secret: "" }, "not a host": { username: "u", secret: "s" } });
-    expect(getRememberedCreds("https://one.example")).toBeNull();
-    rememberCreds("https://one.example", { "registry-1.docker.io": { username: "u", secret: "s" } });
-    expect(getRememberedCreds("https://one.example")).toEqual({ "docker.io": { username: "u", secret: "s" } });
+  it("drops incomplete accounts, invalid hosts and keys, and normalizes Hub aliases", () => {
+    rememberAccounts("https://one.example", {
+      accounts: [{ ...hub, secret: "" }, { ...gh, host: "not a host" }, { ...hub2, host: "registry-1.docker.io" }],
+      use: ["b:a2", "x:bad", "b:../x"],
+    });
+    expect(getRememberedAccounts("https://one.example")).toEqual({ accounts: [{ ...hub2, host: "docker.io" }], use: ["b:a2"] });
   });
-  it("migrates legacy single-account credentials to Docker Hub", () => {
-    setWorkerUrl("https://one.example");
-    localStorage.setItem("phyless_pull_registry_creds", JSON.stringify({ username: "u", secret: "s" }));
-    expect(getRememberedCreds("https://one.example")).toEqual({ "docker.io": { username: "u", secret: "s" } });
-    expect(localStorage.getItem("phyless_pull_registry_creds")).toContain("https://one.example");
-    localStorage.setItem("phyless_pull_registry_creds", JSON.stringify({ "https://two.example": { username: "u2", secret: "s2" } }));
-    expect(getRememberedCreds("https://two.example")).toEqual({ "docker.io": { username: "u2", secret: "s2" } });
+  it("ignores the old per-host format", () => {
+    localStorage.setItem("phyless_pull_registry_creds", JSON.stringify({ "https://one.example": { "docker.io": { username: "u", secret: "s" } } }));
+    expect(getRememberedAccounts("https://one.example")).toBeNull();
   });
 });
 

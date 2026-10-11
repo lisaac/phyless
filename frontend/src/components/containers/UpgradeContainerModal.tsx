@@ -172,7 +172,7 @@ export const UpgradeContainerModal: Component<{
             </For>
           </div>
         </Show>
-        <PullOptions options={pull} allowBrowser multipleRegistries />
+        <PullOptions options={pull} allowBrowser />
         <div class="mt-4 flex justify-end gap-2">
           <Button onClick={close}>取消</Button>
           <Button variant="primary" disabled={chosen().length === 0} onClick={() => void start()}>
