@@ -395,3 +395,7 @@ cd frontend && npm install && npm run dev   # 前端热更新，/api 代理到 l
 - 公网访问务必放在 HTTPS 反向代理之后。
 - `/data`（`phyless-data` 卷或 `./data`）保存 JWT 密钥、账号和审计日志：定期备份，不要公开或提交到 Git。
 - 给日常使用者分配 operator 或 viewer 角色，admin 只留给管理者。
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 发布。
