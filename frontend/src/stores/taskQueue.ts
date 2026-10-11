@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, setToken } from "../api/client";
+import type { RegistryCreds } from "../api/registryPull";
 import { runBrowserPull, runBrowserPullCompose, runBrowserCreate, runBrowserUpgrade, runComposeUpdate, type BrowserPullCallbacks } from "./browserPull";
 import { runUpdateCheck } from "./updateCheck";
 import { toast } from "../components/shared/Toast";
@@ -37,7 +38,7 @@ export interface TaskSpec {
   doneLink?: { href: string; label: string };
   // Transient, never persisted (stripped in persist()): browser-pull registry
   // credentials must not be written to localStorage task history.
-  secret?: { creds?: { username: string; secret: string } };
+  secret?: { creds?: RegistryCreds };
 }
 
 export interface Task extends TaskSpec {

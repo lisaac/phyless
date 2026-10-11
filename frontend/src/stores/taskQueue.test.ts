@@ -243,7 +243,7 @@ describe("taskQueue persistence", () => {
 it("releases request payloads and credentials on every terminal state", async () => {
   const q = await load();
   for (const status of ["done", "error", "cancelled"] as const) {
-    const task = q.enqueue({ title: status, url: "/upload", file: new File(["large"], "a.tar"), body: { password: "private" }, secret: { creds: { username: "u", secret: "private" } } });
+    const task = q.enqueue({ title: status, url: "/upload", file: new File(["large"], "a.tar"), body: { password: "private" }, secret: { creds: { "docker.io": { username: "u", secret: "private" } } } });
     const xhr = FakeXHR.requests.at(-1)!;
     if (status === "cancelled") q.cancel(task.id);
     else xhr.finish(status === "error" ? '{"error":"failed"}' : "", status === "error" ? 500 : 200);

@@ -5,7 +5,7 @@ import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { confirmAction } from "../shared/ConfirmModal";
-import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady, browserCreds } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
@@ -146,14 +146,15 @@ export const ImageListPage: Component = () => {
   };
 
   const closePullInput = () => { setShowPullInput(false); setShowRemoteSearch(false); pull.reset(); };
+  const localTags = () => new Set(store.items().flatMap((img) => img.RepoTags ?? []));
   const closeRemoteImport = () => {
     setShowRemoteImport(false); setRemoteImportURL(""); setRemoteImportRef(""); setRemoteImportFile(undefined);
   };
 
   // Long-running image ops go through the global task queue (progress in the
   // task panel, survives navigation). meta drives the settle listener below.
-  const startPull = () => {
-    const ref = pullRef().trim();
+  const startPull = (picked?: string) => {
+    const ref = (picked ?? pullRef()).trim();
     if (!ref) return;
     if (isBrowserDownload(pull.value)) {
       if (!browserWorkerReady(pull.value)) return;
@@ -512,32 +513,72 @@ export const ImageListPage: Component = () => {
       </Modal>
 
       {/* Pull input modal */}
-      <Modal open={showPullInput()} onClose={closePullInput} title="拉取镜像">
-        <input
-          class="mb-3 w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-colors"
-          placeholder="nginx:latest"
-          value={pullRef()}
-          onInput={(e) => setPullRef(e.currentTarget.value)}
-          onKeyDown={(e) => e.key === "Enter" && startPull()}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ref={(el: any) => setTimeout(() => el?.focus(), 50)}
-        />
-        <button type="button" class="mb-3 text-xs text-indigo-400 hover:text-indigo-300" aria-expanded={showRemoteSearch()} onClick={() => setShowRemoteSearch((value) => !value)}>
-          {showRemoteSearch() ? "收起远程搜索" : "搜索远程镜像"}
-        </button>
-        <Show when={showRemoteSearch()}>
-          <RemoteImageSearch
-            initialRef={pullRef()}
-            workerUrl={pull.value.workerUrl}
-            creds={pull.value.creds}
-            onSelect={(ref) => { setPullRef(ref); setShowRemoteSearch(false); }}
-          />
+      <Modal open={showPullInput()} onClose={closePullInput} title="拉取镜像" wide={showRemoteSearch()}>
+        <Show when={showRemoteSearch()} fallback={
+          <>
+            <div class="mb-3 flex gap-2">
+              <input
+                class="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm text-zinc-100 outline-none transition-colors focus:border-indigo-500"
+                placeholder="nginx:latest"
+                aria-label="镜像引用"
+                spellcheck={false}
+                value={pullRef()}
+                onInput={(e) => setPullRef(e.currentTarget.value)}
+                onKeyDown={(e) => e.key === "Enter" && startPull()}
+                ref={(el: HTMLInputElement) => setTimeout(() => el?.focus(), 50)}
+              />
+              <button
+                type="button"
+                class="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-3 text-xs text-zinc-300 transition-colors hover:border-indigo-500 hover:text-indigo-300"
+                aria-expanded="false"
+                onClick={() => setShowRemoteSearch(true)}
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+                搜索远程镜像
+              </button>
+            </div>
+            <PullOptions options={pull} showPlatform allowBrowser />
+            <div class="mt-4 flex justify-end gap-2">
+              <Button onClick={closePullInput}>取消</Button>
+              <Button variant="primary" disabled={!pullRef().trim()} onClick={() => startPull()}>拉取</Button>
+            </div>
+          </>
+        }>
+          <div class="grid grid-cols-1 gap-5 sm:grid-cols-[minmax(0,1fr)_19rem]">
+            <RemoteImageSearch
+              initialRef={pullRef()}
+              route={isBrowserDownload(pull.value)
+                ? { kind: "worker", workerUrl: pull.value.workerUrl, creds: browserCreds(pull.value) }
+                : { kind: "server", proxyUrl: pull.value.useProxy ? pull.value.proxyUrl : "", registryId: pull.value.registryId }}
+              selectedRef={pullRef()}
+              isLocal={(ref) => localTags().has(ref)}
+              onSelect={setPullRef}
+              onPull={startPull}
+              onAddAccount={(host) => pull.set("addAccount", host)}
+            />
+            <aside class="min-w-0 sm:border-l sm:border-zinc-800 sm:pl-5">
+              <PullOptions options={pull} showPlatform allowBrowser />
+            </aside>
+          </div>
+          <div class="sticky bottom-0 -mx-5 -mb-5 mt-5 flex flex-col gap-2 border-t border-zinc-800 bg-zinc-900/95 px-5 py-3 backdrop-blur sm:flex-row sm:items-center">
+            <label class="flex min-w-0 flex-1 items-center gap-2">
+              <span class="shrink-0 text-xs text-zinc-500">镜像引用</span>
+              <input
+                class="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-sm text-zinc-100 outline-none transition-colors focus:border-indigo-500"
+                placeholder="nginx:latest"
+                spellcheck={false}
+                value={pullRef()}
+                onInput={(e) => setPullRef(e.currentTarget.value)}
+                onKeyDown={(e) => e.key === "Enter" && startPull()}
+              />
+            </label>
+            <div class="flex justify-end gap-2">
+              <Button aria-expanded="true" onClick={() => setShowRemoteSearch(false)}>收起搜索</Button>
+              <Button onClick={closePullInput}>取消</Button>
+              <Button variant="primary" disabled={!pullRef().trim()} onClick={() => startPull()}>拉取</Button>
+            </div>
+          </div>
         </Show>
-        <PullOptions options={pull} showPlatform allowBrowser showBrowserSettings={showRemoteSearch()} />
-        <div class="flex justify-end gap-2">
-          <Button onClick={closePullInput}>取消</Button>
-          <Button variant="primary" onClick={startPull}>拉取</Button>
-        </div>
       </Modal>
 
       {/* Pull/import progress — non-blocking floating card, rest of the page stays usable */}

@@ -22,7 +22,6 @@ const VolumeListPage = lazy(() => import("./components/volumes/VolumeListPage").
 const EventsPage = lazy(() => import("./components/events/EventsPage").then((m) => ({ default: m.EventsPage })));
 const ConfigFilesPage = lazy(() => import("./components/config/ConfigFilesPage").then((m) => ({ default: m.ConfigFilesPage })));
 const UsersPage = lazy(() => import("./components/settings/UsersPage").then((m) => ({ default: m.UsersPage })));
-const RegistriesPage = lazy(() => import("./components/settings/RegistriesPage").then((m) => ({ default: m.RegistriesPage })));
 const DockerSettingsPage = lazy(() => import("./components/settings/DockerSettingsPage").then((m) => ({ default: m.DockerSettingsPage })));
 const AuditPage = lazy(() => import("./components/settings/AuditPage").then((m) => ({ default: m.AuditPage })));
 
@@ -72,7 +71,6 @@ export const App: Component = () => {
           <Route path="/events" component={EventsPage} />
           <Route path="/config" component={ConfigFilesPage} />
           <Route path="/settings/users" component={UsersPage} />
-          <Route path="/settings/registries" component={RegistriesPage} />
           <Route path="/settings/docker" component={DockerSettingsPage} />
           <Route path="/settings/audit" component={AuditPage} />
           <Route path="/*all" component={() => <Navigate href="/" />} />

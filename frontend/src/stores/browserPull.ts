@@ -3,7 +3,7 @@
 // queue wires note/progress/signal to a task's UI state.
 
 import { buildDockerLoadTar } from "../api/dockerTar";
-import { resolveImage, matchesRemote, remoteDigests, blobUrl, proxiedGet, authHeaderFromChallenge, registryResponseError, type Creds, type ResolvedImage } from "../api/registryPull";
+import { resolveImage, matchesRemote, remoteDigests, blobUrl, proxiedGet, authHeaderFromChallenge, registryResponseError, credsFor, type Creds, type RegistryCreds, type ResolvedImage } from "../api/registryPull";
 import { streamTarToDaemon } from "../api/imageLoadStream";
 import { get, imageInspectUrl } from "../api/client";
 import { upgradeImageRef, imagePlatform } from "../api/inspect";
@@ -13,7 +13,7 @@ export interface BrowserPullParams {
   platform: string;
   workerUrl: string;
   token: string;
-  creds?: Creds;
+  creds?: RegistryCreds;
 }
 
 export interface BrowserPullCallbacks {
@@ -45,12 +45,13 @@ export const defaultDeps: BrowserPullDeps = {
   },
   daemonPlatform: async (signal) => {
     try {
-      const p = await get<{ os?: string; architecture?: string }>("/api/system/platform", signal);
-      if (p?.os && p?.architecture) return `${p.os}/${p.architecture}`;
+      const p = await get<{ os?: string; architecture?: string; variant?: string }>("/api/system/platform", signal);
+      if (p?.os && p?.architecture) return [p.os, p.architecture, p.variant].filter(Boolean).join("/");
     } catch {
-      /* fall back below */
+      /* reported below */
     }
-    return "linux/amd64";
+    // Guessing amd64 would load the wrong image on an ARM host.
+    throw new Error("无法获取 Docker 宿主机平台，请在「平台」中手动指定，如 linux/arm64");
   },
   openLayer: async (img, index, workerUrl, signal, creds) => {
     const layer = img.layers[index];
@@ -75,9 +76,12 @@ export const defaultDeps: BrowserPullDeps = {
 export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullCallbacks, deps: BrowserPullDeps = defaultDeps): Promise<void> {
   if (cb.signal.aborted) throw new Error("已取消");
   cb.note("解析镜像信息…");
-  const platform = params.platform?.trim() || (await deps.daemonPlatform(cb.signal));
+  // A chosen platform is pulled exactly; only the daemon's own may fall back
+  // to an older ARM variant, as `docker pull` does.
+  const chosen = params.platform?.trim() ?? "";
+  const platform = chosen || (await deps.daemonPlatform(cb.signal));
   cb.signal.throwIfAborted();
-  const img = await deps.resolveImage(params.ref, platform, params.workerUrl, params.creds, cb.signal);
+  const img = await deps.resolveImage(params.ref, platform, params.workerUrl, credsFor(params.creds, params.ref), cb.signal, !!chosen);
   if (cb.signal.aborted) throw new Error("已取消");
 
   const local = await deps.inspectLocal(img.repoTag, cb.signal);
@@ -95,7 +99,7 @@ export async function runBrowserPull(params: BrowserPullParams, cb: BrowserPullC
     repoTag: img.repoTag,
     manifest: img.manifest,
     platform: img.platform,
-    openLayer: (i) => deps.openLayer(img, i, params.workerUrl, cb.signal, params.creds),
+    openLayer: (i) => deps.openLayer(img, i, params.workerUrl, cb.signal, credsFor(params.creds, params.ref)),
   });
   await deps.streamTarToDaemon({ tar, token: params.token, onProgress: cb.progress, signal: cb.signal });
 }
@@ -113,7 +117,7 @@ export interface BrowserPullComposeParams {
   mode: "pull" | "up" | "build";
   workerUrl: string;
   token: string;
-  creds?: Creds;
+  creds?: RegistryCreds;
 }
 
 export interface BrowserPullComposeDeps {
@@ -211,7 +215,7 @@ export async function streamCompose(
 // Reject policy stays with the caller — this only pulls what it is handed.
 export async function preloadComposeImages(
   images: { service: string; ref: string; platform?: string }[],
-  opts: { workerUrl: string; token: string; creds?: Creds },
+  opts: { workerUrl: string; token: string; creds?: RegistryCreds },
   cb: BrowserPullCallbacks,
   runPull: (params: BrowserPullParams, cb: BrowserPullCallbacks) => Promise<void>,
 ): Promise<void> {
@@ -295,7 +299,7 @@ export interface BrowserCreateParams {
   platform: string;
   workerUrl: string;
   token: string;
-  creds?: Creds;
+  creds?: RegistryCreds;
   body: Record<string, unknown>;
 }
 
@@ -331,7 +335,7 @@ export interface BrowserUpgradeParams {
   envFromImage?: string[];
   workerUrl: string;
   token: string;
-  creds?: Creds;
+  creds?: RegistryCreds;
 }
 
 export interface BrowserUpgradeDeps {
@@ -378,7 +382,7 @@ export interface ComposeUpdateParams {
   canBuild: boolean;
   workerUrl?: string;
   token: string;
-  creds?: Creds;
+  creds?: RegistryCreds;
   pullOptions?: Record<string, unknown>;
   restart?: boolean;
 }

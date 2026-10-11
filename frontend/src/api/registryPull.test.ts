@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseImageRef, parseWWWAuthenticate, layerBlobUrl, registryResponseError, resolveImage } from "./registryPull";
+import { parseImageRef, parseWWWAuthenticate, layerBlobUrl, registryResponseError, resolveImage, registryCredsHost, credsFor, selectPlatform, parsePlatform as parsePlatformAlias } from "./registryPull";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -180,4 +180,61 @@ it("cancels an authentication challenge body before abandoning it", async () => 
   })));
   await expect(resolveImage("nginx:latest", "linux/amd64", "https://w.example")).rejects.toThrow("需要登录凭据");
   expect(cancel).toHaveBeenCalledOnce();
+});
+
+describe("per-registry credentials", () => {
+  const creds = { "docker.io": { username: "hub", secret: "h" }, "ghcr.io": { username: "gh", secret: "g" }, "registry.example:5000": { username: "r", secret: "r" } };
+  it("normalizes credential hosts", () => {
+    expect(registryCredsHost(" https://Registry-1.Docker.io/ ")).toBe("docker.io");
+    expect(registryCredsHost("index.docker.io")).toBe("docker.io");
+    expect(registryCredsHost("https://index.docker.io/v1/")).toBe("docker.io");
+    expect(registryCredsHost("https://registry.example:5000/v2")).toBe("registry.example:5000");
+    expect(registryCredsHost("GHCR.io")).toBe("ghcr.io");
+    expect(registryCredsHost("localhost:5000")).toBe("localhost:5000");
+    expect(registryCredsHost("myhost")).toBe("");
+    expect(registryCredsHost("ghcr.io/owner")).toBe("");
+    expect(registryCredsHost("")).toBe("");
+  });
+  it("picks only the account of the ref's own registry", () => {
+    expect(credsFor(creds, "nginx:latest")).toBe(creds["docker.io"]);
+    expect(credsFor(creds, "docker.io/owner/app")).toBe(creds["docker.io"]);
+    expect(credsFor(creds, "ghcr.io/owner/app:v1")).toBe(creds["ghcr.io"]);
+    expect(credsFor(creds, "registry.example:5000/app")).toBe(creds["registry.example:5000"]);
+    expect(credsFor(creds, "quay.io/owner/app")).toBeUndefined();
+    expect(credsFor(undefined, "nginx")).toBeUndefined();
+    expect(credsFor(creds, "app@sha256:abc")).toBeUndefined();
+  });
+});
+
+describe("platform selection (docker pull order)", () => {
+  const m = (architecture: string, variant?: string, os = "linux") => ({ digest: `${architecture}${variant ?? ""}`, platform: { os, architecture, ...(variant ? { variant } : {}) } });
+  const list = [m("unknown", undefined, "unknown"), m("amd64"), m("arm", "v6"), m("arm", "v7"), m("arm64", "v8"), m("386")];
+  it("matches the daemon platform exactly, ignoring attestation entries", () => {
+    expect(selectPlatform(list, { os: "linux", architecture: "amd64" })?.digest).toBe("amd64");
+    expect(selectPlatform(list, { os: "linux", architecture: "arm64" })?.digest).toBe("arm64v8");
+    expect(selectPlatform(list, { os: "linux", architecture: "arm", variant: "v7" })?.digest).toBe("armv7");
+    expect(selectPlatform(list, { os: "linux", architecture: "386" })?.digest).toBe("386");
+  });
+  it("falls back to older 32-bit ARM variants only", () => {
+    const v6only = [m("arm", "v6"), m("arm", "v5")];
+    expect(selectPlatform(v6only, { os: "linux", architecture: "arm", variant: "v7" })?.digest).toBe("armv6");
+    expect(selectPlatform([m("arm", "v7")], { os: "linux", architecture: "arm", variant: "v6" })).toBeUndefined();
+    expect(selectPlatform([m("arm", "v7")], { os: "linux", architecture: "arm64" })).toBeUndefined();
+  });
+});
+
+describe("explicit platforms", () => {
+  it("normalizes Docker's aliases", () => {
+    expect(parsePlatformAlias("linux/x86_64")).toEqual({ os: "linux", architecture: "amd64" });
+    expect(parsePlatformAlias("linux/aarch64")).toEqual({ os: "linux", architecture: "arm64" });
+    expect(parsePlatformAlias("linux/arm64/v8")).toEqual({ os: "linux", architecture: "arm64" });
+    expect(parsePlatformAlias("linux/arm")).toEqual({ os: "linux", architecture: "arm", variant: "v7" });
+    expect(parsePlatformAlias("linux/armel")).toEqual({ os: "linux", architecture: "arm", variant: "v6" });
+    expect(parsePlatformAlias("Linux/ARM/6")).toEqual({ os: "linux", architecture: "arm", variant: "v6" });
+  });
+  it("never falls back when the user chose the platform", () => {
+    const v6only = [{ digest: "a", platform: { os: "linux", architecture: "arm", variant: "v6" } }];
+    expect(selectPlatform(v6only, { os: "linux", architecture: "arm", variant: "v7" }, true)).toBeUndefined();
+    expect(selectPlatform(v6only, { os: "linux", architecture: "arm", variant: "v7" })?.digest).toBe("a");
+  });
 });

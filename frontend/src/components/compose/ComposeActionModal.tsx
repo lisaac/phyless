@@ -1,7 +1,7 @@
 import { Component, createSignal, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady, browserSecret } from "../shared/PullOptions";
 import { enqueue, isPending } from "../../stores/taskQueue";
 import { VERB_LABEL, type ComposeVerb } from "./composeShared";
 
@@ -46,7 +46,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
           url: "",
           key: `compose:${t.id}`,
           meta: { type: "compose-update", composeId: t.id, verb: t.verb, mode: "browser", canBuild: t.canBuild === true, restart: t.verb === "update", workerUrl: pull.value.workerUrl ?? "" },
-          secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+          secret: browserSecret(pull.value),
         });
       } else {
         enqueue({
@@ -54,7 +54,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
           url: "",
           key: `compose:${t.id}`,
           meta: { type: "browser-pull-compose", composeId: t.id, verb: t.verb, mode: t.verb === "up" ? "up" : t.verb === "build" ? "build" : "pull", workerUrl: pull.value.workerUrl ?? "" },
-          secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+          secret: browserSecret(pull.value),
         });
       }
       close();

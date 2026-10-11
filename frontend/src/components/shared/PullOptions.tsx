@@ -1,7 +1,6 @@
 import { Component, createResource, createSignal, createUniqueId, For, Show } from "solid-js";
 import { createStore } from "solid-js/store";
 import { get } from "../../api/client";
-import type { Registry } from "../../types";
 import type { TaskSpec } from "../../stores/taskQueue";
 import { toast } from "./Toast";
 import { Ico } from "./ActionButton";
@@ -17,6 +16,8 @@ import {
   rememberCreds,
   validWorkerUrl,
 } from "../../stores/browserPullSettings";
+import { registryCredsHost, type RegistryCreds } from "../../api/registryPull";
+import { RegistryAccounts, ServerAccounts } from "./RegistryAccounts";
 
 export interface PullOptionsValue {
   proxyUrl?: string;
@@ -29,8 +30,32 @@ export interface PullOptionsValue {
   // and stream it into the daemon, instead of the server-side proxy path.
   downloadMode?: DownloadMode;
   workerUrl?: string;
-  creds?: { username: string; secret: string };
+  // Private registry accounts for the browser path, one per registry host.
+  creds?: CredEntry[];
   rememberCreds?: boolean;
+  // Set by the search panel to open the account form for a registry host.
+  addAccount?: string;
+}
+
+export interface CredEntry { host: string; username: string; secret: string }
+
+const credEntries = (creds: RegistryCreds | null): CredEntry[] =>
+  Object.entries(creds ?? {}).map(([host, c]) => ({ host, ...c }));
+
+/** Complete entries as a host → account map; undefined when there are none. */
+export function browserCreds(value: PullOptionsValue): RegistryCreds | undefined {
+  const out: RegistryCreds = {};
+  for (const entry of value.creds ?? []) {
+    const host = registryCredsHost(entry.host);
+    if (host && entry.username && entry.secret) out[host] = { username: entry.username, secret: entry.secret };
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Task-spec secret carrying browser credentials (never persisted). */
+export function browserSecret(value: PullOptionsValue): TaskSpec["secret"] {
+  const creds = browserCreds(value);
+  return creds ? { creds } : undefined;
 }
 
 type PullMode = "none" | "server" | "browser";
@@ -149,7 +174,7 @@ export function createPullOptions() {
     return {
       proxyUrl: readPullProxyUrl(), useProxy: false, registryId: "", registryIds: [], platform: "",
       downloadMode: getDownloadMode(), workerUrl,
-      creds: remembered ?? { username: "", secret: "" }, rememberCreds: !!remembered,
+      creds: credEntries(remembered), rememberCreds: !!remembered, addAccount: "",
     };
   };
   const [value, set] = createStore(fresh());
@@ -165,7 +190,7 @@ export function isBrowserDownload(value: PullOptionsValue): boolean {
 // worker. Toasts and returns false when it is missing.
 export function browserWorkerReady(value: PullOptionsValue): boolean {
   if (!isBrowserDownload(value) || value.workerUrl?.trim()) return true;
-  toast.error("请先填写 CF worker 地址");
+  toast.error("请先填写前端代理地址（CF worker）");
   return false;
 }
 
@@ -177,11 +202,19 @@ export function browserPullSpec(title: string, ref: string, key: string, value: 
     url: "",
     key,
     meta: { type: "browser-pull", ref, platform: value.platform?.trim() ?? "", workerUrl: value.workerUrl ?? "" },
-    secret: value.creds?.secret ? { creds: value.creds } : undefined,
+    secret: browserSecret(value),
   };
 }
 
 const PLATFORM_HINTS = ["linux/amd64", "linux/arm64", "linux/arm/v7"];
+
+// The managed daemon's platform, shown as the platform field's default.
+// Fetched per form: the Docker connection can be switched at runtime.
+export function daemonPlatformText(): Promise<string> {
+  return get<{ os?: string; architecture?: string; variant?: string }>("/api/system/platform")
+    .then((p) => p?.os && p.architecture ? [p.os, p.architecture, p.variant].filter(Boolean).join("/") : "")
+    .catch(() => "");
+}
 
 const SavedAddressInput: Component<{
   value: string;
@@ -260,10 +293,8 @@ export const PullOptions: Component<{
   // Expose the browser-download mode. Only entry points that actually handle a
   // browser-pull task (image pull, compose) set this; others stay proxy-only.
   allowBrowser?: boolean;
-  // Remote search uses the same Worker/account without changing the pull mode.
-  showBrowserSettings?: boolean;
 }> = (props) => {
-  const [registries] = createResource(() => get<Registry[]>("/api/registries"));
+  const [daemon] = createResource(daemonPlatformText);
   const platformListId = createUniqueId();
   const modeName = createUniqueId();
   const { value, set } = props.options;
@@ -271,11 +302,6 @@ export const PullOptions: Component<{
   const [localProxyUrls, setLocalProxyUrls] = createSignal(readPullProxyUrls());
   const workerUrls = localWorkerUrls;
   const proxyUrls = localProxyUrls;
-
-  const toggleRegistry = (id: string) => {
-    const ids = value.registryIds;
-    set("registryIds", ids.includes(id) ? ids.filter((v) => v !== id) : [...ids, id]);
-  };
 
   const pullMode = (): PullMode => {
     if (props.allowBrowser && value.downloadMode === "browser") return "browser";
@@ -293,7 +319,7 @@ export const PullOptions: Component<{
   const setWorker = (workerUrl: string) => {
     const creds = getRememberedCreds(workerUrl);
     set("workerUrl", workerUrl);
-    set("creds", creds ?? { username: "", secret: "" });
+    set("creds", credEntries(creds));
     set("rememberCreds", !!creds);
   };
 
@@ -331,11 +357,6 @@ export const PullOptions: Component<{
     if (value.proxyUrl.trim() === url.trim()) set("proxyUrl", urls[0] ?? "");
   };
 
-  const setCreds = (creds: { username: string; secret: string }) => {
-    set("creds", creds);
-    if (value.rememberCreds) rememberCreds(value.workerUrl, creds);
-  };
-
   return (
     <div class="space-y-3 border-t border-zinc-800 pt-3">
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -356,10 +377,10 @@ export const PullOptions: Component<{
         </Show>
       </div>
 
-      <Show when={browserMode() || props.showBrowserSettings}>
+      <Show when={browserMode()}>
         <div class="space-y-3">
           <div>
-            <span class="mb-1 block text-xs text-zinc-500">CF worker 地址</span>
+            <span class="mb-1 block text-xs text-zinc-500">前端代理地址（CF worker）</span>
             <SavedAddressInput
               value={value.workerUrl}
               urls={workerUrls()}
@@ -371,27 +392,7 @@ export const PullOptions: Component<{
             />
             <p class="mt-1 text-[11px] text-zinc-600">浏览器经此 worker 访问 registry；地址列表仅保存在此浏览器，且不含用户名/密码。</p>
           </div>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label class="block">
-              <span class="mb-1 block text-xs text-zinc-500">私有镜像用户名（可选）</span>
-              <input
-                class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-500"
-                autocomplete="off"
-                value={value.creds?.username ?? ""}
-                onInput={(e) => setCreds({ username: e.currentTarget.value, secret: value.creds?.secret ?? "" })}
-              />
-            </label>
-            <label class="block">
-              <span class="mb-1 block text-xs text-zinc-500">密码 / Token（可选）</span>
-              <input
-                type="password"
-                class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-500"
-                autocomplete="off"
-                value={value.creds?.secret ?? ""}
-                onInput={(e) => setCreds({ username: value.creds?.username ?? "", secret: e.currentTarget.value })}
-              />
-            </label>
-          </div>
+          <RegistryAccounts options={props.options} />
           <label class="flex items-center gap-1.5 text-xs text-zinc-500">
             <input
               type="checkbox"
@@ -399,12 +400,12 @@ export const PullOptions: Component<{
               onChange={(e) => {
                 const on = e.currentTarget.checked;
                 set("rememberCreds", on);
-                rememberCreds(value.workerUrl, on ? value.creds ?? null : null);
+                rememberCreds(value.workerUrl, on ? browserCreds(value) ?? null : null);
               }}
             />
             记住凭据（仅此浏览器，明文存于 localStorage，XSS 可读取）
           </label>
-          <p class="text-[11px] text-zinc-600">凭据按 CF worker 地址保存；切换地址会载入对应凭据，新地址保持为空。凭据不会发送给 phyless 服务端。</p>
+          <p class="text-[11px] text-zinc-600">每个镜像只使用其所在 registry 的账号；Docker Hub 账号同时用于搜索。账号按前端代理地址分组保存，切换地址会载入对应账号，不会发送给 phyless 服务端。</p>
           <Show when={browserMode()}>
             <p class="text-[11px] text-zinc-600">限制：仅支持 Linux 的 tag 镜像；digest、foreign layer 不支持。Compose Build 仅预拉可静态解析的 Dockerfile FROM。</p>
           </Show>
@@ -429,60 +430,17 @@ export const PullOptions: Component<{
             </div>
           </Show>
 
-        <Show when={props.multipleRegistries} fallback={
-          <label class="block">
-            <span class="mb-1 block text-xs text-zinc-500" title="为本次请求选择仓库凭据，留空不发送应用侧凭据">适用 Registry</span>
-            <div class="relative">
-              <select
-                class="w-full appearance-none border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 pr-8 text-sm outline-none focus:border-indigo-500"
-                value={value.registryId}
-                onChange={(e) => set("registryId", e.currentTarget.value)}
-              >
-                <option value="">不指定（匿名）</option>
-                <For each={registries() ?? []}>
-                  {(registry) => <option value={registry.id}>{registry.url}{registry.username ? `（${registry.username}）` : ""}</option>}
-                </For>
-              </select>
-              <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-zinc-500">▾</span>
-            </div>
-            <Show when={registries.error}>
-              <p class="mt-1 text-[11px] text-red-400">仓库加载失败</p>
-            </Show>
-          </label>
-        }>
-          <div>
-            <span class="mb-1 block text-xs text-zinc-500" title="可选择多个仓库凭据；同一 host 的多个账号会被后端拒绝">适用 Registry（可多选）</span>
-            <div class="flex min-h-[2.25rem] flex-wrap gap-x-3 gap-y-1 border border-zinc-700 bg-zinc-800 px-2.5 py-1.5">
-              <Show when={registries.error}>
-                <span class="text-xs text-red-400">仓库加载失败</span>
-              </Show>
-              <Show when={!registries.error && (registries() ?? []).length > 0} fallback={<Show when={!registries.error}><span class="text-xs text-zinc-500">无已配置仓库</span></Show>}>
-                <For each={registries() ?? []}>
-                  {(registry) => (
-                    <label class="flex items-center gap-1 text-xs text-zinc-300">
-                      <input
-                        type="checkbox"
-                        checked={value.registryIds.includes(registry.id)}
-                        onChange={() => toggleRegistry(registry.id)}
-                      />
-                      <span>{registry.url}{registry.username ? `（${registry.username}）` : ""}</span>
-                    </label>
-                  )}
-                </For>
-              </Show>
-            </div>
-          </div>
-        </Show>
+        <ServerAccounts options={props.options} multiple={props.multipleRegistries} />
         </div>
       </Show>
 
       <Show when={props.showPlatform}>
         <label class="block">
-          <span class="mb-1 block text-xs text-zinc-500" title="留空由 Docker daemon 选择目标平台；格式 linux/amd64 或 linux/arm/v7">平台（可选）</span>
+          <span class="mb-1 block text-xs text-zinc-500" title="留空即 Docker daemon 所在平台，与 docker pull 一致；格式 linux/amd64 或 linux/arm/v7">平台（可选）</span>
           <input
             list={platformListId}
             class="w-full border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 font-mono text-sm outline-none transition-colors focus:border-indigo-500"
-            placeholder="留空使用 Docker daemon 平台"
+            placeholder={daemon() ? `${daemon()}（当前 Docker daemon）` : "留空使用 Docker daemon 平台"}
             value={value.platform}
             onInput={(e) => set("platform", e.currentTarget.value)}
           />

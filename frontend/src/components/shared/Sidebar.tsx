@@ -21,7 +21,6 @@ export const mainLinks = [
 export const adminLinks = [
   { to: "/settings/docker",     label: "Docker 连接" },
   { to: "/settings/users",      label: "用户管理" },
-  { to: "/settings/registries", label: "镜像仓库" },
   { to: "/settings/audit",      label: "审计日志" },
 ];
 

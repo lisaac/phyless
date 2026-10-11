@@ -1,12 +1,14 @@
 // Browser-download settings persisted per browser (origin localStorage):
 // saved CF worker URLs, the chosen download mode, and — opt-in — private
-// registry credentials keyed by Worker URL so one endpoint cannot reuse
-// another endpoint's credentials.
+// registry credentials keyed by Worker URL (so one endpoint cannot reuse
+// another endpoint's credentials) and then by registry host.
 //
 // SECURITY: remembered credentials live in localStorage in cleartext and are
 // readable by any script that runs on this origin (i.e. an XSS would expose
 // them). They are never sent to the phyless server. Remembering is off by
 // default and can be cleared from the pull dialog.
+
+import { registryCredsHost, type Creds, type RegistryCreds } from "../api/registryPull";
 
 const WORKER_KEY = "phyless_pull_worker_url";
 const WORKER_LIST_KEY = "phyless_pull_worker_urls";
@@ -14,10 +16,9 @@ const MODE_KEY = "phyless_pull_download_mode";
 const CREDS_KEY = "phyless_pull_registry_creds";
 
 export type DownloadMode = "proxy" | "browser";
-export interface Creds {
-  username: string;
-  secret: string;
-}
+
+/** Prefilled until this browser saves its own Worker address. */
+export const DEFAULT_WORKER_URL = "https://registry-proxy.phyless.com";
 
 // Only https URLs without embedded credentials, query or fragment are stored;
 // a path is allowed (Workers are often mounted under a route).
@@ -42,7 +43,7 @@ export function getWorkerUrl(): string {
   } catch {
     // Fall through to the list reader below.
   }
-  return getWorkerUrls()[0] ?? "";
+  return getWorkerUrls()[0] ?? DEFAULT_WORKER_URL;
 }
 
 export function setWorkerUrl(raw: string): void {
@@ -133,24 +134,38 @@ function isCreds(value: unknown): value is Creds {
     !!(value as Creds).username && !!(value as Creds).secret;
 }
 
-function readCreds(): Record<string, Creds> {
+// Credentials of one Worker, keyed by normalized registry host. A legacy
+// single-account entry had no host; it is kept as Docker Hub's.
+function readHostCreds(value: unknown): RegistryCreds {
+  if (isCreds(value)) return { "docker.io": { username: value.username, secret: value.secret } };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: RegistryCreds = {};
+  for (const [raw, creds] of Object.entries(value)) {
+    const host = registryCredsHost(raw);
+    if (host && isCreds(creds)) out[host] = { username: creds.username, secret: creds.secret };
+  }
+  return out;
+}
+
+function readCreds(): Record<string, RegistryCreds> {
   try {
     const raw = localStorage.getItem(CREDS_KEY);
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
-    // Migrate the old one-credential shape to the browser's current Worker.
+    // Migrate the oldest one-credential shape to the browser's current Worker.
     if (isCreds(parsed)) {
       const workerUrl = getWorkerUrl();
       if (!workerUrl) return {};
-      const creds = { [workerUrl]: parsed };
+      const creds = { [workerUrl]: readHostCreds(parsed) };
       localStorage.setItem(CREDS_KEY, JSON.stringify(creds));
       return creds;
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const creds: Record<string, Creds> = {};
+    const creds: Record<string, RegistryCreds> = {};
     for (const [url, value] of Object.entries(parsed)) {
       const workerUrl = validWorkerUrl(url);
-      if (workerUrl && isCreds(value)) creds[workerUrl] = value;
+      const hosts = readHostCreds(value);
+      if (workerUrl && Object.keys(hosts).length) creds[workerUrl] = hosts;
     }
     return creds;
   } catch {
@@ -158,19 +173,20 @@ function readCreds(): Record<string, Creds> {
   }
 }
 
-export function getRememberedCreds(workerUrl: string): Creds | null {
+export function getRememberedCreds(workerUrl: string): RegistryCreds | null {
   const url = validWorkerUrl(workerUrl);
   if (!url) return null;
   const creds = readCreds()[url];
-  return creds ? { ...creds } : null;
+  return creds ? structuredClone(creds) : null;
 }
 
-export function rememberCreds(workerUrl: string, creds: Creds | null): void {
+export function rememberCreds(workerUrl: string, creds: RegistryCreds | null): void {
   const url = validWorkerUrl(workerUrl);
   if (!url) return;
   try {
     const all = readCreds();
-    if (isCreds(creds)) all[url] = { ...creds };
+    const hosts = readHostCreds(creds);
+    if (Object.keys(hosts).length) all[url] = hosts;
     else delete all[url];
     if (Object.keys(all).length) localStorage.setItem(CREDS_KEY, JSON.stringify(all));
     else localStorage.removeItem(CREDS_KEY);

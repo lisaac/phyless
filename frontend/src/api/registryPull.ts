@@ -92,6 +92,29 @@ export function parseImageRef(ref: string): ParsedRef {
   return { registryHost: host, repository, tag, displayRef: `${host}/${repository}:${tag}` };
 }
 
+/** Browser credentials keyed by registry host ("docker.io", "ghcr.io", …). */
+export type RegistryCreds = Record<string, Creds>;
+
+/** Normalized credential key for a bare host: Hub aliases become "docker.io";
+ *  "" for something that is not a registry host. */
+export function registryCredsHost(host: string): string {
+  const value = host.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/(?:v[12]\/?)?$/, "").replace(/\/+$/, "");
+  if (!value || /[/@\s]/.test(value) || !(value.includes(".") || value.includes(":") || value === "localhost")) return "";
+  const parsed = parseImageRef(`${value}/x`).registryHost;
+  return parsed === "registry-1.docker.io" ? "docker.io" : parsed;
+}
+
+/** Only the credentials of the registry a ref lives on — never another one's. */
+export function credsFor(creds: RegistryCreds | undefined, ref: string): Creds | undefined {
+  if (!creds) return undefined;
+  try {
+    const host = parseImageRef(ref).registryHost;
+    return creds[host === "registry-1.docker.io" ? "docker.io" : host];
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseWWWAuthenticate(header: string): { scheme: string; realm: string; service?: string; scope?: string } {
   const scheme = (header.split(/\s+/, 1)[0] || "").toLowerCase();
   const params: Record<string, string> = {};
@@ -170,7 +193,7 @@ export async function registryResponseError(resp: Response, action: string): Pro
   if (resp.status === 429) {
     const retryAfter = resp.headers.get("Retry-After");
     const retry = retryAfter && /^\d+$/.test(retryAfter) ? `，请 ${retryAfter} 秒后重试` : "，请稍后重试";
-    return new Error(`镜像仓库请求过于频繁（429）${retry}${suffix}`);
+    return new Error(`${action}过于频繁（429）${retry}${suffix}`);
   }
   return new Error(`${action}失败（${resp.status}）${suffix}`);
 }
@@ -276,9 +299,18 @@ async function sha256Digest(bytes: Uint8Array): Promise<string> {
   return "sha256:" + hex;
 }
 
+/** Parses os/arch[/variant] with Docker's aliases: x86_64→amd64,
+ *  aarch64→arm64 (v8 implied), arm→arm/v7, armhf→arm/v7, armel→arm/v6. */
 export function parsePlatform(raw: string): { os: string; architecture: string; variant?: string } {
-  const [os, architecture, variant] = (raw || "linux/amd64").split("/");
-  return { os: os || "linux", architecture: architecture || "amd64", ...(variant ? { variant } : {}) };
+  const [rawOs, rawArch, rawVariant] = (raw || "linux/amd64").trim().toLowerCase().split("/");
+  let architecture = rawArch || "amd64";
+  let variant = rawVariant ?? "";
+  if (architecture === "x86_64" || architecture === "x86-64") architecture = "amd64";
+  else if (architecture === "aarch64" || architecture === "arm64") { architecture = "arm64"; if (variant === "v8" || variant === "8") variant = ""; }
+  else if (architecture === "armhf") { architecture = "arm"; variant = "v7"; }
+  else if (architecture === "armel") { architecture = "arm"; variant = "v6"; }
+  else if (architecture === "arm") variant = /^v?[5-8]$/.test(variant) ? `v${variant.replace("v", "")}` : "v7";
+  return { os: rawOs || "linux", architecture, ...(variant ? { variant } : {}) };
 }
 
 function isIndex(mediaType: string, doc: { manifests?: unknown }): boolean {
@@ -290,16 +322,21 @@ interface PlatformDesc {
   platform?: { os?: string; architecture?: string; variant?: string };
 }
 
-function selectPlatform(manifests: PlatformDesc[], want: { os: string; architecture: string; variant?: string }): PlatformDesc | undefined {
-  return manifests.find(
-    (m) =>
-      m.platform?.os === want.os &&
-      m.platform?.architecture === want.architecture &&
-      (!want.variant || m.platform?.variant === want.variant),
-  );
+/** Docker's order: the exact platform, then — unless the user chose the
+ *  platform (`exact`) — older 32-bit ARM variants. */
+export function selectPlatform(manifests: PlatformDesc[], want: { os: string; architecture: string; variant?: string }, exact = false): PlatformDesc | undefined {
+  const arm = !exact && want.architecture === "arm" && /^v[5-8]$/.test(want.variant ?? "");
+  const variants = arm ? Array.from({ length: Number(want.variant![1]) - 4 }, (_, i) => `v${Number(want.variant![1]) - i}`) : [want.variant];
+  for (const variant of variants) {
+    const pick = manifests.find(
+      (m) => m.platform?.os === want.os && m.platform?.architecture === want.architecture && (!variant || m.platform?.variant === variant),
+    );
+    if (pick) return pick;
+  }
+  return undefined;
 }
 
-export async function resolveImage(ref: string, platform: string, workerUrl: string, creds?: Creds, signal?: AbortSignal): Promise<ResolvedImage> {
+export async function resolveImage(ref: string, platform: string, workerUrl: string, creds?: Creds, signal?: AbortSignal, exact = false): Promise<ResolvedImage> {
   if (!workerUrl.trim()) throw new Error("未配置下载代理地址");
   const parsed = parseImageRef(ref);
   const want = parsePlatform(platform);
@@ -318,9 +355,12 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
   };
   let mediaType = doc.mediaType || (resp.headers.get("Content-Type") || "").split(";")[0].trim();
 
+  let chosen = want;
   if (isIndex(mediaType, doc)) {
-    const pick = selectPlatform(doc.manifests || [], want);
-    if (!pick) throw new Error("镜像不包含目标平台");
+    const pick = selectPlatform(doc.manifests || [], want, exact);
+    if (!pick) throw new Error(`镜像不包含目标平台 ${[want.os, want.architecture, want.variant].filter(Boolean).join("/")}`);
+    // The tar's index records what was actually chosen (e.g. arm/v6 on a v7 daemon).
+    chosen = { os: want.os, architecture: want.architecture, ...(pick.platform?.variant ? { variant: pick.platform.variant } : {}) };
     const byDigest = `https://${parsed.registryHost}/v2/${parsed.repository}/manifests/${pick.digest}`;
     resp = await authorizedGet(workerUrl, byDigest, MANIFEST_ACCEPT, creds, cache, signal);
     raw = await readBounded(resp, MAX_META);
@@ -355,7 +395,7 @@ export async function resolveImage(ref: string, platform: string, workerUrl: str
     config: { hex: hexOf(doc.config.digest), size: doc.config.size, bytes: configBytes },
     layers: doc.layers.map((l) => ({ hex: hexOf(l.digest), digest: l.digest, size: l.size, mediaType: l.mediaType })),
     manifest: { mediaType: mediaType || "application/vnd.oci.image.manifest.v1+json", digest: manifestDigest, size: raw.byteLength, bytes: raw },
-    platform: want,
+    platform: chosen,
     authHeader: cache.header,
   };
 }

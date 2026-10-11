@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { get, imageInspectUrl, request } from "../api/client";
-import { resolveImage, matchesRemote, remoteDigests, type Creds, type RemoteDigests } from "../api/registryPull";
+import { resolveImage, matchesRemote, remoteDigests, credsFor, type Creds, type RegistryCreds, type RemoteDigests } from "../api/registryPull";
 import { upgradeImageRef, imagePlatform, envDifferingFromImage, type EnvCandidate } from "../api/inspect";
 import type { BrowserPullCallbacks } from "./browserPull";
 
@@ -78,7 +78,7 @@ export interface UpdateCheckParams {
   mode: "server" | "browser";
   pullOptions?: Record<string, unknown>;
   workerUrl?: string;
-  creds?: Creds;
+  creds?: RegistryCreds;
 }
 
 type Inspect = { Id?: string; Image?: string; Config?: { Image?: string; Labels?: Record<string, string> } };
@@ -111,7 +111,7 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
     cb.note(`服务端检查 ${p.ids.length} 个容器…`);
     results = await deps.post({ ids: p.ids, ...p.pullOptions }, cb.signal);
   } else {
-    if (!p.workerUrl?.trim()) throw new Error("未配置 CF worker 地址");
+    if (!p.workerUrl?.trim()) throw new Error("未配置前端代理地址（CF worker）");
     results = [];
     const remotes = new Map<string, Promise<RemoteDigests>>();
     // Containers commonly share images and tags; inspect each once.
@@ -139,7 +139,7 @@ export async function runUpdateCheck(p: UpdateCheckParams, cb: BrowserPullCallba
         const tagMoved = !!tag?.Id && tag.Id !== r.local_id;
         let remote: RemoteDigests;
         try {
-          if (!remotes.has(key)) remotes.set(key, deps.resolve(r.ref, platform, p.workerUrl, p.creds, cb.signal));
+          if (!remotes.has(key)) remotes.set(key, deps.resolve(r.ref, platform, p.workerUrl, credsFor(p.creds, r.ref), cb.signal));
           remote = await remotes.get(key)!;
         } catch (e) {
           aborted();

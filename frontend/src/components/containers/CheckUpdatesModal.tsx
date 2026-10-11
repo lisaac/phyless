@@ -1,7 +1,7 @@
 import { Component, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady, browserSecret } from "../shared/PullOptions";
 import { enqueue } from "../../stores/taskQueue";
 
 // Check-for-updates dialog: same pull options as the upgrade dialog, because
@@ -28,7 +28,7 @@ export const CheckUpdatesModal: Component<{
         checkIds: ts.map((t) => t.id),
         workerUrl: browser ? pull.value.workerUrl ?? "" : undefined,
       },
-      secret: browser && pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+      secret: browser ? browserSecret(pull.value) : undefined,
     });
     close();
   };

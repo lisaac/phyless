@@ -1,7 +1,7 @@
 import { Component, createEffect, createSignal, For, on, Show } from "solid-js";
 import { Button } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady } from "../shared/PullOptions";
+import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady, browserSecret } from "../shared/PullOptions";
 import { confirmAction } from "../shared/ConfirmModal";
 import { LABEL_PROJECT } from "../compose/composeShared";
 import { enqueue } from "../../stores/taskQueue";
@@ -99,7 +99,7 @@ export const UpgradeContainerModal: Component<{
             type: "browser-pull-action", action: "upgrade", containerId: t.id, workerUrl: pull.value.workerUrl ?? "",
             envFromImage: env.length ? env : undefined,
           },
-          secret: pull.value.creds?.secret ? { creds: pull.value.creds } : undefined,
+          secret: browserSecret(pull.value),
         });
         continue;
       }
