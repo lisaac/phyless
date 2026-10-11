@@ -11,10 +11,10 @@ import (
 )
 
 func TestRegistryAuthSelection(t *testing.T) {
-	s := &Server{store: store.New(filepath.Join(t.TempDir(), "config.json"))}
+	s := &Server{store: store.New(filepath.Join(t.TempDir(), "config.json")), jwtSecret: testSecret}
 	password := "quote\"slash\\secret"
 	if err := s.store.Write(&store.Config{Registries: []models.Registry{
-		{ID: "hub", URL: "https://index.docker.io/v1/", Username: "user", PasswordEnc: encrypt(password)},
+		{ID: "hub", URL: "https://index.docker.io/v1/", Username: "user", PasswordEnc: mustEncrypt(t, s, password)},
 		{ID: "hub2", URL: "docker.io", Username: "another"},
 		{ID: "private", URL: "registry.example:5000", Username: "private"},
 	}}); err != nil {

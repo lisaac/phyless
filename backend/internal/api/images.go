@@ -206,7 +206,7 @@ func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	encoded, err := s.registryAuthForImage(body.Image, body.RegistryID)
+	encoded, err := s.requestRegistryAuth(body.Image, body.requestPullOptions)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

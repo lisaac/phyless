@@ -80,7 +80,11 @@ func (s *Server) composeRegistryAuth(ids []string) (map[string]registry.AuthConf
 			if _, exists := result[host]; exists {
 				return nil, fmt.Errorf("multiple registry accounts selected for %s", host)
 			}
-			result[host] = registry.AuthConfig{Username: reg.Username, Password: decrypt(reg.PasswordEnc), ServerAddress: host}
+			password, err := s.decrypt(reg.PasswordEnc)
+			if err != nil {
+				return nil, fmt.Errorf("cannot decrypt stored password for %s; re-enter it", host)
+			}
+			result[host] = registry.AuthConfig{Username: reg.Username, Password: password, ServerAddress: host}
 			break
 		}
 		if !found {
@@ -114,6 +118,16 @@ func (s *Server) registryAuthForImage(ref, id string) (string, error) {
 		return "", fmt.Errorf("selected registry does not match image host")
 	}
 	return registry.EncodeAuthConfig(config)
+}
+
+// requestRegistryAuth is every pull entry point's account choice: one account
+// per registry (registry_ids, the UI's per-registry picker; an image whose
+// registry has none goes anonymous), or the older single registry_id.
+func (s *Server) requestRegistryAuth(ref string, o requestPullOptions) (string, error) {
+	if len(o.RegistryIDs) > 0 {
+		return s.registryAuthFromIDs(ref, o.RegistryIDs)
+	}
+	return s.registryAuthForImage(ref, o.RegistryID)
 }
 
 // registryAuthFromIDs picks, from several selected accounts, the one whose host

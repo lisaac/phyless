@@ -122,7 +122,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	encoded, err := s.registryAuthForImage(body.Image, body.RegistryID)
+	encoded, err := s.requestRegistryAuth(body.Image, body.requestPullOptions)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -518,10 +518,7 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 	if body.PullPolicy == "never" {
 		newID, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, id, w, uopts)
 	} else {
-		encoded, authErr := s.registryAuthForImage(imageRef, body.RegistryID)
-		if len(body.RegistryIDs) > 0 {
-			encoded, authErr = s.registryAuthFromIDs(imageRef, body.RegistryIDs)
-		}
+		encoded, authErr := s.requestRegistryAuth(imageRef, body.requestPullOptions)
 		if authErr != nil {
 			writeError(w, http.StatusBadRequest, authErr.Error())
 			return

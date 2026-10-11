@@ -20,9 +20,9 @@ func TestImagePullForwardsRequestOptionsAndAuditsStreamFailure(t *testing.T) {
 			dir := t.TempDir()
 			logPath := filepath.Join(dir, "audit.log")
 			client := &createPullClient{pullFailure: failure}
-			s := &Server{docker: client, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(logPath)}
+			s := &Server{docker: client, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(logPath), jwtSecret: testSecret}
 			if err := s.store.Write(&store.Config{Registries: []models.Registry{
-				{ID: "selected", URL: "registry.example", Username: "user", PasswordEnc: encrypt("registry-secret")},
+				{ID: "selected", URL: "registry.example", Username: "user", PasswordEnc: mustEncrypt(t, s, "registry-secret")},
 			}}); err != nil {
 				t.Fatal(err)
 			}

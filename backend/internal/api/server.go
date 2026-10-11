@@ -366,6 +366,7 @@ func (s *Server) mountDockerRoutes(r chi.Router) {
 	r.Delete("/api/images", s.handleDeleteImage)
 	r.Post("/api/images/delete", s.handleImageDeleteProgress)
 	r.Post("/api/images/pull", s.handleImagePull)
+	r.Post("/api/images/remote", s.handleRemoteRegistry)
 	r.Post("/api/images/tag", s.handleImageTag)
 	r.Delete("/api/images/untag", s.handleImageDeleteTag)
 	r.Post("/api/images/load", s.handleImageLoad)
