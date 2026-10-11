@@ -129,7 +129,7 @@ export const ConfigFilesPage: Component = () => {
             onRename={hasRole("operator") ? renameFile : undefined}
             onUpload={hasRole("operator") ? files.upload : undefined}
             onDownload={downloadFile}
-            popout={{ kind: "config", id: "-", name: "本机配置" }}
+            popout={{ kind: "config", id: "-", name: "/etc" }}
           />
         </div>
         <div class="sticky top-4 flex h-[calc(100vh-13rem)] flex-col">

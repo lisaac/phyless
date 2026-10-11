@@ -12,13 +12,20 @@ import { currentUser, hasRole } from "../../stores/auth";
 // a top-level route outside Guard/Layout, opened via FileBrowser's "独立窗口"
 // button. Handlers are rebuilt from (kind, id) via fileSource; files open in
 // the read-only tar viewer (editing stays in the main window's editor).
+const KIND_LABEL: Record<FileSourceKind, string> = {
+  container: "容器", image: "镜像", volume: "存储卷", compose: "Compose", config: "本机配置",
+};
+
 export const FilesWindowPage: Component = () => {
   const params = useParams();
   const [search, setSearch] = useSearchParams();
   const kind = () => params.kind as FileSourceKind;
-  const src = () => fileSource(kind(), params.id);
+  // Router params stay percent-encoded (an image id "sha256:…" arrives as
+  // "sha256%3A…"); fileSource encodes again, so decode once here.
+  const id = () => decodeURIComponent(params.id);
+  const src = () => fileSource(kind(), id());
   const op = () => hasRole("operator");
-  const name = () => (search.name as string) || params.id;
+  const name = () => (search.name as string) || id();
 
   createEffect(() => { document.title = `文件 · ${name()}`; });
 
@@ -30,8 +37,15 @@ export const FilesWindowPage: Component = () => {
   return (
     <Show when={currentUser()} fallback={<p class="p-8 text-sm text-zinc-500">未登录，请先在主窗口登录。</p>}>
       <div class="min-h-screen bg-zinc-950 p-3">
+        <div class="mb-3 flex min-w-0 items-baseline gap-2 border-b border-zinc-800 pb-2">
+          <span class="shrink-0 border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-400">{KIND_LABEL[kind()] ?? kind()}</span>
+          <span class="truncate text-sm font-semibold text-zinc-200" title={name()}>{name()}</span>
+          <Show when={kind() !== "config" && id() !== name()}>
+            <span class="truncate font-mono text-[11px] text-zinc-500" title={id()}>{id()}</span>
+          </Show>
+        </div>
         <FileBrowser
-          instanceKey={`${kind()}:${params.id}`}
+          instanceKey={`${kind()}:${id()}`}
           initialPath={(search.path as string) || "/"}
           onPathChange={(path) => setSearch({ path }, { replace: true })}
           listPath={(sub) => src().listPath(sub)}
