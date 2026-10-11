@@ -1,4 +1,6 @@
-import { createSignal } from "solid-js";
+import { createSignal, type Accessor } from "solid-js";
+import { createStore } from "solid-js/store";
+import { useLocation } from "@solidjs/router";
 import { mainLinks, adminLinks } from "../components/shared/Sidebar";
 
 export interface PageTab { path: string; label: string; }
@@ -65,6 +67,46 @@ export function leftNeighbor(path: string): PageTab | undefined {
 export function removeTab(path: string) {
   setTabs((t) => t.filter((x) => x.path !== path));
   seenPaths.delete(path);
+  savedSearch.delete(path);
+  setViewState(path, undefined!);
+}
+
+// ── Per-tab view state (not data) ─────────────────────────────────────────
+// Switching tabs unmounts the page, so anything it held is lost. Two kinds
+// of state survive a switch, both keyed by the tab's path and dropped when
+// the tab closes:
+//  1. The query string (?tab=…&path=…) — sub-tabs and similar already live
+//     there; Layout saves it on leave and restores it on return.
+//  2. createTabState — a drop-in for createSignal for view state that isn't
+//     in the URL (search box text, filters, selected file…).
+// Kept out of PageTab itself: replacing tab objects remounts their chips
+// (see setTabLabel).
+const savedSearch = new Map<string, string>();
+export const tabSearch = (path: string) => savedSearch.get(path) ?? "";
+export const setTabSearch = (path: string, search: string) => { savedSearch.set(path, search); };
+
+const [viewState, setViewState] = createStore<Record<string, Record<string, unknown>>>({});
+
+// Reads/writes under the CURRENT route's path, reactively — Solid Router
+// reuses one page instance across e.g. /compose/a → /compose/b, so the key
+// must follow the route, not be captured once at creation.
+export function createTabState<T>(key: string, init: T): [Accessor<T>, (v: T | ((prev: T) => T)) => void] {
+  let location: ReturnType<typeof useLocation> | undefined;
+  try { location = useLocation(); } catch { /* outside a Route (popup window, tests) */ }
+  if (!location) {
+    const [get, set] = createSignal(init);
+    return [get, (v) => set(() => (typeof v === "function" ? (v as (prev: T) => T)(get()) : v))];
+  }
+  const loc = location;
+  const get = () => {
+    const bag = viewState[loc.pathname];
+    return (bag && key in bag ? bag[key] : init) as T;
+  };
+  const set = (v: T | ((prev: T) => T)) => {
+    const value = typeof v === "function" ? (v as (prev: T) => T)(get()) : v;
+    setViewState(loc.pathname, (bag) => ({ ...bag, [key]: value }));
+  };
+  return [get, set];
 }
 
 // Tracks which paths have had their chip shown until that tab closes, so

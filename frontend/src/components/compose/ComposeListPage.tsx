@@ -1,4 +1,5 @@
 import { Component, createSignal, createResource, onMount, onCleanup, For, Show } from "solid-js";
+import { createTabState } from "../../stores/tabs";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button } from "../shared/Button";
@@ -32,7 +33,7 @@ export const ComposeListPage: Component = () => {
   const view = createListView(store.items, (p) =>
     `${p.name} ${p.id} ${p.base_dir} ${p.compose_file} ${containersOf(p, containers.items())
       .map((c) => `${c.Names.join(" ")} ${c.Image}`).join(" ")}`, { rowHeight: 72 });
-  const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
+  const [expanded, setExpanded] = createTabState<Set<string>>("expanded", new Set());
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [composeTarget, setComposeTarget] = createSignal<ComposeAction | null>(null);

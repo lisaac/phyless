@@ -2,6 +2,7 @@ import {
   createEffect, createMemo, createSignal, on, onCleanup, Show,
   type Accessor, type Component,
 } from "solid-js";
+import { createTabState } from "../../stores/tabs";
 
 const MIN_PAGE = 20;
 
@@ -14,7 +15,7 @@ export function createListView<T>(
   // ponytail: page size fixed at init — a resize/rotate keeps the old page, which only
   // changes how many rows one loadMore adds. Recompute in an effect if that ever matters.
   const page = Math.max(MIN_PAGE, Math.ceil((window.innerHeight * 1.5) / (opts?.rowHeight ?? 48)));
-  const [query, setQuery] = createSignal("");
+  const [query, setQuery] = createTabState("listQuery", "");
   const [limit, setLimit] = createSignal(page);
 
   const filtered = createMemo(() => {

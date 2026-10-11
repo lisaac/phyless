@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { theme, toggleTheme } from "../../stores/theme";
 import { ThemeIcon } from "./ThemeIcon";
-import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, type PageTab } from "../../stores/tabs";
+import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, tabSearch, setTabSearch, type PageTab } from "../../stores/tabs";
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { TaskQueueWidget } from "./TaskQueueWidget";
@@ -129,8 +129,20 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   // Every navigation (sidebar click, clicking into a row, back/forward) flows
   // through here — the single integration point that keeps the tab strip in
   // sync with the actual route, without touching individual navigate() calls.
+  //
+  // It also carries each tab's query string (sub-tab, file path…) across
+  // switches: arriving at a tab's path with no query (tab chip, sidebar,
+  // closing a neighbor) restores the one it had when you left; any other
+  // query change is recorded as the tab's latest.
+  let lastPath: string | undefined;
   createEffect(() => {
-    openOrActivate(location.pathname, labelFor(location.pathname));
+    const path = location.pathname, search = location.search;
+    openOrActivate(path, labelFor(path));
+    const arrived = path !== lastPath;
+    lastPath = path;
+    const saved = tabSearch(path);
+    if (arrived && !search && saved) navigate(path + saved, { replace: true });
+    else setTabSearch(path, search);
   });
 
   const closeAndNavigate = (path: string) => {

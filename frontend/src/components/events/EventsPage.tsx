@@ -1,4 +1,5 @@
 import { Component, createEffect, createMemo, createSignal, onCleanup, For, Show } from "solid-js";
+import { createTabState } from "../../stores/tabs";
 import { connectWS, reportWSError } from "../../api/ws";
 import { Chip } from "../shared/Button";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
@@ -48,8 +49,8 @@ const fmtTime = (unix: number) => {
 export const EventsPage: Component = () => {
   const [range, setRange] = createSignal<TimeRange>(presetRange("1h"));
   const [events, setEvents] = createSignal<DockerEvent[]>([]); // newest first
-  const [types, setTypes] = createSignal<Set<string>>(new Set()); // empty = all
-  const [hideNoise, setHideNoise] = createSignal(true);
+  const [types, setTypes] = createTabState<Set<string>>("types", new Set()); // empty = all
+  const [hideNoise, setHideNoise] = createTabState("hideNoise", true);
   const [paused, setPaused] = createSignal(false);
 
   let ws: WebSocket | undefined;

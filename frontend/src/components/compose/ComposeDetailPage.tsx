@@ -6,7 +6,7 @@ import { confirmOpenText, fetchTextFile } from "../../api/textFile";
 import { streamDownload, fmtBytes } from "../../api/download";
 import { createResourceStore } from "../../stores/resource";
 import { canSaveFile, createLatestFileRequest } from "../../stores/latestFile";
-import { removeTab, setTabLabel } from "../../stores/tabs";
+import { createTabState, removeTab, setTabLabel } from "../../stores/tabs";
 import { CodeEditor } from "../shared/CodeEditor";
 import { Button } from "../shared/Button";
 import { FileBrowser } from "../shared/FileBrowser";
@@ -118,7 +118,9 @@ export const ComposeDetailPage: Component = () => {
     const rel = p.compose_file.startsWith(p.base_dir) ? p.compose_file.slice(p.base_dir.length) : p.compose_file;
     return rel.startsWith("/") ? rel : "/" + rel;
   };
-  const [selectedFile, setSelectedFile] = createSignal<string | null>(null);
+  // undefined = never chosen on this tab (auto-select the compose file);
+  // null = user cleared it. Survives tab switches (createTabState).
+  const [selectedFile, setSelectedFile] = createTabState<string | null | undefined>("selectedFile", undefined);
   const [fileContent, setFileContent] = createSignal("");
   const [fileTruncated, setFileTruncated] = createSignal(false);
   const [fileLoading, setFileLoading] = createSignal(false);
@@ -170,17 +172,12 @@ export const ComposeDetailPage: Component = () => {
   };
   onCleanup(() => { downloadGeneration++; downloadController?.abort(); });
 
-  // Auto-select the compose file once per project — guarded by an id marker
-  // rather than "selectedFile() === null" so store polling (which changes
-  // project()'s object identity every refresh) can't fight the user's own
-  // navigation to a different file.
-  let autoSelectedFor: string | undefined;
+  // Auto-select the compose file once per project tab — only while nothing
+  // was ever chosen, so store polling (which changes project()'s identity
+  // every refresh) can't fight the user's own choice.
   createEffect(() => {
     const rel = composeRelPath();
-    if (rel && autoSelectedFor !== id()) {
-      autoSelectedFor = id();
-      setSelectedFile(rel);
-    }
+    if (rel && selectedFile() === undefined) setSelectedFile(rel);
   });
 
   const openFile = async (path: string) => {

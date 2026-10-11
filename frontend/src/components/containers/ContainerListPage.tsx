@@ -1,4 +1,5 @@
 import { Component, createSignal, onMount, onCleanup, Show, For } from "solid-js";
+import { createTabState } from "../../stores/tabs";
 import { createResourceStore } from "../../stores/resource";
 import { get, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
@@ -26,7 +27,7 @@ export const ContainerListPage: Component = () => {
   const { isP, act } = createContainerActions();
   const upgradable = (c: ContainerSummary) => isUpgradable(updateCheckFor(c.Id, c.ImageID));
   const upgradableCount = () => store.items().filter(upgradable).length;
-  const [onlyUpgradable, setOnlyUpgradable] = createSignal(false);
+  const [onlyUpgradable, setOnlyUpgradable] = createTabState("onlyUpgradable", false);
   const view = createListView(() => onlyUpgradable() ? store.items().filter(upgradable) : store.items(), (c) =>
     `${c.Names.join(" ")} ${c.Image} ${c.Id} ${c.Status}`);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());

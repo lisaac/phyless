@@ -11,6 +11,7 @@ vi.mock("./TaskQueueWidget", () => ({ TaskQueueWidget: () => null }));
 vi.mock("../../stores/tabs", () => ({
   tabs: () => [], openOrActivate: vi.fn(), leftNeighbor: vi.fn(),
   removeTab: vi.fn(), labelFor: () => "总览", markSeen: () => true,
+  tabSearch: () => "", setTabSearch: vi.fn(),
 }));
 vi.mock("../../stores/taskQueue", () => ({
   tasks: { list: [] }, panelHidden: () => true, setPanelHidden: vi.fn(), runningCount: () => 0,
