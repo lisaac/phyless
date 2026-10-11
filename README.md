@@ -123,7 +123,6 @@ Docker 主机与版本、操作系统和内核、总内存、存储驱动与可�
 | --- | --- |
 | Docker 连接 | 管理多个 Docker 主机：本机 socket、`unix:///path/to/docker.sock` 或 `tcp://host:2375`，可配置 TLS 证书（CA / Cert / Key），随时切换当前主机。 |
 | 用户管理 | 创建账号并分配角色：**admin**（全部权限）、**operator**（可执行操作）、**viewer**（只读）。 |
-| 镜像仓库 | 保存私有仓库凭据，拉取时自动使用；可测试连通性。 |
 | 审计日志 | 记录谁在什么时间执行了什么操作。 |
 
 ### 其他
@@ -352,10 +351,10 @@ Worker 源码是 [`cloudflare-worker/registry-proxy.js`](cloudflare-worker/regis
 
 ```text
 # Docker Hub + GHCR
-registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io,ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
+registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io,hub.docker.com,ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
 
 # 仅 Docker Hub
-registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io
+registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io,hub.docker.com
 
 # 仅 GHCR
 ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
@@ -367,9 +366,12 @@ ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
 
 1. 打开任一拉取 / 升级对话框，选择 **浏览器代理导入**；
 2. 填入 Worker 地址，如 `https://phyless-registry-proxy.example.workers.dev`（无需手动拼 `?url=`）；
-3. 私有镜像可填写用户名和密码/Token。凭据不会发给 phyless 服务端，“记住凭据”只存在当前浏览器的 localStorage。
+3. 在「前端代理仓库账号」中按 registry 选用账号：可以是只存在当前浏览器的账号，也可以是 phyless 服务端保存的账号（选用时临时取用、不写入浏览器）。每个镜像只会使用其所在 registry 选中的账号；“记住凭据”只把浏览器账号存在当前浏览器的 localStorage。
+4. 拉取对话框点「搜索远程镜像」可搜索 Docker Hub，或输入完整仓库名（如 `ghcr.io/owner/app`）查看标签。搜索与拉取方式一致：「不使用代理」由 phyless 服务端直接访问，「服务端代理」经所选代理访问，「浏览器代理导入」经 Worker 访问并使用 `docker.io` 账号登录。Worker 出口 IP 为共享 IP，Docker Hub API 按 IP 限额，频繁 429 时建议改用服务端方式；标签查询遇到 429 会自动改用 registry 接口（仅标签名）。
+5. 仓库账号直接在拉取对话框里管理，按 registry 分组、每组单选一个账号（或匿名）：「不使用代理 / 服务端代理」下是**服务端仓库账号**（加密保存在 phyless 服务端、所有用户共享），「浏览器代理导入」下是**前端代理仓库账号**。两者都可一键验证，验证走与拉取相同的网络路径。
+6. 「平台」默认即 Docker daemon 所在平台（含 ARM 变体，如 `linux/arm/v7`），与 `docker pull` 的自动选择一致；手动指定时两种代理都严格按指定平台拉取。GHCR 等非 Docker Hub 仓库的标签会读取 manifest 补全更新时间、大小、架构和仓库描述。
 
-限制：只支持 Linux 平台的 tag 镜像，不支持 digest 引用和 foreign layer；Compose Build 只预拉 Dockerfile 中能静态解析的 `FROM` 镜像。Worker 只处理 `GET` / `HEAD` / `OPTIONS`，不保存镜像内容。
+限制：只支持 Linux 平台的 tag 镜像，不支持 digest 引用和 foreign layer；Compose Build 只预拉 Dockerfile 中能静态解析的 `FROM` 镜像。Worker 只处理 `GET` / `HEAD` / `OPTIONS` 和 Docker Hub 登录的 `POST`，不保存镜像内容。详细设计见 [docs/pull-and-registry-accounts.md](docs/pull-and-registry-accounts.md)。搜索需白名单包含 `hub.docker.com`；添加 `docker.io` 账号后搜索以该账号身份进行，旧版 Worker 需重新部署才支持。
 
 ## 本地开发
 
