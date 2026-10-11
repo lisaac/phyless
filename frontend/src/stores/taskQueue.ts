@@ -143,6 +143,13 @@ const DETAIL_LABELS: Record<string, string> = {
   ca_pem: "CA 证书", cert_pem: "客户端证书", key_pem: "客户端私钥",
   workerUrl: "下载代理", canBuild: "包含构建",
   env_from_image: "改用镜像值的变量", envFromImage: "改用镜像值的变量",
+  cmd: "命令", entrypoint: "入口点", env: "环境变量", restart_policy: "重启策略", network_mode: "网络",
+  ports: "端口", binds: "挂载", hostname: "主机名", working_dir: "工作目录", user: "用户", dns: "DNS",
+  devices: "设备", tmpfs: "tmpfs", cap_add: "添加权能", cap_drop: "移除权能", privileged: "特权模式",
+  readonly_rootfs: "只读根文件系统", publish_all: "发布全部端口", interactive: "交互", tty: "TTY",
+  auto_remove: "退出后删除", init: "init 进程", no_healthcheck: "禁用健康检查",
+  memory: "内存限制", memory_swap: "内存+Swap", cpu_quota: "CPU 配额", cpu_period: "CPU 周期", cpu_shares: "CPU 权重",
+  sysctls: "Sysctls", labels: "容器标签", log_driver: "日志驱动", log_opts: "日志选项",
 };
 const HIDDEN_KEYS = /^(password|passwd|secret|token|authorization|auth|credentials?|registry_auth|(?:ca|cert|key)_pem)$/i;
 const URL_KEYS = /^(proxy_url|workerUrl)$/i;

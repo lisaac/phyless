@@ -173,19 +173,19 @@ export const TaskQueueWidget: Component = () => {
                 </div>
                 <Show when={expanded().has(t.id)}>
                   <div class="max-h-72 overflow-auto border-t border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-[11px]">
-                    <dl class="mb-2 grid grid-cols-[3rem_1fr] gap-x-3 gap-y-0.5">
+                    <dl class="mb-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
                       <For each={metaRows(t)}>
                         {([k, v]) => (<>
-                          <dt class="text-[10px] uppercase tracking-widest text-zinc-500">{k}</dt>
+                          <dt class="max-w-[7rem] break-all text-[10px] uppercase tracking-widest text-zinc-500">{k}</dt>
                           <dd class="break-all whitespace-pre-wrap text-zinc-300" title={v}>{v}</dd>
                         </>)}
                       </For>
                     </dl>
                     <Show when={t.details?.length > 0}>
-                      <dl class="mb-2 grid grid-cols-[3rem_1fr] gap-x-3 gap-y-1 border-t border-zinc-800 pt-2">
+                      <dl class="mb-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-zinc-800 pt-2">
                         <For each={t.details}>
                           {(detail) => (<>
-                            <dt class="text-[10px] uppercase tracking-widest text-zinc-500">{detail.label}</dt>
+                            <dt class="max-w-[7rem] break-all text-[10px] uppercase tracking-widest text-zinc-500">{detail.label}</dt>
                             <dd class="min-w-0 text-zinc-300">
                               <Show when={Array.isArray(detail.value)} fallback={<span class="break-all whitespace-pre-wrap">{detail.value as string}</span>}>
                                 <ul class="space-y-0.5">

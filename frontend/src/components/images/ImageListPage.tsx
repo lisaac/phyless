@@ -556,7 +556,7 @@ export const ImageListPage: Component = () => {
               onPull={startPull}
               onAddAccount={(host) => pull.set("addAccount", host)}
             />
-            <aside class="min-w-0 sm:border-l sm:border-zinc-800 sm:pl-5">
+            <aside class="min-w-0 border-zinc-800 sm:border-l sm:pl-5">
               <PullOptions options={pull} showPlatform allowBrowser />
             </aside>
           </div>
