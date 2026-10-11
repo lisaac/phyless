@@ -39,9 +39,12 @@ export const FilesWindowPage: Component = () => {
       <div class="min-h-screen bg-zinc-950 p-3">
         <div class="mb-3 flex min-w-0 items-baseline gap-2 border-b border-zinc-800 pb-2">
           <span class="shrink-0 border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-400">{KIND_LABEL[kind()] ?? kind()}</span>
-          <span class="truncate text-sm font-semibold text-zinc-200" title={name()}>{name()}</span>
-          <Show when={kind() !== "config" && id() !== name()}>
-            <span class="truncate font-mono text-[11px] text-zinc-500" title={id()}>{id()}</span>
+          {/* 本机配置 has no name/id of its own — the label says it all. */}
+          <Show when={kind() !== "config"}>
+            <span class="truncate text-sm font-semibold text-zinc-200" title={name()}>{name()}</span>
+            <Show when={id() !== name()}>
+              <span class="truncate font-mono text-[11px] text-zinc-500" title={id()}>{id()}</span>
+            </Show>
           </Show>
         </div>
         <FileBrowser
