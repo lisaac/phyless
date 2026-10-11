@@ -2,7 +2,7 @@
 
 这是一个仅支持 `?url=` 的透传代理：当 phyless 服务端和 Docker daemon 无法直接访问镜像仓库时，让 phyless Web UI 在浏览器中拉取容器镜像。它会添加 CORS 响应头，转发 OCI 拉取所需的请求头，并以流式方式返回上游响应，不保存任何内容。
 
-仅支持 `GET`、`HEAD`、`OPTIONS`。请求来源和上游地址两个白名单默认拒绝。
+仅支持 `GET`、`HEAD`、`OPTIONS`，以及发往 `https://hub.docker.com/v2/auth/token` 的 `POST`（用 Docker Hub 账号登录搜索，避免共享出口 IP 的匿名限额）。请求来源和上游地址两个白名单默认拒绝。
 
 ## 一键创建
 
@@ -24,7 +24,7 @@ wrangler deploy registry-proxy.js --name phyless-registry-proxy --compatibility-
 | 变量 | 说明 | 示例 |
 | --- | --- | --- |
 | `ALLOWED_ORIGINS` | 允许使用代理的请求 Origin，多个值用逗号分隔。为空时反射任意 Origin，但仍要求请求带 Origin，除非设置了 `ALLOW_MISSING_ORIGIN`。 | `https://phyless.example,http://localhost:8080` |
-| `UPSTREAM_ALLOWLIST` | 允许访问的注册表主机名，多个值用逗号分隔。`*.suffix` 匹配子域名，`*` 表示允许任意上游。 | `registry-1.docker.io,auth.docker.io,*.docker.io,ghcr.io,*.githubusercontent.com,production.cloudflare.docker.com` |
+| `UPSTREAM_ALLOWLIST` | 允许访问的注册表主机名，多个值用逗号分隔。`*.suffix` 匹配子域名，`*` 表示允许任意上游。 | `registry-1.docker.io,auth.docker.io,*.docker.io,hub.docker.com,ghcr.io,*.githubusercontent.com,production.cloudflare.docker.com` |
 | `ALLOW_ANY_UPSTREAMS` | 设置为 `true` 可跳过上游白名单，建议使用明确的白名单。 | `false` |
 | `ALLOW_MISSING_ORIGIN` | 设置为 `true` 可接受不带 Origin 的请求（例如 curl）。默认关闭。 | `false` |
 
@@ -35,7 +35,7 @@ wrangler deploy registry-proxy.js --name phyless-registry-proxy --compatibility-
 Docker Hub：
 
 ```
-registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io
+registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io,hub.docker.com
 ```
 
 GHCR：

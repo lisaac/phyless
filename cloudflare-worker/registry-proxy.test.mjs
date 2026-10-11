@@ -95,3 +95,61 @@ test('bounds redirect loops and refuses HTTPS downgrades', async () => {
     }
   } finally { globalThis.fetch = original; }
 });
+
+test('allows POST only to the Docker Hub login endpoint, with a bounded body and no redirects', async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  let status = 200;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return new Response(status === 302 ? '' : '{"access_token":"jwt"}', { status, headers: status === 302 ? { Location: 'https://hub.docker.com/x' } : {} });
+  };
+  const env = { UPSTREAM_ALLOWLIST: 'hub.docker.com,registry.example' };
+  const post = (target, body = '{"identifier":"u","secret":"s"}') => worker.fetch(new Request(`https://worker.example/?url=${encodeURIComponent(target)}`, {
+    method: 'POST', body, headers: { Origin: 'https://app.example', 'Content-Type': 'application/json' },
+  }), env);
+  try {
+    const ok = await post('https://hub.docker.com/v2/auth/token');
+    assert.equal(ok.status, 200);
+    assert.equal(await ok.text(), '{"access_token":"jwt"}');
+    assert.equal(calls[0].init.method, 'POST');
+    assert.equal(calls[0].init.body, '{"identifier":"u","secret":"s"}');
+    assert.equal((await post('https://registry.example/v2/')).status, 405);
+    assert.equal((await post('https://hub.docker.com/v2/auth/token?x=1')).status, 405);
+    assert.equal((await post('https://hub.docker.com/v2/auth/token', 'x'.repeat(5000))).status, 413);
+    assert.equal(calls.length, 1);
+    status = 302;
+    assert.equal((await post('https://hub.docker.com/v2/auth/token')).status, 502);
+    assert.equal(calls.length, 2);
+    const put = await worker.fetch(new Request('https://worker.example/?url=https://hub.docker.com/v2/auth/token', { method: 'PUT', headers: { Origin: 'https://app.example' } }), env);
+    assert.equal(put.status, 405);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('pull path is unchanged: GET/HEAD forward Range and Authorization, send no body and stream partial content', async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, method: init.method, body: init.body, range: init.headers.get('range'), auth: init.headers.get('authorization') });
+    return new Response(init.method === 'HEAD' ? null : 'partial', {
+      status: 206,
+      headers: { 'Content-Range': 'bytes 0-6/100', 'Docker-Content-Digest': 'sha256:abc' },
+    });
+  };
+  try {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await worker.fetch(new Request(`https://worker.example/?url=${encodeURIComponent('https://registry.example/v2/app/blobs/sha256:abc')}`, {
+        method, headers: { Origin: 'https://app.example', Range: 'bytes=0-6', Authorization: 'Bearer t' },
+      }), { UPSTREAM_ALLOWLIST: 'registry.example' });
+      assert.equal(response.status, 206);
+      assert.equal(response.headers.get('Content-Range'), 'bytes 0-6/100');
+      assert.match(response.headers.get('Access-Control-Expose-Headers'), /Content-Range/);
+      if (method === 'GET') assert.equal(await response.text(), 'partial');
+    }
+    assert.deepEqual(calls.map((c) => [c.method, c.body, c.range, c.auth]), [['GET', undefined, 'bytes=0-6', 'Bearer t'], ['HEAD', undefined, 'bytes=0-6', 'Bearer t']]);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

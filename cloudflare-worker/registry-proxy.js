@@ -5,10 +5,14 @@
 // is a narrow `?url=` pass-through that adds CORS, forwards the auth/range
 // headers the pull needs, and streams the upstream body back unbuffered.
 //
-// GET/HEAD/OPTIONS only. Two allowlists (request Origin, upstream host) both
-// default-deny. See README.md for the environment variables.
+// GET/HEAD/OPTIONS, plus POST to exactly one URL: Docker Hub's token login,
+// so search can run as the user instead of the Worker's shared-IP quota. Two
+// allowlists (request Origin, upstream host) both default-deny. See README.md
+// for the environment variables.
 
-const ALLOWED_METHODS = 'GET,HEAD,OPTIONS';
+const ALLOWED_METHODS = 'GET,HEAD,POST,OPTIONS';
+const POST_TARGET = 'https://hub.docker.com/v2/auth/token';
+const MAX_POST_BODY = 4096;
 const ALLOWED_HEADERS = 'Accept, Authorization, Cache-Control, Content-Type, Range';
 const EXPOSED_HEADERS =
   'Accept-Ranges, Content-Encoding, Content-Length, Content-Range, Content-Type, Docker-Content-Digest, Retry-After, WWW-Authenticate';
@@ -30,8 +34,8 @@ export default {
       return new Response(null, { status: 204, headers });
     }
 
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return jsonError(config, origin, 405, 'Only GET, HEAD, and OPTIONS are supported.');
+    if (!['GET', 'HEAD', 'POST'].includes(request.method)) {
+      return jsonError(config, origin, 405, 'Only GET, HEAD, OPTIONS and the Docker Hub login POST are supported.');
     }
 
     const originErr = validateOriginPolicy(config, origin);
@@ -45,6 +49,14 @@ export default {
       target = new URL(targetParam);
     } catch {
       return jsonError(config, origin, 400, 'The target url must be an absolute URL.');
+    }
+
+    let body;
+    if (request.method === 'POST') {
+      if (target.href !== POST_TARGET) return jsonError(config, origin, 405, 'POST is only allowed to the Docker Hub login endpoint.');
+      if (Number(request.headers.get('Content-Length')) > MAX_POST_BODY) return jsonError(config, origin, 413, 'Request body is too large.');
+      body = await request.text();
+      if (new TextEncoder().encode(body).length > MAX_POST_BODY) return jsonError(config, origin, 413, 'Request body is too large.');
     }
 
     const upstreamHeaders = new Headers();
@@ -65,12 +77,17 @@ export default {
         upstream = await fetch(target.toString(), {
           method: request.method,
           headers: upstreamHeaders,
+          body,
           redirect: 'manual',
           signal: request.signal,
           cf: { cacheTtl: 0, cacheEverything: false },
         });
         const location = upstream.headers.get('Location');
         if (![301, 302, 303, 307, 308].includes(upstream.status) || !location) break;
+        if (body !== undefined) {
+          await upstream.body?.cancel();
+          return jsonError(config, origin, 502, 'Upstream redirect denied for POST.');
+        }
         await upstream.body?.cancel();
         if (redirects >= 5) return jsonError(config, origin, 502, 'Too many upstream redirects.');
         const next = new URL(location, target);
