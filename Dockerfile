@@ -1,4 +1,4 @@
-FROM node:20-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
@@ -6,13 +6,16 @@ COPY frontend/ .
 ARG GIT_COMMIT=unknown
 RUN GIT_COMMIT="$GIT_COMMIT" npm run build
 
-FROM golang:1.26-alpine AS builder
+# Cross-compile on the build host; only the final stage runs as the target arch.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /frontend/dist ./backend/web/dist
-RUN ./scripts/go-build.sh -o phyless ./backend/cmd/server/
+ARG TARGETOS TARGETARCH TARGETVARIANT
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} CGO_ENABLED=0 \
+    ./scripts/go-build.sh -o phyless ./backend/cmd/server/
 
 FROM alpine:latest
 # Compose is embedded through the Go API; the runtime image intentionally has

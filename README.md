@@ -37,14 +37,36 @@ docker run -d \
   ghcr.io/lisaac/phyless:latest
 ```
 
-**或者直接运行二进制**（Linux amd64，其他平台见 [Releases](https://github.com/lisaac/phyless/releases/latest)）：
+或者用 Compose（`compose.yaml`）：
 
-```bash
-curl -fsSL https://github.com/lisaac/phyless/releases/latest/download/phyless-linux-amd64.tar.gz | tar -xz
+```yaml
+services:
+  phyless:
+    image: ghcr.io/lisaac/phyless:latest
+    container_name: phyless
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - phyless-data:/data
+
+volumes:
+  phyless-data:
 ```
 
 ```bash
-sudo ./phyless-linux-amd64 -C /var/lib/phyless
+docker compose up -d
+```
+
+镜像 `latest` 同时包含 amd64 / arm64 / armv7 / 386，Docker 会按宿主架构自动拉取对应版本，命令无需按架构修改。
+
+**或者直接运行二进制**（Linux，自动识别架构；其他平台见 [Releases](https://github.com/lisaac/phyless/releases/latest)）：
+
+```bash
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/armv7l/armv7/;s/i.86/386/')
+curl -fsSL "https://github.com/lisaac/phyless/releases/latest/download/phyless-linux-$ARCH.tar.gz" | tar -xz
+sudo ./phyless-linux-$ARCH -C /var/lib/phyless
 ```
 
 打开 `http://<服务器地址>:8080`，按提示为 `admin` 设置密码，完成。
@@ -136,7 +158,7 @@ phyless 需要访问 Docker Socket，并把数据（账号、JWT 密钥、配置
 
 ### 方式一：Docker 容器（推荐）
 
-见 [快速开始](#快速开始)。镜像基于 Alpine，里面只有 phyless 二进制和 CA 证书；数据保存在 `phyless-data` 卷的 `/data` 下。
+见 [快速开始](#快速开始)。镜像基于 Alpine，里面只有 phyless 二进制和 CA 证书；数据保存在 `phyless-data` 卷的 `/data` 下。`latest` 为多架构镜像（amd64 / arm64 / armv7 / 386），`docker pull` 会按宿主架构自动选择；也可直接指定 `latest-amd64`、`latest-arm64`、`latest-armv7`、`latest-386`。
 
 升级 phyless：
 
@@ -160,14 +182,12 @@ docker rm -f phyless         # 删除容器，phyless-data 卷仍保留
 
 ### 方式二：直接运行二进制
 
-适合不想多跑一个容器的机器。[Releases](https://github.com/lisaac/phyless/releases/latest) 提供 Linux amd64 / arm64、macOS arm64、Windows amd64 版本，其他平台请[自行构建](#本地开发)。以下以 Linux amd64 为例，arm64 把文件名换成 `phyless-linux-arm64`。
+适合不想多跑一个容器的机器。[Releases](https://github.com/lisaac/phyless/releases/latest) 提供 Linux amd64 / arm64 / armv7 / 386、macOS arm64、Windows amd64 版本，其他平台请[自行构建](#本地开发)。以下命令自动识别 Linux 架构。
 
 ```bash
-curl -fsSL https://github.com/lisaac/phyless/releases/latest/download/phyless-linux-amd64.tar.gz | tar -xz
-```
-
-```bash
-sudo install phyless-linux-amd64 /usr/local/bin/phyless
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/armv7l/armv7/;s/i.86/386/')
+curl -fsSL "https://github.com/lisaac/phyless/releases/latest/download/phyless-linux-$ARCH.tar.gz" | tar -xz
+sudo install "phyless-linux-$ARCH" /usr/local/bin/phyless
 ```
 
 ```bash
@@ -264,7 +284,7 @@ phyless 不要求和 Docker 跑在同一台机器上。在自己的电脑（macO
 | --- | --- |
 | macOS（Apple Silicon） | `phyless-darwin-arm64.tar.gz` |
 | Windows x64 | `phyless-windows-amd64.zip` |
-| Linux x64 / arm64 | `phyless-linux-amd64.tar.gz` / `phyless-linux-arm64.tar.gz` |
+| Linux x64 / arm64 / armv7 / x86 | `phyless-linux-amd64.tar.gz` / `phyless-linux-arm64.tar.gz` / `phyless-linux-armv7.tar.gz` / `phyless-linux-386.tar.gz` |
 
 macOS：
 
