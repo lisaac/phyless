@@ -26,7 +26,7 @@ export const Modal: Component<{
         onClick={() => !props.noBackdropClose && props.onClose()}
       >
         <div
-          class={`relative min-h-[100dvh] w-full bg-zinc-900 shadow-2xl sm:min-h-0 sm:rounded-xl sm:border sm:border-zinc-700/50 ${
+          class={`relative min-h-[100dvh] w-full bg-zinc-900 shadow-2xl sm:min-h-0 border-zinc-700/50 sm:rounded-xl sm:border ${
             props.wide ? "sm:max-w-6xl" : "sm:max-w-md"
           }`}
           onClick={(e) => e.stopPropagation()}

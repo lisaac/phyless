@@ -234,3 +234,34 @@ html:not(.dark) .hover\:text-red-300:hover, html:not(.dark) .hover\:text-red-400
 html:not(.dark) [class~="bg-red-950/20"]     { background-color: #fef2f2; }
 html:not(.dark) [class~="border-red-900/50"] { border-color: #fecaca; }
 html:not(.dark) .hover\:bg-red-950\/40:hover { background-color: #fee2e2; }
+
+/* Gaps found by auditing every color class against this table (2026-10-12). */
+html:not(.dark) [class~="bg-zinc-900/90"]   { background-color: rgba(255,255,255,.9); }
+html:not(.dark) [class~="border-zinc-700/50"] { border-color: #e2e8f0; }
+html:not(.dark) .border-zinc-600, html:not(.dark) .border-zinc-500 { border-color: #94a3b8; }
+html:not(.dark) .hover\:border-zinc-400:hover { border-color: #64748b; }
+html:not(.dark) .hover\:border-zinc-500:hover { border-color: #94a3b8; }
+html:not(.dark) .hover\:border-zinc-700:hover { border-color: #cbd5e1; }
+html:not(.dark) .focus\:border-zinc-600:focus { border-color: #94a3b8; }
+html:not(.dark) .focus\:bg-zinc-900:focus     { background-color: #fff; }
+html:not(.dark) .focus-visible\:bg-zinc-800\/60:focus-visible { background-color: #f1f5f9; }
+html:not(.dark) .disabled\:text-zinc-600:disabled { color: #94a3b8; }
+html:not(.dark) .group[open] .group-open\:bg-zinc-800   { background-color: #e2e8f0; }
+html:not(.dark) .group[open] .group-open\:text-zinc-100 { color: #0f172a; }
+html:not(.dark) .file\:bg-zinc-800::file-selector-button       { background-color: #e2e8f0; }
+html:not(.dark) .file\:text-zinc-200::file-selector-button     { color: #1e293b; }
+html:not(.dark) .file\:hover\:bg-zinc-700:hover::file-selector-button { background-color: #cbd5e1; }
+
+html:not(.dark) .text-violet-300, html:not(.dark) .text-violet-400 { color: #6d28d9; }
+html:not(.dark) .text-teal-400  { color: #0f766e; }
+html:not(.dark) .text-green-400 { color: #15803d; }
+html:not(.dark) .hover\:text-emerald-400:hover { color: #065f46; }
+html:not(.dark) .hover\:text-sky-300:hover, html:not(.dark) .hover\:text-sky-400:hover { color: #075985; }
+html:not(.dark) .hover\:text-amber-300:hover { color: #92400e; }
+
+/* Dark warm/error tints → pale light-mode equivalents */
+html:not(.dark) [class~="bg-amber-950/30"]   { background-color: #fffbeb; }
+html:not(.dark) [class~="border-amber-800/60"] { border-color: #fde68a; }
+html:not(.dark) [class~="bg-red-900/20"]     { background-color: #fef2f2; }
+html:not(.dark) .hover\:bg-red-900\/40:hover   { background-color: #fee2e2; }
+html:not(.dark) .hover\:bg-amber-900\/30:hover { background-color: #fef3c7; }
