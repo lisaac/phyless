@@ -393,7 +393,7 @@ Quay、GCR、registry.k8s.io、MCR、ECR Public、GitLab 等其他仓库的镜�
 5. 仓库账号直接在拉取对话框里管理，按 registry 分组、每组单选一个账号（或匿名）：「不使用代理 / 服务端代理」下是**服务端仓库账号**（加密保存在 phyless 服务端、所有用户共享），「浏览器代理导入」下是**前端代理仓库账号**。两者都可一键验证，验证走与拉取相同的网络路径。
 6. 「平台」默认即 Docker daemon 所在平台（含 ARM 变体，如 `linux/arm/v7`），与 `docker pull` 的自动选择一致；手动指定时两种代理都严格按指定平台拉取。GHCR 等非 Docker Hub 仓库的标签会读取 manifest 补全更新时间、大小、架构和仓库描述。
 
-限制：只支持 Linux 平台的 tag 镜像，不支持 digest 引用和 foreign layer；Compose Build 只预拉 Dockerfile 中能静态解析的 `FROM` 镜像。Worker 只处理 `GET` / `HEAD` / `OPTIONS` 和 Docker Hub 登录的 `POST`，不保存镜像内容。详细设计见 [docs/pull-and-registry-accounts.md](docs/pull-and-registry-accounts.md)。搜索需白名单包含 `hub.docker.com`；添加 `docker.io` 账号后搜索以该账号身份进行，旧版 Worker 需重新部署才支持。
+限制：只支持 Linux 平台的 tag 镜像，不支持 digest 引用和 foreign layer；Compose Build 只预拉 Dockerfile 中能静态解析的 `FROM` 镜像。Worker 只处理 `GET` / `HEAD` / `OPTIONS` 和发往白名单上游的小 `POST`（registry API 登录），不保存镜像内容。详细设计见 [docs/pull-and-registry-accounts.md](docs/pull-and-registry-accounts.md)。搜索需白名单包含 `hub.docker.com`；添加 `docker.io` 账号后由 phyless 服务端登录换取 JWT（服务端连不上 Hub 时改经 Worker），搜索按账号额度进行。
 
 ## 本地开发
 

@@ -96,7 +96,7 @@ test('bounds redirect loops and refuses HTTPS downgrades', async () => {
   } finally { globalThis.fetch = original; }
 });
 
-test('allows POST only to the Docker Hub login endpoint, with a bounded body and no redirects', async () => {
+test('allows small POSTs to allowlisted upstreams only, with no redirects', async () => {
   const original = globalThis.fetch;
   const calls = [];
   let status = 200;
@@ -114,13 +114,13 @@ test('allows POST only to the Docker Hub login endpoint, with a bounded body and
     assert.equal(await ok.text(), '{"access_token":"jwt"}');
     assert.equal(calls[0].init.method, 'POST');
     assert.equal(calls[0].init.body, '{"identifier":"u","secret":"s"}');
-    assert.equal((await post('https://registry.example/v2/')).status, 405);
-    assert.equal((await post('https://hub.docker.com/v2/auth/token?x=1')).status, 405);
+    assert.equal((await post('https://registry.example/token')).status, 200);
+    assert.equal((await post('https://evil.example/token')).status, 403);
     assert.equal((await post('https://hub.docker.com/v2/auth/token', 'x'.repeat(5000))).status, 413);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
     status = 302;
     assert.equal((await post('https://hub.docker.com/v2/auth/token')).status, 502);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     const put = await worker.fetch(new Request('https://worker.example/?url=https://hub.docker.com/v2/auth/token', { method: 'PUT', headers: { Origin: 'https://app.example' } }), env);
     assert.equal(put.status, 405);
   } finally {

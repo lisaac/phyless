@@ -23,6 +23,7 @@ func (s *Server) mountRegistryRoutes(r chi.Router) {
 	r.Delete("/api/registries/{id}", s.handleDeleteRegistry)
 	r.Post("/api/registries/{id}/test", s.handleTestRegistry)
 	r.Post("/api/registries/{id}/credentials", s.handleRegistryCredentials)
+	r.Post("/api/registries/login", s.handleRegistryLogin)
 }
 
 func (s *Server) handleListRegistries(w http.ResponseWriter, r *http.Request) {

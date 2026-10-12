@@ -2,7 +2,7 @@
 
 这是一个仅支持 `?url=` 的透传代理：当 phyless 服务端和 Docker daemon 无法直接访问镜像仓库时，让 phyless Web UI 在浏览器中拉取容器镜像。它会添加 CORS 响应头，转发 OCI 拉取所需的请求头，并以流式方式返回上游响应，不保存任何内容。
 
-仅支持 `GET`、`HEAD`、`OPTIONS`，以及发往 `https://hub.docker.com/v2/auth/token` 的 `POST`（用 Docker Hub 账号登录搜索，避免共享出口 IP 的匿名限额）。请求来源和上游地址两个白名单默认拒绝。
+仅支持 `GET`、`HEAD`、`OPTIONS`，以及发往白名单上游的小 `POST`（≤4 KiB、不跟随重定向，用于 registry API 登录；Docker Hub 登录通常由 phyless 服务端完成，Worker 仅作后备）。请求来源和上游地址两个白名单默认拒绝。
 
 ## 一键创建
 

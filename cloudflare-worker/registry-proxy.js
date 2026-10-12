@@ -5,13 +5,11 @@
 // is a narrow `?url=` pass-through that adds CORS, forwards the auth/range
 // headers the pull needs, and streams the upstream body back unbuffered.
 //
-// GET/HEAD/OPTIONS, plus POST to exactly one URL: Docker Hub's token login,
-// so search can run as the user instead of the Worker's shared-IP quota. Two
-// allowlists (request Origin, upstream host) both default-deny. See README.md
-// for the environment variables.
+// GET/HEAD/OPTIONS, plus small POSTs (a registry API's token login) to an
+// allowlisted upstream, never redirected. Two allowlists (request Origin,
+// upstream host) both default-deny. See README.md for the environment variables.
 
 const ALLOWED_METHODS = 'GET,HEAD,POST,OPTIONS';
-const POST_TARGET = 'https://hub.docker.com/v2/auth/token';
 const MAX_POST_BODY = 4096;
 const ALLOWED_HEADERS = 'Accept, Authorization, Cache-Control, Content-Type, Range';
 const EXPOSED_HEADERS =
@@ -35,7 +33,7 @@ export default {
     }
 
     if (!['GET', 'HEAD', 'POST'].includes(request.method)) {
-      return jsonError(config, origin, 405, 'Only GET, HEAD, OPTIONS and the Docker Hub login POST are supported.');
+      return jsonError(config, origin, 405, 'Only GET, HEAD, OPTIONS and small POST requests are supported.');
     }
 
     const originErr = validateOriginPolicy(config, origin);
@@ -53,7 +51,6 @@ export default {
 
     let body;
     if (request.method === 'POST') {
-      if (target.href !== POST_TARGET) return jsonError(config, origin, 405, 'POST is only allowed to the Docker Hub login endpoint.');
       if (Number(request.headers.get('Content-Length')) > MAX_POST_BODY) return jsonError(config, origin, 413, 'Request body is too large.');
       body = await request.text();
       if (new TextEncoder().encode(body).length > MAX_POST_BODY) return jsonError(config, origin, 413, 'Request body is too large.');

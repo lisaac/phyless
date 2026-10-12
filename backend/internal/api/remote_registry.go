@@ -183,3 +183,73 @@ func remoteStatus(err error) int {
 	}
 	return http.StatusBadGateway
 }
+
+// handleRegistryLogin relays one small login POST (a registry API's own token
+// endpoint, e.g. Docker Hub's) over phyless's network, so the browser can log
+// in where the shared Worker IP is rate-limited. The frontend chooses the URL
+// and body; this only enforces HTTPS, size limits and no redirects.
+func (s *Server) handleRegistryLogin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL         string `json:"url"`
+		ContentType string `json:"content_type"`
+		Body        string `json:"body"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	target, err := url.Parse(body.URL)
+	if err != nil || target.Scheme != "https" || target.Host == "" || target.User != nil || target.Fragment != "" {
+		writeError(w, http.StatusBadRequest, "invalid target")
+		return
+	}
+	if body.ContentType != "application/json" && body.ContentType != "application/x-www-form-urlencoded" {
+		writeError(w, http.StatusBadRequest, "unsupported content type")
+		return
+	}
+	if len(body.Body) > 4096 {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	transport, err := docker.RequestTransport(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer transport.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), strings.NewReader(body.Body))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid target")
+		return
+	}
+	req.Header.Set("Content-Type", body.ContentType)
+	req.Header.Set("Accept", "application/json")
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		s.auditFromCtx(r, "registry.login", target.Host, "unreachable")
+		writeError(w, http.StatusBadGateway, "cannot reach "+target.Host)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Cache-Control", "no-store")
+	if resp.StatusCode != http.StatusOK {
+		s.auditFromCtx(r, "registry.login", target.Host, fmt.Sprintf("HTTP %d", resp.StatusCode))
+		if retry := resp.Header.Get("Retry-After"); retry != "" {
+			w.Header().Set("Retry-After", retry)
+		}
+		writeError(w, upstreamStatus(resp.StatusCode), fmt.Sprintf("%s returned HTTP %d", target.Host, resp.StatusCode))
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10+1))
+	if err != nil || len(data) > 64<<10 || !json.Valid(data) {
+		writeError(w, http.StatusBadGateway, "invalid login response")
+		return
+	}
+	s.auditFromCtx(r, "registry.login", target.Host, "ok")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}

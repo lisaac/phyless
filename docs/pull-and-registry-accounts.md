@@ -30,10 +30,13 @@ registry 返回的 401 会转成 403 再交给前端，避免被当成 phyless �
 
 ### 为什么经 Worker 容易 429
 
-Docker Hub API（包括搜索、标签和 `/v2/auth/token` 登录）按**来源 IP** 限额，约 180 次/分钟。CF Worker 的出口 IP 是全球共享的，配额常被别人用完，登录了也没用。因此：
+Docker Hub API（包括搜索、标签和 `/v2/auth/token` 登录）匿名时按**来源 IP** 限额，约 180 次/分钟；带账号 JWT 时按账号计，600 次/分钟（2026-10 实测）。CF Worker 的出口 IP 是全球共享的，匿名配额和经 Worker 的登录基本都是 429。因此：
 
+- **登录换 JWT 不走 Worker**：前端按 registry 维护 API 登录表（目前只有 `docker.io` → `hub.docker.com/v2/auth/token`），依次尝试 ① localStorage 里未过期的 JWT（Docker Hub 15 分钟）；② `POST /api/registries/login` 由 phyless 服务端转发登录；③ 服务端连不上时再经 Worker POST。拿到的 JWT 经 Worker 带去搜索 / 查标签；registry 返回 401 时丢弃缓存重新登录。
+- `POST /api/registries/login` 是通用转发，不认识任何 registry：只接受 `{url, content_type, body}`，要求 HTTPS、JSON 或表单、≤4 KiB、不跟随重定向，响应须为 JSON（≤64 KiB）、`no-store`，记入审计 `registry.login`。上游 401 映射为 403。
+- 只用文档里的登录方式（密码 / PAT 换 JWT）。不使用 `login.docker.com` 的 OAuth 设备码登录：那是 Docker CLI 内部的 client，不对第三方开放。
 - 经 Worker 查 Hub 标签遇到 429 时，自动改走 registry 接口（`registry-1.docker.io/v2/…/tags/list`，按账号或拉取配额计数），只剩标签名，界面会提示；
-- Hub 登录被 429 后，按 `Retry-After` 暂停重试；
+- 经 Worker 的登录被 429 后，按 `Retry-After` 暂停重试；
 - 账号验证不用 Hub 登录，而是走 registry 令牌服务（`auth.docker.io`）；
 - 经常 429 时，改用「不使用代理 / 服务端代理」，用服务器自己的 IP。
 
@@ -80,7 +83,7 @@ Docker Hub API（包括搜索、标签和 `/v2/auth/token` 登录）按**来源 
 
 Worker 源码在 `cloudflare-worker/registry-proxy.js`，部署和白名单配置见 README。与本功能相关的约束：
 
-- 只处理 `GET` / `HEAD` / `OPTIONS`，以及发往 `https://hub.docker.com/v2/auth/token` 的 `POST`（≤4 KiB，不跟随重定向）。
+- 只处理 `GET` / `HEAD` / `OPTIONS`，以及发往白名单上游的小 `POST`（registry API 登录，≤4 KiB，不跟随重定向）。
 - 白名单需要显式包含 `hub.docker.com`：`*.docker.io` 并不匹配它。
 - 镜像层会被重定向到各仓库的 CDN／对象存储（Docker Hub 现为 `production.cloudfront.docker.com`，需 `*.docker.com`），每一跳都要在白名单内；各仓库实测域名见 `cloudflare-worker/README.md`。被拦截时 Worker 返回 403 并指出缺少的域名。
 - 前端代理地址默认预填 `https://registry-proxy.phyless.com`。

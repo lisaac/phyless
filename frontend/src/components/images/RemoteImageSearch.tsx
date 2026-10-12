@@ -262,7 +262,7 @@ export const RemoteImageSearch: Component<{
           <Show when={hubUser()} fallback={
             <>
               <span class="rounded bg-amber-500/10 px-1.5 leading-5 text-amber-300">匿名</span>
-              <span class="text-zinc-500">Docker Hub 匿名访问共享 Worker 出口 IP 的限额，容易出现 429。</span>
+              <span class="text-zinc-500">Docker Hub 匿名访问共享 Worker 出口 IP 的限额，基本都会 429；添加账号后按账号额度访问。</span>
               <Show when={props.onAddAccount}>
                 <button type="button" class="text-indigo-400 hover:text-indigo-300" onClick={() => props.onAddAccount!("docker.io")}>添加 Docker Hub 账号</button>
               </Show>

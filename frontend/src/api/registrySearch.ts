@@ -57,11 +57,43 @@ export interface HubAuth {
   error?: string;
 }
 
-const HUB_LOGIN = "https://hub.docker.com/v2/auth/token";
-// ponytail: per-tab memory only; a JWT is never written to storage.
-const hubTokens = new Map<string, { token: string; expires: number }>();
+// Registry APIs with their own token login (beside the V2 token service),
+// keyed by registry host. The frontend owns the URL and body; phyless and the
+// Worker only relay the POST.
+const API_LOGINS: Record<string, { url: string; body: (creds: Creds) => string }> = {
+  "docker.io": {
+    url: "https://hub.docker.com/v2/auth/token",
+    body: (creds) => JSON.stringify({ identifier: creds.username, secret: creds.secret }),
+  },
+};
+// Tokens live until their JWT expiry (Docker Hub: 15 min), across reloads.
+// ponytail: cleartext in localStorage, like the remembered accounts themselves.
+const TOKENS_KEY = "phyless.registry-api-tokens";
+type CachedToken = { token: string; expires: number };
+let apiTokens: Record<string, CachedToken> | undefined;
 // After a 429, the shared Worker IP is skipped for login until Retry-After.
-let hubLoginBlockedUntil = 0;
+let workerLoginBlockedUntil = 0;
+
+function tokens(): Record<string, CachedToken> {
+  if (!apiTokens) {
+    try {
+      apiTokens = JSON.parse(localStorage.getItem(TOKENS_KEY) ?? "{}") ?? {};
+    } catch {
+      apiTokens = {};
+    }
+  }
+  const now = Date.now();
+  for (const [key, value] of Object.entries(apiTokens!)) if (!(value?.expires > now)) delete apiTokens![key];
+  return apiTokens!;
+}
+
+function saveTokens() {
+  try {
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(apiTokens ?? {}));
+  } catch {
+    // Storage unavailable: the token still lives for this tab.
+  }
+}
 
 function jwtExpiry(token: string): number {
   try {
@@ -73,41 +105,83 @@ function jwtExpiry(token: string): number {
   return Date.now() + 5 * 60_000;
 }
 
-/** Docker Hub API bearer for an account (password or PAT), cached until expiry. */
-export async function hubLogin(workerUrl: string, creds: Creds, signal: AbortSignal): Promise<string> {
-  const key = `${workerUrl}\n${creds.username}\n${creds.secret}`;
-  const cached = hubTokens.get(key);
-  if (cached && cached.expires > Date.now()) return cached.token;
-  if (hubLoginBlockedUntil > Date.now()) {
-    throw new Error(`登录 Docker Hub 过于频繁（429），请 ${Math.ceil((hubLoginBlockedUntil - Date.now()) / 1000)} 秒后重试`);
-  }
-  let response: Response;
+async function tokenFrom(response: Response, label: string): Promise<string> {
+  const data = await readSearchJSON(response);
+  const token = typeof data.access_token === "string" ? data.access_token : typeof data.token === "string" ? data.token : "";
+  if (!token) throw new Error(`${label}未返回访问令牌`);
+  return token;
+}
+
+/** API bearer for a registry account: cached, else logged in over phyless's
+ *  network, else over the Worker. A rejected account fails at once. */
+export async function apiLogin(host: string, workerUrl: string, creds: Creds, signal: AbortSignal): Promise<string> {
+  const login = API_LOGINS[host];
+  if (!login) throw new Error(`${host} 没有 API 登录方式`);
+  const key = `${host}\n${creds.username}`;
+  const cached = tokens()[key];
+  if (cached) return cached.token;
+  const label = host === "docker.io" ? "Docker Hub " : `${host} `;
+  const invalid = () => new Error(`${label}用户名或密码 / Token 无效`);
+  const keep = (token: string) => {
+    tokens()[key] = { token, expires: jwtExpiry(token) };
+    saveTokens();
+    return token;
+  };
+
+  let serverReason = "无法连接 phyless 服务端";
+  let viaServer: Response | undefined;
   try {
-    response = await fetch(proxied(workerUrl, HUB_LOGIN), {
+    const token = getToken();
+    viaServer = await fetch("/api/registries/login", {
       method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier: creds.username, secret: creds.secret }),
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ url: login.url, content_type: "application/json", body: login.body(creds) }),
       signal,
     });
   } catch (error) {
     if (signal.aborted) throw error;
-    throw new Error("无法连接 CF Worker，请检查地址、CORS 和网络");
   }
-  if (response.status === 405) throw new Error("当前 Worker 不支持 Docker Hub 登录，请重新部署最新的 registry-proxy.js");
+  if (viaServer) {
+    // 400/403 are the registry rejecting the account (401 arrives as 403).
+    if (viaServer.status === 400 || viaServer.status === 403) {
+      await viaServer.body?.cancel();
+      throw invalid();
+    }
+    if (viaServer.ok) return keep(await tokenFrom(viaServer, label));
+    serverReason = (await registryResponseError(viaServer, "服务端登录")).message;
+  }
+
+  if (workerLoginBlockedUntil > Date.now()) {
+    throw new Error(`${serverReason}；经 Worker 登录过于频繁（429），请 ${Math.ceil((workerLoginBlockedUntil - Date.now()) / 1000)} 秒后重试`);
+  }
+  let response: Response;
+  try {
+    response = await fetch(proxied(workerUrl, login.url), {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: login.body(creds),
+      signal,
+    });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    throw new Error(`${serverReason}；无法连接 CF Worker`);
+  }
+  if (response.status === 405) throw new Error(`${serverReason}；当前 Worker 不支持登录，请重新部署最新的 registry-proxy.js`);
   if (response.status === 401 || response.status === 400) {
     await response.body?.cancel();
-    throw new Error("Docker Hub 用户名或密码 / Token 无效");
+    throw invalid();
   }
   if (response.status === 429) {
     const retry = Number(response.headers.get("Retry-After"));
-    hubLoginBlockedUntil = Date.now() + (Number.isFinite(retry) && retry > 0 ? retry : 60) * 1000;
+    workerLoginBlockedUntil = Date.now() + (Number.isFinite(retry) && retry > 0 ? retry : 60) * 1000;
   }
-  if (!response.ok) throw await registryResponseError(response, "登录 Docker Hub ");
-  const data = await readSearchJSON(response);
-  const token = typeof data.access_token === "string" ? data.access_token : typeof data.token === "string" ? data.token : "";
-  if (!token) throw new Error("Docker Hub 未返回访问令牌");
-  hubTokens.set(key, { token, expires: jwtExpiry(token) });
-  return token;
+  if (!response.ok) throw new Error(`${serverReason}；${(await registryResponseError(response, "经 Worker 登录")).message}`);
+  return keep(await tokenFrom(response, label));
+}
+
+/** Forgets a token the registry no longer accepts. */
+function dropApiToken(host: string, username: string) {
+  if (delete tokens()[`${host}\n${username}`]) saveTokens();
 }
 
 // A failed login never blocks search: it falls back to anonymous and says so.
@@ -115,7 +189,7 @@ async function hubHeaders(workerUrl: string, creds: Creds | undefined, signal: A
   const headers: Record<string, string> = { Accept: "application/json" };
   if (!creds) return { headers, auth: {} as HubAuth };
   try {
-    headers.Authorization = `Bearer ${await hubLogin(workerUrl, creds, signal)}`;
+    headers.Authorization = `Bearer ${await apiLogin("docker.io", workerUrl, creds, signal)}`;
     return { headers, auth: { user: creds.username } as HubAuth };
   } catch (error) {
     if (signal.aborted) throw error;
@@ -150,8 +224,11 @@ async function serverGet(route: Extract<RemoteRoute, { kind: "server" }>, target
 
 async function hubGet(route: RemoteRoute, target: URL, signal: AbortSignal) {
   if (route.kind === "server") return { response: await serverGet(route, target.href, signal), auth: {} as HubAuth };
-  const { headers, auth } = await hubHeaders(route.workerUrl, route.creds?.["docker.io"], signal);
-  return { response: await proxiedGet(route.workerUrl, target.href, headers, signal), auth };
+  const creds = route.creds?.["docker.io"];
+  const { headers, auth } = await hubHeaders(route.workerUrl, creds, signal);
+  const response = await proxiedGet(route.workerUrl, target.href, headers, signal);
+  if (response.status === 401 && creds && headers.Authorization) dropApiToken("docker.io", creds.username);
+  return { response, auth };
 }
 
 async function readSearchJSON(response: Response): Promise<Record<string, unknown>> {

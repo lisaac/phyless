@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { describeTag, hubLogin, listRegistryTags, searchRepositories, sortTagNames, verifyRegistryCreds } from "./registrySearch";
+import { apiLogin, describeTag, listRegistryTags, searchRepositories, sortTagNames, verifyRegistryCreds } from "./registrySearch";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const signal = () => new AbortController().signal;
@@ -161,7 +161,9 @@ describe("registry tags", () => {
 describe("Docker Hub account", () => {
   const exp = (seconds: number) => `x.${btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + seconds }))}.y`;
 
-  it("logs in through the Worker POST once, caches the JWT and searches as the account", async () => {
+  const loginOf = (call: unknown[]) => JSON.parse((call[1] as RequestInit).body as string);
+
+  it("logs in over phyless once, keeps the JWT across reloads and searches as the account", async () => {
     const token = exp(3600);
     const fetch = vi.fn()
       .mockResolvedValueOnce(json({ access_token: token }))
@@ -170,37 +172,57 @@ describe("Docker Hub account", () => {
     const creds = { username: "cache-user", secret: "pat" };
     const first = await searchRepositories("nginx", W({ "docker.io": creds }), signal(), 1);
     await searchRepositories("redis", W({ "docker.io": creds }), signal(), 1);
-    const [loginUrl, loginInit] = fetch.mock.calls[0];
-    expect(upstream(loginUrl).href).toBe("https://hub.docker.com/v2/auth/token");
-    expect(loginInit.method).toBe("POST");
-    expect(JSON.parse(loginInit.body)).toEqual({ identifier: "cache-user", secret: "pat" });
+    expect(fetch.mock.calls[0][0]).toBe("/api/registries/login");
+    expect(loginOf(fetch.mock.calls[0])).toEqual({
+      url: "https://hub.docker.com/v2/auth/token", content_type: "application/json",
+      body: JSON.stringify({ identifier: "cache-user", secret: "pat" }),
+    });
     expect(fetch.mock.calls[1][1].headers.Authorization).toBe(`Bearer ${token}`);
     expect(fetch.mock.calls[2][1].headers.Authorization).toBe(`Bearer ${token}`);
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(first.auth).toEqual({ user: "cache-user" });
+    expect(JSON.parse(localStorage.getItem("phyless.registry-api-tokens")!)["docker.io\ncache-user"].token).toBe(token);
   });
 
-  it("falls back to anonymous search with a reason when the login fails or the Worker is old", async () => {
+  it("falls back to the Worker when phyless cannot reach the registry", async () => {
+    const token = exp(3600);
     const fetch = vi.fn()
-      .mockResolvedValueOnce(new Response("", { status: 401 }))
-      .mockResolvedValueOnce(json({ results: [] }))
-      .mockResolvedValueOnce(new Response("", { status: 405 }))
+      .mockResolvedValueOnce(new Response('{"error":"cannot reach hub.docker.com"}', { status: 502 }))
+      .mockResolvedValueOnce(json({ access_token: token }));
+    vi.stubGlobal("fetch", fetch);
+    expect(await apiLogin("docker.io", "https://worker.example", { username: "worker-user", secret: "pat" }, signal())).toBe(token);
+    const [loginUrl, loginInit] = fetch.mock.calls[1];
+    expect(upstream(loginUrl).href).toBe("https://hub.docker.com/v2/auth/token");
+    expect(loginInit.method).toBe("POST");
+    expect(JSON.parse(loginInit.body)).toEqual({ identifier: "worker-user", secret: "pat" });
+  });
+
+  it("searches anonymously with a reason when the account is rejected, without trying the Worker", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response('{"error":"hub.docker.com returned HTTP 401"}', { status: 403 }))
       .mockResolvedValueOnce(json({ results: [] }));
     vi.stubGlobal("fetch", fetch);
     const bad = await searchRepositories("nginx", W({ "docker.io": { username: "bad-user", secret: "x" } }), signal(), 1);
     expect(bad.auth.error).toMatch(/无效/);
+    expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[1][1].headers.Authorization).toBeUndefined();
-    const old = await searchRepositories("nginx", W({ "docker.io": { username: "old-worker-user", secret: "x" } }), signal(), 1);
-    expect(old.auth.error).toMatch(/重新部署/);
   });
 
-  it("refreshes an expired JWT", async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(json({ access_token: exp(30) })).mockResolvedValueOnce(json({ access_token: exp(3600) }));
+  it("refreshes an expired JWT and forgets one the registry rejects", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({ access_token: exp(30) }))
+      .mockResolvedValueOnce(json({ access_token: exp(3600) }))
+      .mockResolvedValueOnce(new Response("", { status: 401 }))
+      .mockResolvedValueOnce(json({ access_token: exp(3600) }))
+      .mockResolvedValueOnce(json({ results: [] }));
     vi.stubGlobal("fetch", fetch);
     const creds = { username: "expiring-user", secret: "pat" };
-    await hubLogin("https://worker.example", creds, signal());
-    await hubLogin("https://worker.example", creds, signal());
+    await apiLogin("docker.io", "https://worker.example", creds, signal());
+    await apiLogin("docker.io", "https://worker.example", creds, signal());
     expect(fetch).toHaveBeenCalledTimes(2);
+    await expect(searchRepositories("nginx", W({ "docker.io": creds }), signal(), 1)).rejects.toThrow(/401/);
+    await searchRepositories("nginx", W({ "docker.io": creds }), signal(), 1);
+    expect(fetch.mock.calls[3][0]).toBe("/api/registries/login");
   });
 
   it("verifies accounts through the registry token service, never the rate-limited Hub login", async () => {
@@ -283,13 +305,16 @@ describe("Hub API rate limit", () => {
   });
 });
 
-it("stops retrying the Hub login until Retry-After once it is rate-limited", async () => {
-  const fetch = vi.fn().mockResolvedValue(new Response('{"detail":"Rate limit exceeded"}', { status: 429, headers: { "Retry-After": "60" } }));
+it("stops retrying the Worker login until Retry-After once it is rate-limited", async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response("", { status: 502 }))
+    .mockResolvedValueOnce(new Response('{"detail":"Rate limit exceeded"}', { status: 429, headers: { "Retry-After": "60" } }))
+    .mockResolvedValueOnce(new Response("", { status: 502 }));
   vi.stubGlobal("fetch", fetch);
   const creds = { username: "limited-user", secret: "pat" };
-  await expect(hubLogin("https://worker.example", creds, new AbortController().signal)).rejects.toThrow(/登录 Docker Hub 过于频繁（429）/);
-  await expect(hubLogin("https://worker.example", creds, new AbortController().signal)).rejects.toThrow(/秒后重试/);
-  expect(fetch).toHaveBeenCalledTimes(1);
+  await expect(apiLogin("docker.io", "https://worker.example", creds, signal())).rejects.toThrow(/服务端登录失败（502）.*经 Worker 登录过于频繁（429）/);
+  await expect(apiLogin("docker.io", "https://worker.example", creds, signal())).rejects.toThrow(/秒后重试/);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });
 
 describe("describeTag", () => {
