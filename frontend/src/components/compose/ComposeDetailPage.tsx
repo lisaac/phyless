@@ -179,6 +179,13 @@ export const ComposeDetailPage: Component = () => {
     const rel = composeRelPath();
     if (rel && selectedFile() === undefined) setSelectedFile(rel);
   });
+  // ?file= (links from the compose list) opens that file once, then leaves the URL.
+  createEffect(() => {
+    const file = searchParams.file as string | undefined;
+    if (!file) return;
+    setSelectedFile(file);
+    setSearchParams({ file: undefined }, { replace: true });
+  });
 
   const openFile = async (path: string) => {
     if (!await confirmOpenText(path)) return;

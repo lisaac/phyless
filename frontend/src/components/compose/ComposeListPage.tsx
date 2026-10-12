@@ -24,6 +24,13 @@ import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 
+// Files-tab links for the Compose 文件 column; only files under base_dir are reachable there.
+const fileLinkCls = "text-zinc-400 transition-colors hover:text-indigo-400 hover:underline";
+const filesUrl = (id: string, rel?: string) => `/compose/${id}?tab=files${rel ? `&file=${encodeURIComponent(rel)}` : ""}`;
+export const composeFileRel = (baseDir: string, file: string) => {
+  const base = baseDir.replace(/\/+$/, "");
+  return base && file.startsWith(base + "/") ? file.slice(base.length) : null;
+};
 // Lucide "hammer".
 const BUILD_ICON = "m15 12-8.5 8.5c-.83.83-2.17.83-3 0a2.12 2.12 0 0 1 0-3L12 9M17.64 15 22 10.64M20.91 11.7l-1.25-1.25c-.6-.6-.93-1.4-.93-2.25v-.86L16.01 4.6a5.56 5.56 0 0 0-3.94-1.64H9l.92.82A6.18 6.18 0 0 1 12 8.4v1.56l2 2h2.47l2.26 1.91";
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
@@ -227,9 +234,22 @@ export const ComposeListPage: Component = () => {
                       </Show>
                     </div>
                     <div class="w-full min-w-0 border-t border-zinc-800/60 px-10 py-2 text-left sm:flex-1 sm:border-t-0 sm:px-3">
-                      <div class="truncate font-mono text-[11px] text-zinc-400" title={p.compose_file}>{p.compose_file}</div>
+                      <For each={p.compose_file.split(",").filter(Boolean)}>
+                        {(file) => {
+                          const rel = composeFileRel(p.base_dir, file);
+                          return (
+                            <Show when={rel} fallback={<div class="truncate font-mono text-[11px] text-zinc-400" title={file}>{file}</div>}>
+                              <a href={filesUrl(p.id, rel!)} class={`block truncate font-mono text-[11px] ${fileLinkCls}`} title={`在文件页打开 ${file}`}
+                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(filesUrl(p.id, rel!), { replace: true }); }}>{file}</a>
+                            </Show>
+                          );
+                        }}
+                      </For>
                       <Show when={p.base_dir}>
-                        <div class="mt-0.5 truncate font-mono text-[11px] text-zinc-500" title={p.base_dir}>目录：{p.base_dir}</div>
+                        <div class="mt-0.5 truncate font-mono text-[11px] text-zinc-500">
+                          目录：<a href={filesUrl(p.id)} class={fileLinkCls} title={`浏览 ${p.base_dir}`}
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(filesUrl(p.id), { replace: true }); }}>{p.base_dir}</a>
+                        </div>
                       </Show>
                     </div>
                     <div class="flex flex-wrap items-center gap-0.5 border-t border-zinc-800/60 pl-10 pr-2 py-1.5 sm:hidden" onClick={(e) => e.stopPropagation()}>
