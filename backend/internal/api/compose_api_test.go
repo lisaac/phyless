@@ -178,12 +178,24 @@ func TestComposeStorageCreatesProjectWithoutOverwriting(t *testing.T) {
 	if res := send(http.MethodPost, "/api/compose/new", body); res.Code != http.StatusConflict {
 		t.Fatalf("duplicate create = %d %s", res.Code, res.Body.String())
 	}
+	custom := filepath.Join(t.TempDir(), "stacks")
+	customBytes, _ := json.Marshal(map[string]string{"name": "other", "compose_content": "services: {}", "parent_dir": custom})
+	if res := send(http.MethodPost, "/api/compose/new", string(customBytes)); res.Code != http.StatusCreated {
+		t.Fatalf("custom dir create = %d %s", res.Code, res.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(custom, "other", "compose.yaml")); err != nil {
+		t.Fatalf("custom dir compose: %v", err)
+	}
+	rootBytes, _ := json.Marshal(map[string]string{"name": "x", "compose_content": "services: {}", "parent_dir": "/"})
+	if res := send(http.MethodPost, "/api/compose/new", string(rootBytes)); res.Code != http.StatusBadRequest {
+		t.Fatalf("root parent = %d %s", res.Code, res.Body.String())
+	}
 	invalidBytes, _ := json.Marshal(map[string]string{"name": "../bad", "compose_content": "services: {}"})
 	if res := send(http.MethodPost, "/api/compose/new", string(invalidBytes)); res.Code != http.StatusBadRequest {
 		t.Fatalf("invalid name = %d %s", res.Code, res.Body.String())
 	}
 	cfg, err := server.store.Read()
-	if err != nil || len(cfg.ComposeProjects) != 1 || cfg.ComposeProjects[0].BaseDir != dir {
+	if err != nil || len(cfg.ComposeProjects) != 2 || cfg.ComposeProjects[0].BaseDir != dir || cfg.ComposeProjects[1].BaseDir != filepath.Join(custom, "other") {
 		t.Fatalf("registered project = %+v, %v", cfg, err)
 	}
 }

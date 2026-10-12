@@ -12,6 +12,10 @@ import type { FileEntry } from "../../types";
 export const dirBasename = (dir: string) => dir.replace(/\/+$/, "").split("/").pop() || dir;
 const parentDir = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
 const newNamePattern = /^[a-z0-9][a-z0-9_-]*$/;
+// Parent dir for new Compose projects, remembered per browser.
+const NEW_DIR_KEY = "phyless.compose.newDir";
+const loadNewDir = () => { try { return localStorage.getItem(NEW_DIR_KEY) || "/srv"; } catch { return "/srv"; } };
+const saveNewDir = (dir: string) => { try { localStorage.setItem(NEW_DIR_KEY, dir); } catch { /* ignore */ } };
 
 export const RegisterComposeModal: Component<{
   open: boolean;
@@ -22,6 +26,7 @@ export const RegisterComposeModal: Component<{
   const [mode, setMode] = createSignal<"new" | "existing">("new");
   const [name, setName] = createSignal("");
   const [composePath, setComposePath] = createSignal("");
+  const [newDir, setNewDir] = createSignal(loadNewDir());
   const [composeContent, setComposeContent] = createSignal("");
   const [envContent, setEnvContent] = createSignal("");
   const [loadedPath, setLoadedPath] = createSignal("");
@@ -49,6 +54,7 @@ export const RegisterComposeModal: Component<{
     setMode("new");
     setName("");
     setComposePath("");
+    setNewDir(loadNewDir());
     setComposeContent(props.initialCompose ?? "");
     setEnvContent("");
     setLoadedPath("");
@@ -106,6 +112,11 @@ export const RegisterComposeModal: Component<{
       toast.error("名称需以小写字母或数字开头，只能包含小写字母、数字、_ 和 -");
       return;
     }
+    const parentDirInput = newDir().trim().replace(/(.)\/+$/, "$1");
+    if (creating && (!parentDirInput.startsWith("/") || parentDirInput === "/")) {
+      toast.error("目录需为绝对路径，且不能是 /");
+      return;
+    }
     if (creating && !composeContent().trim()) { toast.error("请填写 compose.yaml"); return; }
     if (!creating && loadedPath() !== path) { toast.error("请先选择并加载已有 YAML 文件"); return; }
     if (!creating && ((composeTruncated() && composeContent() !== originalCompose()) ||
@@ -118,8 +129,9 @@ export const RegisterComposeModal: Component<{
     try {
       if (creating) {
         await queued("新建 Compose " + projectName, "POST", "/api/compose/new", {
-          name: projectName, compose_content: composeContent(), env_content: envContent(),
+          name: projectName, compose_content: composeContent(), env_content: envContent(), parent_dir: parentDirInput,
         });
+        saveNewDir(parentDirInput);
       } else {
         const entries = await get<FileEntry[]>("/api/fs/list?path=" + encodeURIComponent(dir));
         if (!entries.some((entry) => !entry.is_dir && entry.name === dirBasename(path))) {
@@ -172,9 +184,10 @@ export const RegisterComposeModal: Component<{
           <input class={"mt-1 " + inputClass} value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder={mode() === "new" ? "例如 my-app" : "留空使用目录名"} />
         </label>
         <Show when={mode() === "existing"} fallback={
-          <div class="self-end pb-2 text-xs text-zinc-500">
-            将在当前服务器的 Compose 存储目录中新建同名文件夹。
-          </div>
+          <label class="block text-xs text-zinc-400">
+            目录 <span class="text-zinc-500">（将在其中新建同名文件夹）</span>
+            <div class="mt-1"><PathPicker value={newDir()} onChange={setNewDir} placeholder="/srv" /></div>
+          </label>
         }>
           <label class="block text-xs text-zinc-400">
             已有 Compose YAML 文件

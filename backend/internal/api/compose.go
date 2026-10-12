@@ -343,12 +343,14 @@ func (s *Server) handleCreateNewCompose(w http.ResponseWriter, r *http.Request) 
 		Name           string `json:"name"`
 		ComposeContent string `json:"compose_content"`
 		EnvContent     string `json:"env_content"`
+		ParentDir      string `json:"parent_dir"` // optional; defaults to the server's Compose storage dir
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
+	input.ParentDir = strings.TrimSpace(input.ParentDir)
 	if !composeDirectoryName.MatchString(input.Name) || strings.TrimSpace(input.ComposeContent) == "" {
 		writeError(w, http.StatusBadRequest, "name must use lowercase letters, numbers, _ or -, and Compose content is required")
 		return
@@ -363,12 +365,16 @@ func (s *Server) handleCreateNewCompose(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !filepath.IsAbs(server.ComposeDir) || filepath.Clean(server.ComposeDir) == "/" {
-		writeError(w, http.StatusInternalServerError, "invalid Compose storage directory")
+	parent := server.ComposeDir
+	if input.ParentDir != "" {
+		parent = input.ParentDir
+	}
+	if !filepath.IsAbs(parent) || filepath.Clean(parent) == "/" {
+		writeError(w, http.StatusBadRequest, "invalid Compose storage directory")
 		return
 	}
-	dir := filepath.Join(server.ComposeDir, input.Name)
-	if err := os.MkdirAll(server.ComposeDir, 0755); err != nil {
+	dir := filepath.Join(parent, input.Name)
+	if err := os.MkdirAll(parent, 0755); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

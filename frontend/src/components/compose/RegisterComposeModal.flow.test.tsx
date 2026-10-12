@@ -9,8 +9,8 @@ vi.mock("../../stores/taskQueue", () => ({ queued: mock.queued }));
 vi.mock("../../api/textFile", () => ({ fetchTextFile: mock.fetchTextFile }));
 vi.mock("../shared/Toast", () => ({ toast: { success: mock.success, error: mock.error } }));
 vi.mock("../shared/PathPicker", () => ({
-  PathPicker: (props: { value: string; onChange: (value: string) => void }) =>
-    <input aria-label="YAML 路径" value={props.value} onInput={(event) => props.onChange(event.currentTarget.value)} />,
+  PathPicker: (props: { value: string; onChange: (value: string) => void; files?: boolean }) =>
+    <input aria-label={props.files ? "YAML 路径" : "目录"} value={props.value} onInput={(event) => props.onChange(event.currentTarget.value)} />,
 }));
 vi.mock("../shared/CodeEditor", () => ({
   CodeEditor: (props: { value: string; onChange: (value: string) => void; language: string }) =>
@@ -34,11 +34,12 @@ afterEach(() => {
 it("creates a project with both editor contents under server storage", async () => {
   render(() => <RegisterComposeModal open onClose={() => {}} onRegistered={() => {}} initialCompose="services: {}" />);
   expect(screen.queryByLabelText("YAML 路径")).toBeNull();
+  expect((screen.getByLabelText("目录") as HTMLInputElement).value).toBe("/srv");
   fireEvent.input(screen.getByPlaceholderText("例如 my-app"), { target: { value: "demo" } });
   fireEvent.input(screen.getByLabelText("env 内容"), { target: { value: "A=1\n" } });
   fireEvent.click(screen.getByText("新建并注册"));
   await waitFor(() => expect(mock.queued).toHaveBeenCalledWith("新建 Compose demo", "POST", "/api/compose/new", {
-    name: "demo", compose_content: "services: {}", env_content: "A=1\n",
+    name: "demo", compose_content: "services: {}", env_content: "A=1\n", parent_dir: "/srv",
   }));
 });
 
