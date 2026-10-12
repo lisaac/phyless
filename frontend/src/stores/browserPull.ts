@@ -5,7 +5,7 @@
 import { buildDockerLoadTar } from "../api/dockerTar";
 import { resolveImage, matchesRemote, remoteDigests, blobUrl, proxiedGet, authHeaderFromChallenge, registryResponseError, credsFor, type Creds, type RegistryCreds, type ResolvedImage } from "../api/registryPull";
 import { streamTarToDaemon } from "../api/imageLoadStream";
-import { get, imageInspectUrl } from "../api/client";
+import { backendFetch, get, imageInspectUrl } from "../api/client";
 import { upgradeImageRef, imagePlatform } from "../api/inspect";
 
 export interface BrowserPullParams {
@@ -141,7 +141,7 @@ export async function streamPost(
 ): Promise<void> {
   const headers: Record<string, string> = { Authorization: `Bearer ${opts.token}` };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
-  const resp = await fetch(path, {
+  const resp = await backendFetch(path, {
     method: "POST",
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,

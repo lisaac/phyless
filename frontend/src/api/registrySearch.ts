@@ -1,4 +1,4 @@
-import { getToken } from "./client";
+import { backendFetch, getToken } from "./client";
 import { authorizedGet, credsFor, parseImageRef, proxied, proxiedGet, readBounded, registryResponseError, type Creds, type RegistryCreds } from "./registryPull";
 
 /** Where remote lookups go — the same path the chosen pull mode uses. */
@@ -132,7 +132,7 @@ export async function apiLogin(host: string, workerUrl: string, creds: Creds, si
   let viaServer: Response | undefined;
   try {
     const token = getToken();
-    viaServer = await fetch("/api/registries/login", {
+    viaServer = await backendFetch("/api/registries/login", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ url: login.url, content_type: "application/json", body: login.body(creds) }),
@@ -209,17 +209,12 @@ export async function verifyRegistryCreds(workerUrl: string, host: string, creds
 // phyless relays the lookup over its own network or the request's pull proxy.
 async function serverGet(route: Extract<RemoteRoute, { kind: "server" }>, target: string, signal: AbortSignal, accept?: string): Promise<Response> {
   const token = getToken();
-  try {
-    return await fetch("/api/images/remote", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ url: target, accept, proxy_url: route.proxyUrl?.trim() || undefined, registry_ids: route.registryIds?.length ? route.registryIds : undefined }),
-      signal,
-    });
-  } catch (error) {
-    if (signal.aborted) throw error;
-    throw new Error("无法连接 phyless 服务端");
-  }
+  return backendFetch("/api/images/remote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ url: target, accept, proxy_url: route.proxyUrl?.trim() || undefined, registry_ids: route.registryIds?.length ? route.registryIds : undefined }),
+    signal,
+  });
 }
 
 async function hubGet(route: RemoteRoute, target: URL, signal: AbortSignal) {

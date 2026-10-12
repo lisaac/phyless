@@ -1,3 +1,5 @@
+import { BACKEND_DOWN, toast } from "../components/shared/Toast";
+
 const TOKEN_KEY = "phyless_token";
 let readController = new AbortController();
 
@@ -38,6 +40,26 @@ export class ApiError extends Error {
   }
 }
 
+// fetch() rejects with a browser-specific TypeError ("NetworkError when
+// attempting to fetch resource.", "Failed to fetch", "Load failed") when the
+// backend is unreachable. Every request to our own backend goes through here
+// so that failure surfaces once, as a sticky toast, with one readable message.
+export const isBackendDown = (error: unknown) => error instanceof ApiError && error.status === 0;
+
+export function reportBackendDown(): ApiError {
+  toast.error(BACKEND_DOWN);
+  return new ApiError(0, BACKEND_DOWN);
+}
+
+export async function backendFetch(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (init?.signal?.aborted || (error as Error)?.name === "AbortError") throw error;
+    throw reportBackendDown();
+  }
+}
+
 export const isApiNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 
 export function getToken(): string | null {
@@ -66,7 +88,7 @@ export async function request<T>(method: string, path: string, body?: unknown, s
   }
   const read = method === "GET" ? readSignal(signal) : undefined;
   try {
-    const res = await fetch(path, { method, headers, body: payload, signal: read?.signal ?? signal });
+    const res = await backendFetch(path, { method, headers, body: payload, signal: read?.signal ?? signal });
     if (res.status === 401 && token === getToken()) {
       setToken(null);
       window.dispatchEvent(new CustomEvent("phyless:unauthorized"));

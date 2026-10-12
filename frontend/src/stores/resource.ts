@@ -1,6 +1,6 @@
 import { createSignal, type Accessor, type Resource } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { get } from "../api/client";
+import { get, isBackendDown } from "../api/client";
 import { SETTLED_EVENT } from "./taskQueue";
 import { REFRESH_EVENT, autoRefresh, refreshSeconds } from "./refresh";
 
@@ -82,7 +82,8 @@ export function createPollingResource<T>(path: string, initial: T, key = "Id"): 
           setError("");
         }
       } catch (e) {
-        if (requestGeneration === generation) setError((e as Error).message);
+        // Backend down is reported once as a sticky toast; keep the last list.
+        if (requestGeneration === generation && !isBackendDown(e)) setError((e as Error).message);
       } finally {
         if (inFlight === request) {
           inFlight = undefined;

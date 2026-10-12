@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { request, ApiError, getToken, setToken, login, setup, isApiNotFound } from "./client";
+import { request, ApiError, getToken, setToken, login, setup, isApiNotFound, isBackendDown } from "./client";
+import { render } from "@solidjs/testing-library";
+import { ToastHost, BACKEND_DOWN } from "../components/shared/Toast";
 import { cancelDockerServerRequests } from "../stores/dockerServer";
 
 beforeEach(() => {
@@ -129,4 +131,22 @@ it("does not persist credentials from a cancelled authentication response", asyn
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(getToken()).toBe("new-session");
   }
+});
+
+describe("backend unreachable", () => {
+  it("turns fetch network errors into one sticky toast", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("NetworkError when attempting to fetch resource."));
+    const { findAllByText, getByLabelText, queryByText } = render(() => <ToastHost />);
+    const errs = await Promise.all([request("GET", "/api/a"), request("GET", "/api/b")].map((p) => p.catch((e) => e)));
+    expect(errs.every((e) => isBackendDown(e) && (e as Error).message === BACKEND_DOWN)).toBe(true);
+    expect(await findAllByText(BACKEND_DOWN)).toHaveLength(1);
+    getByLabelText("关闭").click();
+    expect(queryByText(BACKEND_DOWN)).toBeNull();
+  });
+
+  it("leaves aborts alone", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("aborted", "AbortError"));
+    const err = await request("GET", "/api/a").catch((e) => e);
+    expect(isBackendDown(err)).toBe(false);
+  });
 });

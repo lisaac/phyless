@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { getToken, readSignal, setToken } from "./client";
+import { backendFetch, getToken, readSignal, setToken } from "./client";
 
 export const DOWNLOAD_FALLBACK_LIMIT = 64 * 1024 * 1024;
 
@@ -74,7 +74,7 @@ export async function streamDownload(
       }
     }
 
-    const res = await fetch(url, {
+    const res = await backendFetch(url, {
       headers: { Authorization: `Bearer ${token ?? ""}` },
       signal: read.signal,
     });

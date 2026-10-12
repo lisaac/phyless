@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
-import { getToken, setToken } from "../api/client";
+import { getToken, reportBackendDown, setToken } from "../api/client";
 import type { RegistryCreds } from "../api/registryPull";
 import { runBrowserPull, runBrowserPullCompose, runBrowserCreate, runBrowserUpgrade, runComposeUpdate, type BrowserPullCallbacks } from "./browserPull";
 import { runUpdateCheck } from "./updateCheck";
@@ -523,7 +523,7 @@ function start(id: string) {
     if (buf) applyLine(buf);
     settle(id, err ? "error" : "done", err);
   };
-  req.onerror = () => settle(id, "error", "网络错误");
+  req.onerror = () => settle(id, "error", reportBackendDown().message);
   req.onabort = () => settle(id, "cancelled", "已取消");
   req.send(payload);
 }

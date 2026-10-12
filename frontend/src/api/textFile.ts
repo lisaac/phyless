@@ -1,4 +1,4 @@
-import { getToken, readSignal, setToken } from "./client";
+import { backendFetch, getToken, readSignal, setToken } from "./client";
 import { readTarFirstFile } from "./dockerTar";
 import { confirmAction } from "../components/shared/ConfirmModal";
 
@@ -37,7 +37,7 @@ export async function fetchTextFile(url: string, signal?: AbortSignal): Promise<
 
 async function authedGet(url: string, signal: AbortSignal): Promise<Response | null> {
   const token = getToken();
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token ?? ""}` }, signal });
+  const res = await backendFetch(url, { headers: { Authorization: `Bearer ${token ?? ""}` }, signal });
   if (res.status === 401) {
     if (token === getToken()) {
       setToken(null);
