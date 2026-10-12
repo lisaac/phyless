@@ -7,6 +7,7 @@ import { newAccountId, validWorkerUrl } from "../../stores/browserPullSettings";
 import { queued } from "../../stores/taskQueue";
 import type { Registry } from "../../types";
 import { Ico } from "./ActionButton";
+import { Button } from "./Button";
 import { confirmAction } from "./ConfirmModal";
 import { browserAccount, type CredEntry, persistBrowserAccounts, type PullOptionsState } from "./PullOptions";
 import { settled } from "../../stores/resource";
@@ -92,8 +93,8 @@ export const AccountEditor: Component<{
       </Show>
       <Show when={error()}><p class="text-[11px] text-red-400">{error()}</p></Show>
       <div class="flex justify-end gap-2">
-        <button type="button" class="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200" onClick={props.onCancel}>取消</button>
-        <button type="button" class="rounded bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-50" disabled={saving()} onClick={save}>{saving() ? "保存中…" : "保存"}</button>
+        <Button onClick={props.onCancel}>取消</Button>
+        <Button variant="primary" disabled={saving()} onClick={save}>{saving() ? "保存中…" : "保存"}</Button>
       </div>
     </div>
   );

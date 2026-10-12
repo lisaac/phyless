@@ -1,6 +1,6 @@
 import { Component, createSignal } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { Button } from "../shared/Button";
+import { Button, fieldCls } from "../shared/Button";
 import { enqueue } from "../../stores/taskQueue";
 
 // Imports a container filesystem tar (the reverse of ContainerDetailPage's
@@ -37,7 +37,7 @@ export const ImportContainerModal: Component<{ open: boolean; onClose: () => voi
           <label class="flex flex-col gap-1">
             <span class="text-xs text-zinc-400">镜像名称:标签</span>
             <input
-              class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500"
+              class={fieldCls}
               value={ref()}
               onInput={(e) => setRef(e.currentTarget.value)}
               placeholder="imported/myapp:latest"

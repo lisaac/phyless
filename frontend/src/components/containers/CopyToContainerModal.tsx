@@ -1,6 +1,6 @@
 import { Component, createSignal, createEffect, createResource, For } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { Button } from "../shared/Button";
+import { Button, fieldCls } from "../shared/Button";
 import { enqueue } from "../../stores/taskQueue";
 import { get } from "../../api/client";
 import { containerName } from "./containerActions";
@@ -65,7 +65,7 @@ export const CopyToContainerModal: Component<{
           <label class="flex flex-col gap-1">
             <span class="text-xs text-zinc-400">目标容器</span>
             <select
-              class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500"
+              class={fieldCls}
               value={targetId()}
               onChange={(e) => setTargetId(e.currentTarget.value)}
             >
@@ -78,7 +78,7 @@ export const CopyToContainerModal: Component<{
           <label class="flex flex-col gap-1">
             <span class="text-xs text-zinc-400">目标目录（不含文件名，将保留原文件名写入此目录）</span>
             <input
-              class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500"
+              class={fieldCls}
               value={targetPath()}
               onInput={(e) => setTargetPath(e.currentTarget.value)}
               placeholder="/path/to/dir"

@@ -1,5 +1,5 @@
 import { Component, createSignal, Show } from "solid-js";
-import { Button } from "../shared/Button";
+import { Button, fieldCls } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady, browserSecret } from "../shared/PullOptions";
 import { enqueue, isPending } from "../../stores/taskQueue";
@@ -86,7 +86,7 @@ export const ComposeActionModal: Component<{ target: ComposeAction | null; onClo
               <span class="mb-1 block text-xs text-zinc-500">镜像拉取策略</span>
               <div class="relative">
                 <select
-                  class="w-full appearance-none border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 pr-8 text-sm outline-none focus:border-indigo-500"
+                  class={`${fieldCls} appearance-none pr-8`}
                   aria-label="镜像拉取策略"
                   value={pullPolicy()}
                   onChange={(e) => setPullPolicy(e.currentTarget.value)}

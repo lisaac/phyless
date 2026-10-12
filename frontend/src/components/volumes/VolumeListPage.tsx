@@ -1,7 +1,7 @@
 import { Component, createSignal, createResource, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
-import { Button } from "../shared/Button";
+import { Button, PageHeader, fieldCls } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { FileBrowser } from "../shared/FileBrowser";
 import { fileSource } from "../../api/fileSources";
@@ -52,12 +52,11 @@ export const VolumeListPage: Component = () => {
 
   return (
     <div>
-      <div class="mb-4 flex items-center justify-between">
-        <h1 class="text-xl font-semibold">存储卷</h1>
+      <PageHeader title="存储卷">
         <Show when={hasRole("operator")}>
           <Button variant="primary" onClick={() => setShow(true)}>创建卷</Button>
         </Show>
-      </div>
+      </PageHeader>
       <div class="mb-3">
         <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索存储卷…" />
       </div>
@@ -131,7 +130,7 @@ export const VolumeListPage: Component = () => {
       </div>
 
       <Modal open={show()} onClose={() => setShow(false)} title="创建存储卷">
-        <input class="mb-3 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="卷名" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+        <input class={`mb-3 ${fieldCls}`} placeholder="卷名" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
         <div class="flex justify-end gap-2">
           <Button onClick={() => setShow(false)}>取消</Button>
           <Button variant="primary" onClick={create}>创建</Button>

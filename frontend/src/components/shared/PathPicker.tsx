@@ -1,6 +1,7 @@
 import { Component, createResource, Show, For, createSignal } from "solid-js";
 import { get } from "../../api/client";
 import type { FileEntry } from "../../types";
+import { fieldCls } from "./Button";
 
 // Directory-autocomplete text input against the host filesystem the phyless
 // process itself sees (/api/fs/list) — same filesystem base_dir/compose
@@ -47,7 +48,7 @@ export const PathPicker: Component<{
   return (
     <div class="relative">
       <input
-        class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500"
+        class={fieldCls}
         value={props.value}
         placeholder={props.placeholder}
         onInput={(e) => props.onChange(e.currentTarget.value)}

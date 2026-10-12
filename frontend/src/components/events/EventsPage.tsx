@@ -1,7 +1,7 @@
 import { Component, createEffect, createMemo, createSignal, onCleanup, For, Show } from "solid-js";
 import { createTabState } from "../../stores/tabs";
 import { connectWS, reportWSError } from "../../api/ws";
-import { Chip } from "../shared/Button";
+import { Chip, PageHeader } from "../shared/Button";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { TimeRangePicker, appendTimeRange, presetRange, type TimeRange } from "../shared/TimeRangePicker";
 
@@ -100,10 +100,9 @@ export const EventsPage: Component = () => {
 
   return (
     <div>
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 class="text-xl font-semibold">事件</h1>
+      <PageHeader title="事件">
         <TimeRangePicker initial="1h" onChange={setRange} />
-      </div>
+      </PageHeader>
 
       <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索名称 / 动作 / 镜像…" />

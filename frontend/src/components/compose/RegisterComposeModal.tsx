@@ -1,6 +1,6 @@
 import { Component, createEffect, createResource, createSignal, on, onCleanup, Show } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { Button } from "../shared/Button";
+import { Button, fieldCls } from "../shared/Button";
 import { CodeEditor } from "../shared/CodeEditor";
 import { PathPicker } from "../shared/PathPicker";
 import { get } from "../../api/client";
@@ -169,8 +169,6 @@ export const RegisterComposeModal: Component<{
   };
 
 
-  const inputClass = "w-full border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500";
-
   return (
     <Modal open={props.open} onClose={props.onClose} title="注册 Compose 项目" wide>
       <div class="mb-4 flex flex-wrap gap-5 border-b border-zinc-800 pb-4 text-sm">
@@ -186,7 +184,7 @@ export const RegisterComposeModal: Component<{
       <div class="mb-4 grid gap-3 md:grid-cols-2">
         <label class="block text-xs text-zinc-400">
           名称 {mode() === "existing" && <span class="text-zinc-500">（可选，默认使用目录名）</span>}
-          <input class={"mt-1 " + inputClass} value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder={mode() === "new" ? "例如 my-app" : "留空使用目录名"} />
+          <input class={"mt-1 " + fieldCls} value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder={mode() === "new" ? "例如 my-app" : "留空使用目录名"} />
         </label>
         <Show when={mode() === "existing"} fallback={
           <label class="block text-xs text-zinc-400">

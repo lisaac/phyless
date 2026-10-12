@@ -2,7 +2,7 @@ import { Component, createSignal, Show, onCleanup } from "solid-js";
 import { FileBrowser } from "../shared/FileBrowser";
 import { fileSource } from "../../api/fileSources";
 import { CodeEditor } from "../shared/CodeEditor";
-import { Button } from "../shared/Button";
+import { Button, PageHeader } from "../shared/Button";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
 import { queued } from "../../stores/taskQueue";
 import { confirmOpenText, fetchTextFile } from "../../api/textFile";
@@ -118,7 +118,7 @@ export const ConfigFilesPage: Component = () => {
 
   return (
     <div>
-      <h1 class="mb-3 text-xl font-semibold">本机配置</h1>
+      <PageHeader title="本机配置" />
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div class="h-[calc(100vh-13rem)] overflow-auto border border-zinc-800 p-2">
           <FileBrowser

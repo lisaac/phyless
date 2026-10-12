@@ -3,7 +3,7 @@ import { enqueue, queued, isPending, SETTLED_EVENT, type Task } from "../../stor
 import { A } from "@solidjs/router";
 import { createResourceStore, settled } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
-import { Button } from "../shared/Button";
+import { Button, PageHeader, buttonCls, fieldCls } from "../shared/Button";
 import { confirmAction } from "../shared/ConfirmModal";
 import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, browserWorkerReady, browserCreds } from "../shared/PullOptions";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
@@ -281,50 +281,33 @@ export const ImageListPage: Component = () => {
 
   return (
     <div>
-      <div class="mb-3 flex items-center justify-between gap-2">
-        <h1 class="shrink-0 text-xl font-semibold">镜像</h1>
+      <PageHeader title="镜像">
         <Show when={hasRole("operator")}>
-          <div class="flex min-w-0 items-center justify-end gap-1 sm:gap-2">
-            <button
-              class="whitespace-nowrap rounded-md border border-red-500/30 px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50 sm:px-3 sm:py-1.5 sm:text-sm"
-              disabled={pruning()}
-              title={pruning() ? "清理中" : "清理所有未被容器使用的镜像"}
-              onClick={() => void confirmPrune()}
-            >
-              {pruning() ? "清理中…" : "清理"}
-            </button>
-            <button
-              class="whitespace-nowrap rounded-md bg-indigo-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 sm:px-3 sm:py-1.5 sm:text-sm"
-              onClick={() => setShowPullInput(true)}
-            >
-              + 拉取
-            </button>
-            <button
-              class="whitespace-nowrap rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 disabled:opacity-50 sm:px-3 sm:py-1.5 sm:text-sm"
-              title="Import：导入容器导出的 rootfs tar，可选远程 URL 或本地文件"
-              onClick={() => setShowRemoteImport(true)}
-            >
-              + Import
-            </button>
-            <label
-              class="cursor-pointer whitespace-nowrap rounded-md border border-zinc-600 px-2 py-1 text-xs text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100 sm:px-3 sm:py-1.5 sm:text-sm"
-              title="Load：导入由镜像 save 导出的 tar 文件"
-            >
-              + Load
-              <input
-                type="file"
-                accept=".tar,.tar.gz,.tgz"
-                class="hidden"
-                onChange={(e) => {
-                  const file = e.currentTarget.files?.[0];
-                  e.currentTarget.value = "";
-                  if (file) startImport(file);
-                }}
-              />
-            </label>
-          </div>
+          <Button
+            variant="danger"
+            disabled={pruning()}
+            title={pruning() ? "清理中" : "清理所有未被容器使用的镜像"}
+            onClick={() => void confirmPrune()}
+          >
+            {pruning() ? "清理中…" : "清理"}
+          </Button>
+          <Button variant="primary" onClick={() => setShowPullInput(true)}>+ 拉取</Button>
+          <Button title="Import：导入容器导出的 rootfs tar，可选远程 URL 或本地文件" onClick={() => setShowRemoteImport(true)}>+ Import</Button>
+          <label class={`cursor-pointer ${buttonCls()}`} title="Load：导入由镜像 save 导出的 tar 文件">
+            + Load
+            <input
+              type="file"
+              accept=".tar,.tar.gz,.tgz"
+              class="hidden"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                e.currentTarget.value = "";
+                if (file) startImport(file);
+              }}
+            />
+          </label>
         </Show>
-      </div>
+      </PageHeader>
 
       <div class="mb-3">
         <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索镜像…" />
@@ -474,7 +457,7 @@ export const ImageListPage: Component = () => {
             <span class="text-xs text-zinc-400">远程 tar URL（可选）</span>
             <input
               type="url"
-              class="w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition-colors focus:border-zinc-600"
+              class={fieldCls}
               placeholder="https://example.com/rootfs.tar"
               value={remoteImportURL()}
               onInput={(e) => { setRemoteImportURL(e.currentTarget.value); if (e.currentTarget.value.trim()) setRemoteImportFile(undefined); }}
@@ -494,7 +477,7 @@ export const ImageListPage: Component = () => {
           <label class="flex flex-col gap-1">
             <span class="text-xs text-zinc-400">镜像名称:标签（可选）</span>
             <input
-              class="w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition-colors focus:border-zinc-600"
+              class={fieldCls}
               placeholder="imported/myapp:latest"
               value={remoteImportRef()}
               onInput={(e) => setRemoteImportRef(e.currentTarget.value)}
@@ -518,7 +501,7 @@ export const ImageListPage: Component = () => {
           <>
             <div class="mb-3 flex gap-2">
               <input
-                class="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm text-zinc-100 outline-none transition-colors focus:border-indigo-500"
+                class={`min-w-0 flex-1 font-mono ${fieldCls}`}
                 placeholder="nginx:latest"
                 aria-label="镜像引用"
                 spellcheck={false}
@@ -527,15 +510,10 @@ export const ImageListPage: Component = () => {
                 onKeyDown={(e) => e.key === "Enter" && startPull()}
                 ref={(el: HTMLInputElement) => setTimeout(() => el?.focus(), 50)}
               />
-              <button
-                type="button"
-                class="flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-700 px-3 text-xs text-zinc-300 transition-colors hover:border-indigo-500 hover:text-indigo-300"
-                aria-expanded="false"
-                onClick={() => setShowRemoteSearch(true)}
-              >
+              <Button class="shrink-0" aria-expanded="false" onClick={() => setShowRemoteSearch(true)}>
                 <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
                 搜索远程镜像
-              </button>
+              </Button>
             </div>
             <PullOptions options={pull} showPlatform allowBrowser />
             <div class="mt-4 flex justify-end gap-2">
@@ -564,7 +542,7 @@ export const ImageListPage: Component = () => {
             <label class="flex min-w-0 flex-1 items-center gap-2">
               <span class="shrink-0 text-xs text-zinc-500">镜像引用</span>
               <input
-                class="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-sm text-zinc-100 outline-none transition-colors focus:border-indigo-500"
+                class={`min-w-0 flex-1 font-mono ${fieldCls}`}
                 placeholder="nginx:latest"
                 spellcheck={false}
                 value={pullRef()}
@@ -588,7 +566,7 @@ export const ImageListPage: Component = () => {
           当前：{tagFor()?.RepoTags?.[0] ?? tagFor()?.Id.replace("sha256:", "").slice(0, 12)}
         </p>
         <input
-          class="mb-3 w-full border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-colors"
+          class={`mb-3 ${fieldCls}`}
           placeholder="myrepo/app:v2"
           value={tagVal()}
           onInput={(e) => setTagVal(e.currentTarget.value)}

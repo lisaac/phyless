@@ -3,7 +3,7 @@ import { request } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
 import { cancelDockerServerRequests, dockerServerChanged } from "../../stores/dockerServer";
 import { toast } from "../shared/Toast";
-import { Button } from "../shared/Button";
+import { Button, PageHeader, fieldCls } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { Table, type Column } from "../shared/Table";
 import type { DockerServer, DockerSettings } from "../../types";
@@ -106,23 +106,19 @@ export const DockerSettingsPage: Component = () => {
   const saved = () => editing();
   return (
     <div class="max-w-5xl">
-      <div class="mb-4 flex items-center justify-between">
-        <div>
-          <h1 class="text-xl font-semibold">Docker 连接</h1>
-          <p class="mt-1 text-sm text-zinc-500">添加多个本机或远程 Docker API，选择后立即切换，无需重启。</p>
-        </div>
+      <PageHeader title="Docker 连接" description="添加多个本机或远程 Docker API，选择后立即切换，无需重启。">
         <Button variant="primary" onClick={openCreate}>添加服务器</Button>
-      </div>
+      </PageHeader>
       <Table rows={settings().servers} columns={columns} rowKey={(server) => server.id} />
 
       <Modal open={show()} onClose={close} title={editing() ? "编辑 Docker 服务器" : "添加 Docker 服务器"}>
         <label class="mb-3 block text-sm text-zinc-300">
           名称
-          <input class="mt-1 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="生产环境" value={form().name} onInput={(e) => setText("name", e.currentTarget.value)} />
+          <input class={`mt-1 ${fieldCls}`} placeholder="生产环境" value={form().name} onInput={(e) => setText("name", e.currentTarget.value)} />
         </label>
         <label class="mb-3 block text-sm text-zinc-300">
           Docker API 地址
-          <input class="mt-1 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="留空使用本机 Docker，或 tcp://docker.example.com:2375、unix:///var/run/docker.sock" value={form().host} onInput={(e) => setText("host", e.currentTarget.value)} />
+          <input class={`mt-1 ${fieldCls}`} placeholder="留空使用本机 Docker，或 tcp://docker.example.com:2375、unix:///var/run/docker.sock" value={form().host} onInput={(e) => setText("host", e.currentTarget.value)} />
         </label>
         <label class="flex items-center gap-2 text-sm text-zinc-300">
           <input type="checkbox" checked={form().tls} onChange={(e) => setForm((f) => ({ ...f, tls: e.currentTarget.checked }))} />
@@ -147,7 +143,7 @@ const PemField: Component<{ label: string; value: string; saved: boolean; onInpu
   <label class="mt-3 block text-sm text-zinc-300">
     {props.label}
     <textarea
-      class="mt-1 min-h-28 w-full bg-zinc-900 border border-zinc-800 px-3 py-2 font-mono text-xs"
+      class={`mt-1 min-h-28 font-mono !text-xs ${fieldCls}`}
       placeholder={props.saved ? "已保存，留空保持不变" : "-----BEGIN ...-----"}
       value={props.value}
       onInput={(e) => props.onInput(e.currentTarget.value)}

@@ -2,6 +2,7 @@ import { Component, createSignal, onMount, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { doLogin, doSetup } from "../../stores/auth";
 import { ApiError, get } from "../../api/client";
+import { buttonCls, fieldCls } from "../shared/Button";
 
 export const LoginPage: Component = () => {
   const navigate = useNavigate();
@@ -37,7 +38,6 @@ export const LoginPage: Component = () => {
     }
   };
 
-  const fieldCls = "w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-colors";
 
   return (
     <div class="flex h-full items-center justify-center bg-zinc-950">
@@ -90,7 +90,8 @@ export const LoginPage: Component = () => {
         )}
 
         <button
-          class="w-full rounded-md bg-indigo-600 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+          type="submit"
+          class={`w-full ${buttonCls("primary")}`}
           disabled={busy() || configured() === null}
         >
           {busy() ? "处理中…" : configured() === false ? "创建并登录" : "登录"}

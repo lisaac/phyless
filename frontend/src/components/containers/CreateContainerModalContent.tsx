@@ -1,7 +1,7 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { PullOptions, createPullOptions, pullModeLabel, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
-import { Button, Chip } from "../shared/Button";
+import { Button, Chip, fieldCls } from "../shared/Button";
 import { RunComposeEditor } from "../shared/RunComposeEditor";
 import { Tabs } from "../shared/Tabs";
 import { get, imageInspectUrl } from "../../api/client";
@@ -264,7 +264,6 @@ export const CreateContainerModal: Component<{
     form()[k].split(",").map((c) => c.trim()).filter(Boolean);
 
   // ── Field helpers ──────────────────────────────────────────────────────────
-  const fieldCls = "w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-500 transition-colors";
   const selCls = `${fieldCls} appearance-none pr-8`;
   const selArrow = <span class="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-zinc-500">▾</span>;
 
@@ -337,7 +336,7 @@ export const CreateContainerModal: Component<{
         <div class="flex flex-1 items-center gap-1 min-w-0">
           <div class="relative flex-1 min-w-0">
           <select
-            class="w-full appearance-none border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 pr-8 text-sm text-zinc-300 outline-none"
+            class={`${fieldCls} appearance-none pr-8`}
             value={selectedTplId()}
             onChange={(e) => {
               const id = e.currentTarget.value;
@@ -376,7 +375,7 @@ export const CreateContainerModal: Component<{
         {/* Container clone select — stays on selection */}
         <div class="relative flex-1 min-w-0">
           <select
-            class="w-full appearance-none border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 pr-8 text-sm text-zinc-300 outline-none"
+            class={`${fieldCls} appearance-none pr-8`}
             value={selectedContainerId()}
             onChange={(e) => {
               const id = e.currentTarget.value;

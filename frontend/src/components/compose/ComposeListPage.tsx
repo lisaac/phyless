@@ -2,7 +2,7 @@ import { Component, createSignal, createResource, onMount, onCleanup, For, Show 
 import { createTabState } from "../../stores/tabs";
 import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
-import { Button } from "../shared/Button";
+import { Button, PageHeader } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { get, imageInspectUrl } from "../../api/client";
@@ -106,17 +106,14 @@ export const ComposeListPage: Component = () => {
 
   return (
     <div>
-      <div class="mb-4 flex items-center justify-between">
-        <h1 class="text-xl font-semibold">Compose</h1>
-        <div class="flex gap-2">
-          <Show when={hasRole("admin")}>
-            <Button onClick={() => setShowSettings(true)}>设置</Button>
-          </Show>
-          <Show when={hasRole("operator")}>
-            <Button variant="primary" onClick={() => setShow(true)}>注册项目</Button>
-          </Show>
-        </div>
-      </div>
+      <PageHeader title="Compose">
+        <Show when={hasRole("admin")}>
+          <Button onClick={() => setShowSettings(true)}>设置</Button>
+        </Show>
+        <Show when={hasRole("operator")}>
+          <Button variant="primary" onClick={() => setShow(true)}>注册项目</Button>
+        </Show>
+      </PageHeader>
       <div class="mb-3">
         <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索 Compose…" />
       </div>

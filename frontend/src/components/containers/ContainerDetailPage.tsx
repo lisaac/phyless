@@ -33,6 +33,8 @@ import { ContainerIcon } from "./ContainerIcon";
 import { ComposeIcon } from "../compose/composeShared";
 import type { NetworkSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
+import { Modal } from "../shared/Modal";
+import { Button } from "../shared/Button";
 import { settled } from "../../stores/resource";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
@@ -285,12 +287,6 @@ export const ContainerDetailPage: Component = () => {
 
   // ── Network actions ────────────────────────────────────────────────────────────
   const [netDlg, setNetDlg] = createSignal(false);
-  createEffect(() => {
-    if (!netDlg()) return;
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setNetDlg(false); };
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
-  });
   const doConnectNet = async (netName: string) => {
     try {
       await queued(`连接网络 ${netName}`, "POST", `/api/networks/${encodeURIComponent(netName)}/connect`, { container: id() }, { key: id() });
@@ -580,34 +576,28 @@ export const ContainerDetailPage: Component = () => {
             </div>
 
             {/* ── Network connect dialog ── */}
-            <Show when={netDlg()}>
+            <Modal open={netDlg()} onClose={() => setNetDlg(false)} title="连接到网络">
               {(() => {
-                const connected = new Set(Object.keys(inspect()?.NetworkSettings?.Networks ?? {}));
-                const available = (settled(networks) ?? []).filter(
-                  (n) => !connected.has(n.Name) && n.Name !== "none" && n.Name !== "ingress"
+                const connected = () => new Set(Object.keys(inspect()?.NetworkSettings?.Networks ?? {}));
+                const available = () => (settled(networks) ?? []).filter(
+                  (n) => !connected().has(n.Name) && n.Name !== "none" && n.Name !== "ingress"
                 );
                 return (
-                  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setNetDlg(false)}>
-                    <div class="w-64 rounded border border-zinc-700 bg-zinc-900 p-4" onClick={(e) => e.stopPropagation()}>
-                      <div class="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">连接到网络</div>
-                      <Show when={available.length > 0} fallback={<p class="text-xs text-zinc-500">无可用网络</p>}>
-                        <div class="flex flex-wrap gap-1.5">
-                          <For each={available}>
-                            {(n) => (
-                              <button
-                                class="border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:border-indigo-500 hover:bg-indigo-600/20 hover:text-indigo-300 transition-colors"
-                                onClick={() => { void doConnectNet(n.Name); setNetDlg(false); }}
-                              >{n.Name}</button>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                      <button class="mt-3 w-full border border-zinc-700 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors" onClick={() => setNetDlg(false)}>取消</button>
+                  <>
+                    <Show when={available().length > 0} fallback={<p class="text-xs text-zinc-500">无可用网络</p>}>
+                      <div class="flex flex-wrap gap-1.5">
+                        <For each={available()}>
+                          {(n) => <Button onClick={() => { void doConnectNet(n.Name); setNetDlg(false); }}>{n.Name}</Button>}
+                        </For>
+                      </div>
+                    </Show>
+                    <div class="mt-5 flex justify-end">
+                      <Button onClick={() => setNetDlg(false)}>取消</Button>
                     </div>
-                  </div>
+                  </>
                 );
               })()}
-            </Show>
+            </Modal>
 
             <Show when={(cfg().Env ?? []).length > 0}>
               <Sec>环境变量</Sec>

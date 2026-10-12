@@ -1,7 +1,7 @@
 import { Component, createSignal, onMount, Show } from "solid-js";
 import { createResourceStore } from "../../stores/resource";
 import { Table, type Column } from "../shared/Table";
-import { Button } from "../shared/Button";
+import { Button, PageHeader, fieldCls } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
@@ -48,17 +48,16 @@ export const UsersPage: Component = () => {
 
   return (
     <div>
-      <div class="mb-4 flex items-center justify-between">
-        <h1 class="text-xl font-semibold">用户管理</h1>
+      <PageHeader title="用户管理">
         <Button variant="primary" onClick={() => setShow(true)}>新建用户</Button>
-      </div>
+      </PageHeader>
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
       <Table rows={store.items()} columns={columns} rowKey={(u) => u.id} />
 
       <Modal open={show()} onClose={() => setShow(false)} title="新建用户">
-        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" placeholder="用户名" value={form().username} onInput={(e) => set("username", e.currentTarget.value)} />
-        <input class="mb-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" type="password" placeholder="密码" value={form().password} onInput={(e) => set("password", e.currentTarget.value)} />
-        <select class="mb-3 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" value={form().role} onChange={(e) => set("role", e.currentTarget.value)}>
+        <input class={`mb-2 ${fieldCls}`} placeholder="用户名" value={form().username} onInput={(e) => set("username", e.currentTarget.value)} />
+        <input class={`mb-2 ${fieldCls}`} type="password" placeholder="密码" value={form().password} onInput={(e) => set("password", e.currentTarget.value)} />
+        <select class={`mb-3 ${fieldCls}`} value={form().role} onChange={(e) => set("role", e.currentTarget.value)}>
           <option value="viewer">viewer</option>
           <option value="operator">operator</option>
           <option value="admin">admin</option>
@@ -70,7 +69,7 @@ export const UsersPage: Component = () => {
       </Modal>
 
       <Modal open={!!editing()} onClose={closeEditor} title={`修改 ${editing()?.username ?? ""} 的密码`}>
-        <input class="mb-3 w-full bg-zinc-900 border border-zinc-800 px-3 py-2" type="password" placeholder="新密码" value={newPassword()} onInput={(e) => setNewPassword(e.currentTarget.value)} />
+        <input class={`mb-3 ${fieldCls}`} type="password" placeholder="新密码" value={newPassword()} onInput={(e) => setNewPassword(e.currentTarget.value)} />
         <div class="flex justify-end gap-2"><Button onClick={closeEditor}>取消</Button><Button variant="primary" disabled={!newPassword()} onClick={changePassword}>保存</Button></div>
       </Modal>
     </div>

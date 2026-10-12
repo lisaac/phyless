@@ -1,6 +1,6 @@
 import { Component, createSignal, createEffect } from "solid-js";
 import { Modal } from "../shared/Modal";
-import { Button } from "../shared/Button";
+import { Button, fieldCls } from "../shared/Button";
 import { openPopup } from "../../api/fileSources";
 
 // Shared by ContainerListPage (per-row button) and ContainerDetailPage
@@ -25,7 +25,6 @@ export const ConsoleModal: Component<{ target: { id: string; name: string } | nu
     props.onClose();
   };
 
-  const fieldCls = "w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-indigo-500 transition-colors";
 
   return (
     <Modal open={!!props.target} onClose={props.onClose} title={`控制台 — ${props.target?.name ?? ""}`}>

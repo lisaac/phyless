@@ -1,4 +1,5 @@
 import { Component, onMount, For, Show } from "solid-js";
+import { PageHeader } from "../shared/Button";
 import { createResourceStore } from "../../stores/resource";
 import type { AuditEntry } from "../../types";
 
@@ -8,7 +9,7 @@ export const AuditPage: Component = () => {
 
   return (
     <div>
-      <h1 class="mb-4 text-xl font-semibold">审计日志</h1>
+      <PageHeader title="审计日志" />
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
       <table class="w-full text-left text-sm">
         <thead class="border-b border-zinc-800 text-zinc-400">

@@ -1,4 +1,5 @@
 import { Component, createSignal, onMount, onCleanup, Show, For } from "solid-js";
+import { Button, PageHeader } from "../shared/Button";
 import { createTabState } from "../../stores/tabs";
 import { createResourceStore } from "../../stores/resource";
 import { get, imageInspectUrl } from "../../api/client";
@@ -90,25 +91,12 @@ export const ContainerListPage: Component = () => {
   return (
     <div class="flex flex-col gap-3">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div class="flex items-center justify-between">
-        <h1 class="text-lg font-semibold">容器</h1>
+      <PageHeader title="容器" flush>
         <Show when={hasRole("operator")}>
-          <div class="flex items-center gap-2">
-            <button
-              class="rounded-md border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-400 hover:text-zinc-100"
-              onClick={() => setShowImport(true)}
-            >
-              导入容器
-            </button>
-            <button
-              class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
-              onClick={() => setShowCreate(true)}
-            >
-              + 新建容器
-            </button>
-          </div>
+          <Button onClick={() => setShowImport(true)}>导入容器</Button>
+          <Button variant="primary" onClick={() => setShowCreate(true)}>+ 新建容器</Button>
         </Show>
-      </div>
+      </PageHeader>
 
       <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索容器…" />
 
