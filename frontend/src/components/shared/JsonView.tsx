@@ -18,7 +18,9 @@ export const JsonView: Component<{ data: unknown; class?: string }> = (p) => {
         class="absolute right-2 top-2 z-10 border border-zinc-700 bg-zinc-900/90 px-2 py-0.5 text-xs text-zinc-300 transition-colors hover:border-indigo-500 hover:text-indigo-400"
         onClick={() => void copy()}
       >复制</button>
-      <div class={`overflow-auto ${p.class ?? "max-h-[70vh]"}`}>
+      {/* flex-col caps the bordered editor itself (a scroll container shrinks as a
+          flex item), so its frame stays put and the copy button stays inside it. */}
+      <div class={`flex flex-col ${p.class ?? "max-h-[70vh]"}`}>
         <CodeEditor value={text()} language="json" readOnly />
       </div>
     </div>
