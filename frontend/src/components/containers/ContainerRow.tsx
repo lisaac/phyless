@@ -6,8 +6,7 @@ import { IBtn, Ico } from "../shared/ActionButton";
 import { ComposeIcon } from "../compose/composeShared";
 import { Modal } from "../shared/Modal";
 import { confirmAction } from "../shared/ConfirmModal";
-import { FileBrowser } from "../shared/FileBrowser";
-import { fileSource } from "../../api/fileSources";
+import { SourceFileBrowser } from "../shared/SourceFileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { get } from "../../api/client";
@@ -322,12 +321,10 @@ export const ContainerRow: Component<{
       </Modal>
 
       <Modal open={browsePath() !== null} onClose={() => setBrowsePath(null)} title={`文件 · ${name() || c().Id.slice(0, 12)}`} wide>
-        <FileBrowser
-          instanceKey={c().Id}
+        <SourceFileBrowser
+          src={{ kind: "container", id: c().Id, name: name() || c().Id.slice(0, 12) }}
+          download={download}
           initialPath={browsePath() ?? "/"}
-          listPath={(sub) => fileSource("container", c().Id).listPath(sub)}
-          onDownload={(sub, fname) => download.start(fileSource("container", c().Id).downloadUrl!(sub), `${fname}.tar`)}
-          popout={{ kind: "container", id: c().Id, name: name() || c().Id.slice(0, 12) }}
         />
       </Modal>
       <DownloadStatusWidget task={download} />

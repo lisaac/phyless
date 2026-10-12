@@ -64,6 +64,20 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleVolumeDownloadFile(w http.ResponseWriter, r *http.Request) {
+	v, err := s.docker.VolumeInspect(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	fullPath := filepath.Join(v.Mountpoint, r.URL.Query().Get("path"))
+	if !isSubPath(v.Mountpoint, fullPath) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	serveTar(w, fullPath)
+}
+
 func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name   string            `json:"name"`

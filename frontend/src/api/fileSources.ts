@@ -27,8 +27,8 @@ export function fileSource(kind: FileSourceKind, id: string) {
 
   return {
     listPath: (sub: string) => get<FileEntry[]>(url("", `path=${e(sub)}`)),
-    // Tar stream of a file/dir; volumes have no download endpoint.
-    downloadUrl: kind === "volume" ? undefined : (sub: string) => url("/download", `path=${e(sub)}&token=${e(getToken() ?? "")}`),
+    // Tar stream of a file/dir — also what the read-only viewer opens files through.
+    downloadUrl: (sub: string) => url("/download", `path=${e(sub)}&token=${e(getToken() ?? "")}`),
     upload: !writable ? undefined : async (dir: string, file: File) => {
       const t = await enqueue(kind === "container"
         ? { title: `上传 ${file.name}`, url: url("/upload", `path=${e(dir)}&name=${e(file.name)}`), file, key }

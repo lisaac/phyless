@@ -7,7 +7,7 @@ describe("fileSource", () => {
     expect(await fileSource("container", "abc").listPath("/etc")).toBe("/api/containers/abc/files?path=%2Fetc");
     expect(await fileSource("image", "sha256:x").listPath("/")).toBe("/api/images/files?id=sha256%3Ax&path=%2F");
     expect(fileSource("compose", "p").downloadUrl!("/a")).toBe("/api/compose/files/download?id=p&path=%2Fa&token=t");
-    expect(fileSource("volume", "v").downloadUrl).toBeUndefined();
+    expect(fileSource("volume", "v").downloadUrl("/a")).toMatch(/^\/api\/volumes\/v\/files\/download\?path=%2Fa&token=/);
     expect(fileSource("image", "i").remove).toBeUndefined();
     expect(fileSource("container", "c").create).toBeUndefined();
     expect(filesWindowUrl({ kind: "volume", id: "a b", name: "a b" }, "/x")).toBe("/files/volume/a%20b?name=a+b&path=%2Fx");

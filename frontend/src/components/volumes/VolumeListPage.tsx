@@ -3,8 +3,9 @@ import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button, PageHeader, fieldCls } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { FileBrowser } from "../shared/FileBrowser";
-import { fileSource } from "../../api/fileSources";
+import { SourceFileBrowser } from "../shared/SourceFileBrowser";
+import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
+import { createDownloadTask } from "../../api/download";
 import { IBtn, Ico } from "../shared/ActionButton";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
@@ -33,6 +34,8 @@ export const VolumeListPage: Component = () => {
   const [show, setShow] = createSignal(false);
   const [name, setName] = createSignal("");
   const [browse, setBrowse] = createSignal<VolumeSummary | null>(null);
+  const download = createDownloadTask();
+  onCleanup(() => download.cancel());
   const [inspectFor, setInspectFor] = createSignal<VolumeSummary | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [inspectData] = createResource(inspectFor, (v) => get<any>(`/api/volumes/${encodeURIComponent(v.Name)}/inspect`));
@@ -140,14 +143,11 @@ export const VolumeListPage: Component = () => {
       <Modal open={!!browse()} onClose={() => setBrowse(null)} title={`浏览 ${browse()?.Name ?? ""}`} wide>
         <Show when={browse()}>
           {(v) => (
-            <FileBrowser
-              instanceKey={v().Name}
-              listPath={(sub) => fileSource("volume", v().Name).listPath(sub)}
-              popout={{ kind: "volume", id: v().Name, name: v().Name }}
-            />
+            <SourceFileBrowser src={{ kind: "volume", id: v().Name, name: v().Name }} download={download} />
           )}
         </Show>
       </Modal>
+      <DownloadStatusWidget task={download} />
 
       <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor()?.Name ?? ""}`} wide>
         <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>

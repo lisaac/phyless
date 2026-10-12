@@ -10,10 +10,7 @@ import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import { FileBrowser } from "../shared/FileBrowser";
-import { fileSource } from "../../api/fileSources";
-import { TarTextViewer } from "../shared/TarTextViewer";
-import { confirmOpenText } from "../../api/textFile";
+import { SourceFileBrowser } from "../shared/SourceFileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { get, getToken } from "../../api/client";
@@ -139,11 +136,6 @@ export const ImageListPage: Component = () => {
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
   onCleanup(() => download.cancel());
-  const [viewFile, setViewFile] = createSignal<{ id: string; path: string } | null>(null);
-  const viewUrl = () => {
-    const v = viewFile();
-    return v ? fileSource("image", v.id).downloadUrl!(v.path) : null;
-  };
 
   const closePullInput = () => { setShowPullInput(false); setShowRemoteSearch(false); pull.reset(); };
   const localTags = () => new Set(store.items().flatMap((img) => img.RepoTags ?? []));
@@ -593,18 +585,11 @@ export const ImageListPage: Component = () => {
       <Modal open={!!filesFor()} onClose={() => setFilesFor(null)} title={`文件 · ${filesFor() ? imgLabel(filesFor()!) : ""}`} wide>
         <Show when={filesFor()}>
           {(img) => (
-            <FileBrowser
-              instanceKey={img().Id}
-              listPath={(sub) => fileSource("image", img().Id).listPath(sub)}
-              onDownload={(sub, name) => download.start(fileSource("image", img().Id).downloadUrl!(sub), `${name}.tar`)}
-              popout={{ kind: "image", id: img().Id, name: imgLabel(img()) }}
-              onOpenFile={async (path) => { if (await confirmOpenText(path)) setViewFile({ id: img().Id, path }); }}
-            />
+            <SourceFileBrowser src={{ kind: "image", id: img().Id, name: imgLabel(img()) }} download={download} />
           )}
         </Show>
       </Modal>
       <DownloadStatusWidget task={download} />
-      <TarTextViewer url={viewUrl()} path={viewFile()?.path ?? ""} onClose={() => setViewFile(null)} />
 
       <CreateContainerModal
         open={!!createFrom()}

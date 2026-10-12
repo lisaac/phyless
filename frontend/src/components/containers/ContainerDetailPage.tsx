@@ -276,12 +276,12 @@ export const ContainerDetailPage: Component = () => {
   // ── File actions ──────────────────────────────────────────────────────────────
   const files = () => fileSource("container", id());
   const download = createDownloadTask();
-  const downloadFile = (sub: string, name: string) => download.start(files().downloadUrl!(sub), `${name}.tar`);
+  const downloadFile = (sub: string, name: string) => download.start(files().downloadUrl(sub), `${name}.tar`);
   onCleanup(() => download.cancel());
   const [viewPath, setViewPath] = createSignal<string | null>(null);
   const viewUrl = () => {
     const p = viewPath();
-    return p ? files().downloadUrl!(p) : null;
+    return p ? files().downloadUrl(p) : null;
   };
   const openFile = async (path: string) => { if (await confirmOpenText(path)) setViewPath(path); };
 

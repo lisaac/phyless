@@ -260,6 +260,7 @@ func (s *Server) mountViewerResourceRoutes(r chi.Router) {
 	r.Get("/api/volumes/{id}", s.handleGetVolume)
 	r.Get("/api/volumes/{id}/inspect", s.handleVolumeInspect)
 	r.Get("/api/volumes/{id}/files", s.handleVolumeListFiles)
+	r.Get("/api/volumes/{id}/files/download", s.handleVolumeDownloadFile)
 	r.Get("/api/compose", s.handleListCompose)
 	r.Get("/api/compose/detail", s.handleGetCompose)
 	r.Get("/api/compose/config", s.handleComposeResolvedConfig)
