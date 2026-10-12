@@ -105,6 +105,7 @@ func (s *Server) routes() http.Handler {
 		r.Use(auth.MiddlewareWithUser(jwtSecret, models.RoleOperator, s.lookupUser))
 		s.mountDockerRoutes(r)
 		s.mountComposeRoutes(r)
+		r.Get("/api/settings/compose", s.handleGetComposeSettings)
 		s.mountConfigRoutes(r)
 		s.mountFsRoutes(r)
 		s.mountRegistryRoutes(r)
@@ -115,6 +116,7 @@ func (s *Server) routes() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.MiddlewareWithUser(jwtSecret, models.RoleAdmin, s.lookupUser))
 		s.mountDockerSettingsRoutes(r)
+		r.Put("/api/settings/compose", s.handlePutComposeSettings)
 		r.Get("/api/users", s.handleListUsers)
 		r.Post("/api/users", s.handleCreateUser)
 		r.Get("/api/users/{id}", s.handleGetUser)

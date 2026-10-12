@@ -9,8 +9,8 @@ vi.mock("../../stores/taskQueue", () => ({ queued: mock.queued }));
 vi.mock("../../api/textFile", () => ({ fetchTextFile: mock.fetchTextFile }));
 vi.mock("../shared/Toast", () => ({ toast: { success: mock.success, error: mock.error } }));
 vi.mock("../shared/PathPicker", () => ({
-  PathPicker: (props: { value: string; onChange: (value: string) => void; files?: boolean }) =>
-    <input aria-label={props.files ? "YAML 路径" : "目录"} value={props.value} onInput={(event) => props.onChange(event.currentTarget.value)} />,
+  PathPicker: (props: { value: string; onChange: (value: string) => void; files?: boolean; roots?: string[] }) =>
+    <input aria-label={props.files ? "YAML 路径" : "目录"} data-roots={props.roots?.join(",")} value={props.value} onInput={(event) => props.onChange(event.currentTarget.value)} />,
 }));
 vi.mock("../shared/CodeEditor", () => ({
   CodeEditor: (props: { value: string; onChange: (value: string) => void; language: string }) =>
@@ -20,7 +20,9 @@ vi.mock("../shared/CodeEditor", () => ({
 import { RegisterComposeModal } from "./RegisterComposeModal";
 
 beforeEach(() => {
-  mock.get.mockResolvedValue([{ name: "compose.yaml", is_dir: false }, { name: ".env", is_dir: false }]);
+  mock.get.mockImplementation((url: string) => Promise.resolve(url === "/api/settings/compose"
+    ? { dirs: ["/srv", "/opt/stacks"] }
+    : [{ name: "compose.yaml", is_dir: false }, { name: ".env", is_dir: false }]));
   mock.queued.mockResolvedValue(undefined);
   mock.fetchTextFile.mockImplementation((path: string) => Promise.resolve({
     text: path.includes(".env") ? "A=old\n" : "services: {}\n", truncated: false,
@@ -34,12 +36,14 @@ afterEach(() => {
 it("creates a project with both editor contents under server storage", async () => {
   render(() => <RegisterComposeModal open onClose={() => {}} onRegistered={() => {}} initialCompose="services: {}" />);
   expect(screen.queryByLabelText("YAML 路径")).toBeNull();
-  expect((screen.getByLabelText("目录") as HTMLInputElement).value).toBe("/srv");
+  // Blank directory: the configured directories are offered and the server picks the first.
+  await waitFor(() => expect(screen.getByLabelText("目录").dataset.roots).toBe("/srv,/opt/stacks"));
+  expect((screen.getByLabelText("目录") as HTMLInputElement).value).toBe("");
   fireEvent.input(screen.getByPlaceholderText("例如 my-app"), { target: { value: "demo" } });
   fireEvent.input(screen.getByLabelText("env 内容"), { target: { value: "A=1\n" } });
   fireEvent.click(screen.getByText("新建并注册"));
   await waitFor(() => expect(mock.queued).toHaveBeenCalledWith("新建 Compose demo", "POST", "/api/compose/new", {
-    name: "demo", compose_content: "services: {}", env_content: "A=1\n", parent_dir: "/srv",
+    name: "demo", compose_content: "services: {}", env_content: "A=1\n", parent_dir: "",
   }));
 });
 

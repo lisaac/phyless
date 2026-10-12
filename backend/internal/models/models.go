@@ -63,7 +63,7 @@ const LocalDockerServerID = "local"
 type DockerServer struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
-	ComposeDir string `json:"compose_dir,omitempty"`
+	ComposeDir string `json:"compose_dir,omitempty"` // legacy; migrated into Config.ComposeDirs
 	DockerEndpoint
 }
 

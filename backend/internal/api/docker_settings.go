@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -38,7 +37,7 @@ func (s *Server) handleGetDockerSettings(w http.ResponseWriter, r *http.Request)
 	servers := make([]dockerServerView, len(cfg.DockerServers))
 	for i, server := range cfg.DockerServers {
 		servers[i] = dockerServerView{
-			ID: server.ID, Name: server.Name, Host: server.Host, TLS: server.TLS, ComposeDir: server.ComposeDir,
+			ID: server.ID, Name: server.Name, Host: server.Host, TLS: server.TLS,
 			HasCAPEM: strings.TrimSpace(server.CAPEM) != "", HasCertPEM: strings.TrimSpace(server.CertPEM) != "", HasKeyPEM: strings.TrimSpace(server.KeyPEM) != "",
 		}
 	}
@@ -204,13 +203,12 @@ func (s *Server) reloadDockerRuntime() error {
 }
 
 type dockerServerInput struct {
-	Name       *string `json:"name"`
-	Host       string  `json:"host"`
-	TLS        *bool   `json:"tls"`
-	ComposeDir *string `json:"compose_dir"`
-	CAPEM      *string `json:"ca_pem"`
-	CertPEM    *string `json:"cert_pem"`
-	KeyPEM     *string `json:"key_pem"`
+	Name    *string `json:"name"`
+	Host    string  `json:"host"`
+	TLS     *bool   `json:"tls"`
+	CAPEM   *string `json:"ca_pem"`
+	CertPEM *string `json:"cert_pem"`
+	KeyPEM  *string `json:"key_pem"`
 }
 
 func decodeDockerServerInput(w http.ResponseWriter, r *http.Request) (dockerServerInput, bool) {
@@ -236,15 +234,6 @@ func applyDockerServerInput(server models.DockerServer, input dockerServerInput,
 	if server.Name == "" {
 		return server, fmt.Errorf("name is required")
 	}
-	if input.ComposeDir != nil {
-		server.ComposeDir = strings.TrimSpace(*input.ComposeDir)
-	} else if creating {
-		server.ComposeDir = "/srv"
-	}
-	if !filepath.IsAbs(server.ComposeDir) || filepath.Clean(server.ComposeDir) == "/" {
-		return server, fmt.Errorf("Compose storage directory must be an absolute path other than /")
-	}
-	server.ComposeDir = filepath.Clean(server.ComposeDir)
 	endpoint := server.DockerEndpoint
 	endpoint.Host, endpoint.TLS = input.Host, *input.TLS
 	if input.CAPEM != nil {
@@ -298,7 +287,6 @@ type dockerServerView struct {
 	Name       string `json:"name"`
 	Host       string `json:"host"`
 	TLS        bool   `json:"tls"`
-	ComposeDir string `json:"compose_dir"`
 	HasCAPEM   bool   `json:"has_ca_pem"`
 	HasCertPEM bool   `json:"has_cert_pem"`
 	HasKeyPEM  bool   `json:"has_key_pem"`

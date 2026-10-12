@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"phyless/backend/internal/models"
@@ -22,8 +23,8 @@ func TestReadWriteRoundTrip(t *testing.T) {
 	if cfg.Users == nil {
 		t.Fatal("expected non-nil Users slice")
 	}
-	if cfg.DockerServers[0].ComposeDir != "/srv" {
-		t.Fatalf("default Compose storage directory = %q", cfg.DockerServers[0].ComposeDir)
+	if len(cfg.ComposeDirs) != 1 || cfg.ComposeDirs[0] != "/srv" {
+		t.Fatalf("default Compose directories = %q", cfg.ComposeDirs)
 	}
 
 	cfg.Users = append(cfg.Users, models.User{ID: "1", Username: "admin", Role: models.RoleAdmin})
@@ -45,13 +46,13 @@ func TestReadWriteRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLegacyDockerServerDefaultsComposeDirectory(t *testing.T) {
+func TestLegacyPerServerComposeDirsMigrateToGlobalList(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"docker_servers":[{"id":"local","name":"旧服务器"}],"active_docker_server_id":"local"}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"docker_servers":[{"id":"local","name":"旧服务器","compose_dir":"/data/stacks"},{"id":"b","name":"b","compose_dir":"/data/stacks"},{"id":"c","name":"c"}],"active_docker_server_id":"local"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := store.New(path).Read()
-	if err != nil || cfg.DockerServers[0].ComposeDir != "/srv" {
+	if err != nil || strings.Join(cfg.ComposeDirs, ",") != "/data/stacks" || cfg.DockerServers[0].ComposeDir != "" {
 		t.Fatalf("legacy Compose storage directory = %+v, %v", cfg, err)
 	}
 }

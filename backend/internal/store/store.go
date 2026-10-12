@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"phyless/backend/internal/models"
@@ -21,6 +22,8 @@ type Config struct {
 	ActiveDockerServerID string                  `json:"active_docker_server_id"`
 	LegacyDocker         *models.DockerEndpoint  `json:"docker,omitempty"`
 	Templates            []models.Template       `json:"templates"`
+	// ComposeDirs are scanned for compose files; the first is the default parent for new projects.
+	ComposeDirs []string `json:"compose_dirs"`
 }
 
 type Store struct {
@@ -149,7 +152,8 @@ func emptyConfig() *Config {
 		Users:                []models.User{},
 		ComposeProjects:      []models.ComposeProject{},
 		Registries:           []models.Registry{},
-		DockerServers:        []models.DockerServer{{ID: models.LocalDockerServerID, Name: "本机 Docker", ComposeDir: "/srv"}},
+		DockerServers:        []models.DockerServer{{ID: models.LocalDockerServerID, Name: "本机 Docker"}},
+		ComposeDirs:          []string{"/srv"},
 		Templates:            []models.Template{},
 		ActiveDockerServerID: models.LocalDockerServerID,
 	}
@@ -184,10 +188,15 @@ func normalizeDockerServers(cfg *Config) {
 		})
 	}
 	cfg.LegacyDocker = nil
+	// Compose directories used to be per server; fold them into the global list once.
 	for i := range cfg.DockerServers {
-		if cfg.DockerServers[i].ComposeDir == "" {
-			cfg.DockerServers[i].ComposeDir = "/srv"
+		if dir := cfg.DockerServers[i].ComposeDir; dir != "" && !slices.Contains(cfg.ComposeDirs, dir) {
+			cfg.ComposeDirs = append(cfg.ComposeDirs, dir)
 		}
+		cfg.DockerServers[i].ComposeDir = ""
+	}
+	if len(cfg.ComposeDirs) == 0 {
+		cfg.ComposeDirs = []string{"/srv"}
 	}
 	for _, server := range cfg.DockerServers {
 		if server.ID == cfg.ActiveDockerServerID {

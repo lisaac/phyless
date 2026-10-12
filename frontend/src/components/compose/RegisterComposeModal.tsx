@@ -1,4 +1,4 @@
-import { Component, createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import { Component, createEffect, createResource, createSignal, on, onCleanup, Show } from "solid-js";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { CodeEditor } from "../shared/CodeEditor";
@@ -8,13 +8,14 @@ import { queued } from "../../stores/taskQueue";
 import { fetchTextFile } from "../../api/textFile";
 import { toast } from "../shared/Toast";
 import type { FileEntry } from "../../types";
+import { loadComposeDirs } from "./ComposeSettingsModal";
 
 export const dirBasename = (dir: string) => dir.replace(/\/+$/, "").split("/").pop() || dir;
 const parentDir = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
 const newNamePattern = /^[a-z0-9][a-z0-9_-]*$/;
 // Parent dir for new Compose projects, remembered per browser.
 const NEW_DIR_KEY = "phyless.compose.newDir";
-const loadNewDir = () => { try { return localStorage.getItem(NEW_DIR_KEY) || "/srv"; } catch { return "/srv"; } };
+const loadNewDir = () => { try { return localStorage.getItem(NEW_DIR_KEY) || ""; } catch { return ""; } };
 const saveNewDir = (dir: string) => { try { localStorage.setItem(NEW_DIR_KEY, dir); } catch { /* ignore */ } };
 
 export const RegisterComposeModal: Component<{
@@ -38,6 +39,9 @@ export const RegisterComposeModal: Component<{
   const [loadError, setLoadError] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
+  // Compose search directories (Compose 设置): listed first when a path is blank;
+  // a blank new-project directory falls back to the first one on the server.
+  const [dirs] = createResource(() => props.open || undefined, () => loadComposeDirs().catch(() => [] as string[]));
 
   const chooseMode = (next: "new" | "existing") => {
     setMode(next);
@@ -113,7 +117,7 @@ export const RegisterComposeModal: Component<{
       return;
     }
     const parentDirInput = newDir().trim().replace(/(.)\/+$/, "$1");
-    if (creating && (!parentDirInput.startsWith("/") || parentDirInput === "/")) {
+    if (creating && parentDirInput && (!parentDirInput.startsWith("/") || parentDirInput === "/")) {
       toast.error("目录需为绝对路径，且不能是 /");
       return;
     }
@@ -131,7 +135,7 @@ export const RegisterComposeModal: Component<{
         await queued("新建 Compose " + projectName, "POST", "/api/compose/new", {
           name: projectName, compose_content: composeContent(), env_content: envContent(), parent_dir: parentDirInput,
         });
-        saveNewDir(parentDirInput);
+        if (parentDirInput) saveNewDir(parentDirInput);
       } else {
         const entries = await get<FileEntry[]>("/api/fs/list?path=" + encodeURIComponent(dir));
         if (!entries.some((entry) => !entry.is_dir && entry.name === dirBasename(path))) {
@@ -164,6 +168,7 @@ export const RegisterComposeModal: Component<{
     finally { setSaving(false); }
   };
 
+
   const inputClass = "w-full border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500";
 
   return (
@@ -186,12 +191,12 @@ export const RegisterComposeModal: Component<{
         <Show when={mode() === "existing"} fallback={
           <label class="block text-xs text-zinc-400">
             目录 <span class="text-zinc-500">（将在其中新建同名文件夹）</span>
-            <div class="mt-1"><PathPicker value={newDir()} onChange={setNewDir} placeholder="/srv" /></div>
+            <div class="mt-1"><PathPicker value={newDir()} onChange={setNewDir} roots={dirs()} placeholder={dirs()?.[0] ? `${dirs()![0]}（默认）` : "/srv"} /></div>
           </label>
         }>
           <label class="block text-xs text-zinc-400">
             已有 Compose YAML 文件
-            <div class="mt-1"><PathPicker value={composePath()} onChange={setComposePath} files placeholder="/srv/my-app/compose.yaml" /></div>
+            <div class="mt-1"><PathPicker value={composePath()} onChange={setComposePath} roots={dirs()} files placeholder="/srv/my-app/compose.yaml" /></div>
           </label>
         </Show>
       </div>
@@ -228,3 +233,4 @@ export const RegisterComposeModal: Component<{
     </Modal>
   );
 };
+

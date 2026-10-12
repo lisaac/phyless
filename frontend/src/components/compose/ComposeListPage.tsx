@@ -16,6 +16,7 @@ import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
+import { ComposeSettingsModal } from "./ComposeSettingsModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { composeActionAvailability, composeProjectState, containersOf, representative, ComposeIcon } from "./composeShared";
 import { IBtn, Ico } from "../shared/ActionButton";
@@ -45,6 +46,7 @@ export const ComposeListPage: Component = () => {
   // Compose", instead of a separate read-only viewer.
   const [runText, setRunText] = createSignal<string | null>(null);
   const [show, setShow] = createSignal(false);
+  const [showSettings, setShowSettings] = createSignal(false);
   const [inspectFor, setInspectFor] = createSignal<ComposeProject | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [inspectData] = createResource(inspectFor, (p) => get<any>(`/api/compose/detail?id=${encodeURIComponent(p.id)}`));
@@ -97,9 +99,14 @@ export const ComposeListPage: Component = () => {
     <div>
       <div class="mb-4 flex items-center justify-between">
         <h1 class="text-xl font-semibold">Compose</h1>
-        <Show when={hasRole("operator")}>
-          <Button variant="primary" onClick={() => setShow(true)}>注册项目</Button>
-        </Show>
+        <div class="flex gap-2">
+          <Show when={hasRole("admin")}>
+            <Button onClick={() => setShowSettings(true)}>设置</Button>
+          </Show>
+          <Show when={hasRole("operator")}>
+            <Button variant="primary" onClick={() => setShow(true)}>注册项目</Button>
+          </Show>
+        </div>
       </div>
       <div class="mb-3">
         <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索 Compose…" />
@@ -267,6 +274,12 @@ export const ComposeListPage: Component = () => {
         open={show()}
         onClose={() => setShow(false)}
         onRegistered={() => { setShow(false); void store.refresh(); }}
+      />
+
+      <ComposeSettingsModal
+        open={showSettings()}
+        onClose={() => setShowSettings(false)}
+        onSaved={() => { setShowSettings(false); void store.refresh(); }}
       />
 
       <ViewCmdModal target={runTarget()} onClose={() => setRunTarget(null)} />

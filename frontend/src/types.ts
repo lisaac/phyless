@@ -85,7 +85,6 @@ export interface DockerServer {
   name: string;
   host: string;
   tls: boolean;
-  compose_dir: string;
   has_ca_pem: boolean;
   has_cert_pem: boolean;
   has_key_pem: boolean;

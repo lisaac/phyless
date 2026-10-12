@@ -12,6 +12,8 @@ export const PathPicker: Component<{
   onChange: (v: string) => void;
   placeholder?: string;
   files?: boolean;
+  // Shown first while the input is blank (e.g. the configured Compose directories).
+  roots?: string[];
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
 
@@ -36,6 +38,7 @@ export const PathPicker: Component<{
       .filter((e) => (e.is_dir || (props.files && /\.ya?ml$/i.test(e.name))) && e.name.toLowerCase().startsWith(filterPart().toLowerCase()))
       .slice(0, 30);
 
+  const roots = () => (props.value ? [] : props.roots ?? []);
   const pick = (entry: FileEntry) => {
     props.onChange(`${dirPart()}${entry.name}${entry.is_dir ? "/" : ""}`);
     if (!entry.is_dir) setOpen(false);
@@ -51,8 +54,20 @@ export const PathPicker: Component<{
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
       />
-      <Show when={open() && suggestions().length > 0}>
+      <Show when={open() && (roots().length > 0 || suggestions().length > 0)}>
         <div class="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900 shadow-2xl">
+          {/* Not the selected Docker host: with a remote daemon these are still the phyless machine's files. */}
+          <div class="border-b border-zinc-800 px-2.5 py-1 text-[11px] text-zinc-500">phyless 所在主机的文件（非远程 Docker 主机）</div>
+          <For each={roots()}>
+            {(dir, i) => (
+              <button
+                type="button"
+                class={`block w-full truncate px-2.5 py-1.5 text-left font-mono text-sm text-indigo-400 hover:bg-zinc-800 ${i() === roots().length - 1 ? "border-b border-zinc-700" : ""}`}
+                onMouseDown={(ev) => ev.preventDefault()}
+                onClick={() => props.onChange(dir.replace(/\/*$/, "/"))}
+              >📁 {dir}</button>
+            )}
+          </For>
           <For each={suggestions()}>
             {(e) => (
               <button

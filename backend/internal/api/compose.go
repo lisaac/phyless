@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -213,7 +214,7 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	canBuild := s.computeCanBuild(r.Context(), cfg.ComposeProjects)
-	out := mergeFilesystemCompose(mergeComposeProjects(cfg.ComposeProjects, groups), cfg)
+	out := mergeFilesystemCompose(mergeComposeProjects(cfg.ComposeProjects, groups), cfg.ComposeDirs)
 	byID := make(map[string]bool, len(cfg.ComposeProjects))
 	for i, p := range cfg.ComposeProjects {
 		byID[p.ID] = canBuild[i]
@@ -227,6 +228,22 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 }
 
 var composeFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"}
+
+// scanComposeDirectories scans every configured directory, dropping files
+// reached twice through overlapping roots.
+func scanComposeDirectories(roots []string) []models.ComposeProject {
+	var out []models.ComposeProject
+	seen := map[string]bool{}
+	for _, root := range roots {
+		for _, project := range scanComposeDirectory(root) {
+			if !seen[project.ID] {
+				seen[project.ID] = true
+				out = append(out, project)
+			}
+		}
+	}
+	return out
+}
 
 // ponytail: scan only the storage root and its direct children; deeper projects can be registered by file path.
 func scanComposeDirectory(root string) []models.ComposeProject {
@@ -262,13 +279,9 @@ func scanComposeDirectory(root string) []models.ComposeProject {
 	return projects
 }
 
-func mergeFilesystemCompose(out []ComposeInfo, cfg *store.Config) []ComposeInfo {
-	server, err := cfg.ActiveDockerServer()
-	if err != nil {
-		return out
-	}
+func mergeFilesystemCompose(out []ComposeInfo, dirs []string) []ComposeInfo {
 	// ponytail: compare paths directly; index them if storage grows to thousands of projects.
-	for _, disk := range scanComposeDirectory(server.ComposeDir) {
+	for _, disk := range scanComposeDirectories(dirs) {
 		duplicate := false
 		for _, existing := range out {
 			files := normalizeComposePaths(existing.BaseDir, existing.ComposeFile)
@@ -360,12 +373,7 @@ func (s *Server) handleCreateNewCompose(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to read Compose storage directory")
 		return
 	}
-	server, err := cfg.ActiveDockerServer()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	parent := server.ComposeDir
+	parent := cfg.ComposeDirs[0]
 	if input.ParentDir != "" {
 		parent = input.ParentDir
 	}
@@ -552,12 +560,9 @@ func (s *Server) resolveCompose(ctx context.Context, id string) (composeResoluti
 		if err != nil {
 			return composeResolution{}, &composeLookupError{status: http.StatusInternalServerError, message: "failed to read compose projects"}
 		}
-		server, err := cfg.ActiveDockerServer()
-		if err == nil {
-			for _, project := range scanComposeDirectory(server.ComposeDir) {
-				if project.ID == id {
-					return composeResolution{display: project, effective: project}, nil
-				}
+		for _, project := range scanComposeDirectories(cfg.ComposeDirs) {
+			if project.ID == id {
+				return composeResolution{display: project, effective: project}, nil
 			}
 		}
 		return composeResolution{}, &composeLookupError{status: http.StatusNotFound, message: "not found"}
@@ -1594,4 +1599,52 @@ func (s *Server) findCompose(ctx context.Context, id string) (models.ComposeProj
 		}
 	}
 	return models.ComposeProject{}, &composeLookupError{status: http.StatusNotFound, message: "not found"}
+}
+
+type composeSettings struct {
+	Dirs []string `json:"dirs"`
+}
+
+func (s *Server) handleGetComposeSettings(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.Read()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read Compose settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, composeSettings{Dirs: cfg.ComposeDirs})
+}
+
+func (s *Server) handlePutComposeSettings(w http.ResponseWriter, r *http.Request) {
+	var input composeSettings
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	var dirs []string
+	for _, dir := range input.Dirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		if !filepath.IsAbs(dir) || filepath.Clean(dir) == "/" {
+			writeError(w, http.StatusBadRequest, "Compose directories must be absolute paths other than /: "+dir)
+			return
+		}
+		if dir = filepath.Clean(dir); !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+	if len(dirs) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one Compose directory is required")
+		return
+	}
+	if err := s.store.Update(func(cfg *store.Config) error {
+		cfg.ComposeDirs = dirs
+		return nil
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save Compose settings")
+		return
+	}
+	s.auditFromCtx(r, "settings.compose", strings.Join(dirs, ","), "ok")
+	writeJSON(w, http.StatusOK, composeSettings{Dirs: dirs})
 }

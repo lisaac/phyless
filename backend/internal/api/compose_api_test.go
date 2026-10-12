@@ -143,7 +143,7 @@ func TestComposeStorageCreatesProjectWithoutOverwriting(t *testing.T) {
 	server, handler, _, tokens := routeTestServer(t)
 	root := filepath.Join(t.TempDir(), "stacks")
 	if err := server.store.Update(func(cfg *store.Config) error {
-		cfg.DockerServers[0].ComposeDir = root
+		cfg.ComposeDirs = []string{root}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -217,7 +217,8 @@ func TestComposeDirectoryDiscoveryDeduplicatesRegisteredFiles(t *testing.T) {
 	}
 	server := newComposeDiscoveryServer(t, registered, nil)
 	if err := server.store.Update(func(cfg *store.Config) error {
-		cfg.DockerServers[0].ComposeDir = root
+		// Overlapping roots must not list the same file twice.
+		cfg.ComposeDirs = []string{root, filepath.Join(root, "found")}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

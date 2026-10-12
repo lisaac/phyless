@@ -30,3 +30,13 @@ it("navigates folders without suspending the page and selects a YAML file", asyn
   expect(value()).toBe("/srv/compose.yaml");
   expect(screen.queryByRole("button", { name: /notes.txt/ })).toBeNull();
 });
+
+it("lists roots first only while the path is blank", async () => {
+  mock.get.mockResolvedValue([]);
+  const [value, setValue] = createSignal("");
+  render(() => <PathPicker value={value()} onChange={setValue} roots={["/srv", "/opt/stacks"]} />);
+  fireEvent.focus(screen.getByRole("textbox"));
+  fireEvent.click(await screen.findByText("📁 /opt/stacks"));
+  expect(value()).toBe("/opt/stacks/");
+  expect(screen.queryByText("📁 /srv")).toBeNull();
+});
