@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseImageRef, parseWWWAuthenticate, layerBlobUrl, registryResponseError, resolveImage, registryCredsHost, credsFor, selectPlatform, parsePlatform as parsePlatformAlias } from "./registryPull";
+import { parseImageRef, parseWWWAuthenticate, layerBlobUrl, registryResponseError, resolveImage, registryCredsHost, credsFor, selectPlatform, parsePlatform as parsePlatformAlias, sha256Fallback } from "./registryPull";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -236,5 +236,14 @@ describe("explicit platforms", () => {
     const v6only = [{ digest: "a", platform: { os: "linux", architecture: "arm", variant: "v6" } }];
     expect(selectPlatform(v6only, { os: "linux", architecture: "arm", variant: "v7" }, true)).toBeUndefined();
     expect(selectPlatform(v6only, { os: "linux", architecture: "arm", variant: "v7" })?.digest).toBe("a");
+  });
+});
+
+describe("sha256Fallback", () => {
+  it("matches WebCrypto across block boundaries", async () => {
+    for (const n of [0, 1, 55, 56, 63, 64, 65, 1000]) {
+      const bytes = Uint8Array.from({ length: n }, (_, i) => (i * 31) & 255);
+      expect(sha256Fallback(bytes)).toEqual(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+    }
   });
 });

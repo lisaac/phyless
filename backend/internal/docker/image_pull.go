@@ -279,7 +279,9 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 	expected, err := validateRemoteImage(img, platform)
 	if err != nil {
 		transport.CloseIdleConnections()
-		return nil, safePullError("image validation failed", err)
+		// Registry/proxy errors are already redacted inside; the rest are our
+		// own fixed messages and tell the user why the image was refused.
+		return nil, fmt.Errorf("image validation failed: %w", err)
 	}
 	// The selected config digest is known before any layer is requested. If the
 	// daemon already has this exact tag/config, return a normal progress stream
@@ -470,7 +472,7 @@ func (e expectedImage) matches(id string) bool {
 func validateRemoteImage(img v1.Image, platform v1.Platform) (expectedImage, error) {
 	manifest, err := img.Manifest()
 	if err != nil {
-		return expectedImage{}, err
+		return expectedImage{}, safePullError("", err)
 	}
 	if manifest == nil || manifest.Config.Size > maxMetadataSize {
 		return expectedImage{}, errors.New("image config is too large")
@@ -491,7 +493,7 @@ func validateRemoteImage(img v1.Image, platform v1.Platform) (expectedImage, err
 	}
 	rawConfig, err := img.RawConfigFile()
 	if err != nil {
-		return expectedImage{}, err
+		return expectedImage{}, safePullError("image config download failed", err)
 	}
 	if int64(len(rawConfig)) != manifest.Config.Size {
 		return expectedImage{}, errors.New("image config size mismatch")
@@ -505,6 +507,11 @@ func validateRemoteImage(img v1.Image, platform v1.Platform) (expectedImage, err
 		return expectedImage{}, errors.New("invalid image config")
 	}
 	actualPlatform := configFile.Platform()
+	// Like docker pull, a config that omits variant (common on arm/v7 builds)
+	// is accepted; the index entry already chose the variant.
+	if actualPlatform != nil && actualPlatform.Variant == "" {
+		actualPlatform.Variant = platform.Variant
+	}
 	if actualPlatform == nil || !actualPlatform.Satisfies(platform) {
 		return expectedImage{}, errors.New("image platform does not match requested platform")
 	}
@@ -521,7 +528,7 @@ func validateRemoteImage(img v1.Image, platform v1.Platform) (expectedImage, err
 
 func supportedLayerMediaType(mt types.MediaType) bool {
 	switch mt {
-	case types.DockerLayer, types.DockerUncompressedLayer, types.OCILayer, types.OCIUncompressedLayer:
+	case types.DockerLayer, types.DockerUncompressedLayer, types.OCILayer, types.OCILayerZStd, types.OCIUncompressedLayer:
 		return true
 	default:
 		return false
@@ -900,7 +907,7 @@ func verifyLoaded(ctx context.Context, apiClient dockerclient.APIClient, tag nam
 	if !strings.EqualFold(loadedPlatform.Architecture, platform.Architecture) {
 		return errors.New("loaded image architecture does not match requested platform")
 	}
-	if platform.Variant != "" && !strings.EqualFold(loadedPlatform.Variant, platform.Variant) {
+	if platform.Variant != "" && loaded.Variant != "" && !strings.EqualFold(loadedPlatform.Variant, platform.Variant) {
 		return errors.New("loaded image variant does not match requested platform")
 	}
 	return nil

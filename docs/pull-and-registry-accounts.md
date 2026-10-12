@@ -48,6 +48,16 @@ Docker Hub API（包括搜索、标签和 `/v2/auth/token` 登录）按**来源 
 - **手动指定平台时严格匹配**，两种代理都不回退。浏览器端识别 Docker 的平台别名（`x86_64`、`aarch64`、`arm` = `arm/v7` 等）。
 - 浏览器路径拿不到 daemon 平台时直接报错，不会默认按 amd64 拉取。
 
+## 镜像格式与兼容性
+
+两种代理都把镜像组装成 `docker load` 的 tar 导入，规则保持一致：
+
+- 镜像层：gzip、zstd、未压缩都原样透传，由 daemon 解压（zstd 需 Docker 23+，与 `docker pull` 相同）；foreign / non-distributable 层拒绝。
+- 平台：只比对 config 的 OS 与架构；config 未写 `variant`（常见于 arm/v7 构建）时不判为不符，与 `docker pull` 一致。
+- 服务端代理校验失败会给出具体原因（如 `unsupported image layer media type …`）；涉及 registry / 代理地址的网络错误仍统一脱敏为 `proxied image pull failed`。
+- 浏览器路径用 SHA-256 校验 manifest。`crypto.subtle` 只在 HTTPS 或 localhost 下可用；以 `http://局域网IP` 打开面板时自动改用内置实现。
+- 已实测：Docker Hub、GHCR、lscr.io、Quay、GCR、registry.k8s.io、MCR、ECR Public、GitLab、Elastic、Codeberg、Chainguard、NVIDIA NGC，平台 amd64 / arm64 / arm/v7。镜像本身没有 arm/v7 构建时报「镜像不包含目标平台」。
+
 ## 仓库账号
 
 两类账号，都在拉取对话框里按 registry 分组显示：每个 registry 一组单选，可以选「不使用账号（匿名）」或其中一个账号。同一 registry 可以有多个账号，由你选用哪一个。
@@ -72,4 +82,5 @@ Worker 源码在 `cloudflare-worker/registry-proxy.js`，部署和白名单配�
 
 - 只处理 `GET` / `HEAD` / `OPTIONS`，以及发往 `https://hub.docker.com/v2/auth/token` 的 `POST`（≤4 KiB，不跟随重定向）。
 - 白名单需要显式包含 `hub.docker.com`：`*.docker.io` 并不匹配它。
+- 镜像层会被重定向到各仓库的 CDN／对象存储（Docker Hub 现为 `production.cloudfront.docker.com`，需 `*.docker.com`），每一跳都要在白名单内；各仓库实测域名见 `cloudflare-worker/README.md`。被拦截时 Worker 返回 403 并指出缺少的域名。
 - 前端代理地址默认预填 `https://registry-proxy.phyless.com`。

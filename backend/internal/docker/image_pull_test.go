@@ -707,6 +707,10 @@ func TestValidateRemoteImageChecksPlatformAndConfigDigest(t *testing.T) {
 	if _, err := validateRemoteImage(img, v1.Platform{OS: "linux", Architecture: "arm64"}); err == nil || !strings.Contains(err.Error(), "platform") {
 		t.Fatalf("platform mismatch error = %v", err)
 	}
+	// A config without variant is accepted for a variant-specific pick, as docker pull does.
+	if _, err := validateRemoteImage(img, v1.Platform{OS: "linux", Architecture: "amd64", Variant: "v2"}); err != nil {
+		t.Fatalf("config without variant rejected: %v", err)
+	}
 	bad := *img
 	badManifest := *img.manifest
 	badManifest.Config.Digest = v1.Hash{Algorithm: "sha256", Hex: strings.Repeat("a", 64)}
@@ -760,6 +764,22 @@ func TestVerifyLoadedRequiresNormalizedPlatformMetadata(t *testing.T) {
 	}}
 	if err := verifyLoaded(context.Background(), api, tag, expectedImage{config: expected}, platform); err != nil {
 		t.Fatalf("normalized equivalent platform rejected: %v", err)
+	}
+	// arm/v6 picked from an index whose config omits variant (Docker would
+	// normalize that to v7) must not be rejected after load.
+	armNoVariant := base
+	armNoVariant.Architecture, armNoVariant.Variant = "arm", ""
+	api = &pipelineAPIClient{inspect: func(_ context.Context, _ string) (image.InspectResponse, error) {
+		return armNoVariant, nil
+	}}
+	if err := verifyLoaded(context.Background(), api, tag, expectedImage{config: expected}, v1.Platform{OS: "linux", Architecture: "arm", Variant: "v6"}); err != nil {
+		t.Fatalf("loaded image without variant rejected: %v", err)
+	}
+}
+
+func TestSupportedLayerMediaTypeAcceptsZstd(t *testing.T) {
+	if !supportedLayerMediaType(types.OCILayerZStd) || supportedLayerMediaType(types.DockerForeignLayer) {
+		t.Fatal("zstd layers must pass; foreign layers must not")
 	}
 }
 

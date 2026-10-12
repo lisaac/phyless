@@ -72,7 +72,7 @@ export default {
           return jsonError(config, origin, 400, 'Target must be HTTP(S) without URL credentials.');
         }
         if (!config.allowAnyUpstream && !isAllowedHost(target.hostname, config.upstreamAllowlist)) {
-          return jsonError(config, origin, 403, 'Target is not allowed by the upstream policy.');
+          return jsonError(config, origin, 403, `Upstream host ${target.hostname} is not in UPSTREAM_ALLOWLIST.`);
         }
         upstream = await fetch(target.toString(), {
           method: request.method,

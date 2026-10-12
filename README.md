@@ -351,14 +351,16 @@ Worker 源码是 [`cloudflare-worker/registry-proxy.js`](cloudflare-worker/regis
 
 ```text
 # Docker Hub + GHCR
-registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io,hub.docker.com,ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
+registry-1.docker.io,auth.docker.io,hub.docker.com,*.docker.io,*.docker.com,ghcr.io,lscr.io,*.githubusercontent.com
 
 # 仅 Docker Hub
-registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io,hub.docker.com
+registry-1.docker.io,auth.docker.io,hub.docker.com,*.docker.io,*.docker.com
 
 # 仅 GHCR
-ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
+ghcr.io,lscr.io,*.githubusercontent.com
 ```
+
+Quay、GCR、registry.k8s.io、MCR、ECR Public、GitLab 等其他仓库的镜像层会重定向到各自的 CDN 域名，取值见 [cloudflare-worker/README.md](cloudflare-worker/README.md#常用白名单)。
 
 完整变量说明见 [cloudflare-worker/README.md](cloudflare-worker/README.md)。
 

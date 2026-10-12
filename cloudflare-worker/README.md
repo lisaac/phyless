@@ -24,7 +24,7 @@ wrangler deploy registry-proxy.js --name phyless-registry-proxy --compatibility-
 | 变量 | 说明 | 示例 |
 | --- | --- | --- |
 | `ALLOWED_ORIGINS` | 允许使用代理的请求 Origin，多个值用逗号分隔。为空时反射任意 Origin，但仍要求请求带 Origin，除非设置了 `ALLOW_MISSING_ORIGIN`。 | `https://phyless.example,http://localhost:8080` |
-| `UPSTREAM_ALLOWLIST` | 允许访问的注册表主机名，多个值用逗号分隔。`*.suffix` 匹配子域名，`*` 表示允许任意上游。 | `registry-1.docker.io,auth.docker.io,*.docker.io,hub.docker.com,ghcr.io,*.githubusercontent.com,production.cloudflare.docker.com` |
+| `UPSTREAM_ALLOWLIST` | 允许访问的注册表主机名，多个值用逗号分隔。`*.suffix` 匹配子域名，`*` 表示允许任意上游。 | `registry-1.docker.io,auth.docker.io,hub.docker.com,*.docker.io,*.docker.com,ghcr.io,*.githubusercontent.com` |
 | `ALLOW_ANY_UPSTREAMS` | 设置为 `true` 可跳过上游白名单，建议使用明确的白名单。 | `false` |
 | `ALLOW_MISSING_ORIGIN` | 设置为 `true` 可接受不带 Origin 的请求（例如 curl）。默认关闭。 | `false` |
 
@@ -32,17 +32,24 @@ wrangler deploy registry-proxy.js --name phyless-registry-proxy --compatibility-
 
 ## 常用白名单
 
-Docker Hub：
+镜像层常被重定向到 CDN／对象存储，这些域名也要放行。下表为实测的拉取全链路域名，按需拼接（逗号分隔）：
 
-```
-registry-1.docker.io,auth.docker.io,production.cloudflare.docker.com,*.docker.io,hub.docker.com
-```
+| 仓库 | UPSTREAM_ALLOWLIST |
+| --- | --- |
+| Docker Hub | `registry-1.docker.io,auth.docker.io,hub.docker.com,*.docker.io,*.docker.com` |
+| GHCR / lscr.io | `ghcr.io,lscr.io,*.githubusercontent.com` |
+| Quay | `quay.io,*.quay.io` |
+| GCR / Artifact Registry | `gcr.io,*.gcr.io,*.pkg.dev,storage.googleapis.com` |
+| registry.k8s.io | `registry.k8s.io,*.registry.k8s.io,*.pkg.dev,*.amazonaws.com` |
+| MCR | `mcr.microsoft.com,*.mcr.microsoft.com` |
+| ECR Public | `public.ecr.aws,*.cloudfront.net` |
+| GitLab | `registry.gitlab.com,gitlab.com,*.gitlab-static.net` |
+| Elastic | `docker.elastic.co,*.elastic.co,*.r2.cloudflarestorage.com` |
+| Chainguard | `cgr.dev,*.r2.cloudflarestorage.com` |
+| NVIDIA NGC | `nvcr.io,*.nvcr.io` |
+| Codeberg / Gitea / Forgejo | 仓库自身域名，如 `codeberg.org` |
 
-GHCR：
-
-```
-ghcr.io,*.githubusercontent.com,pkg-containers.githubusercontent.com
-```
+被拦截时 Worker 返回 403 并指出缺少的域名（`Upstream host … is not in UPSTREAM_ALLOWLIST.`），把它加进白名单即可。
 
 ## 安全说明
 
