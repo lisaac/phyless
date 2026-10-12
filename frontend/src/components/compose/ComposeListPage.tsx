@@ -24,6 +24,8 @@ import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 
+// Lucide "hammer".
+const BUILD_ICON = "m15 12-8.5 8.5c-.83.83-2.17.83-3 0a2.12 2.12 0 0 1 0-3L12 9M17.64 15 22 10.64M20.91 11.7l-1.25-1.25c-.6-.6-.93-1.4-.93-2.25v-.86L16.01 4.6a5.56 5.56 0 0 0-3.94-1.64H9l.92.82A6.18 6.18 0 0 1 12 8.4v1.56l2 2h2.47l2.26 1.91";
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
 
 export const ComposeListPage: Component = () => {
@@ -134,8 +136,9 @@ export const ComposeListPage: Component = () => {
                 if (state() === "partial") return "text-sky-400";
                 return "";
               };
+              const fromDir = () => p.discovery_source === "directory";
               const rowBg = () => p.discovered
-                ? "bg-violet-500/[0.09] hover:bg-violet-500/[0.15]"
+                ? fromDir() ? "bg-teal-500/[0.07] hover:bg-teal-500/[0.12]" : "bg-violet-500/[0.09] hover:bg-violet-500/[0.15]"
                 : state() === "running"
                 ? "bg-emerald-500/[0.08] hover:bg-emerald-500/[0.13]"
                 : state() === "partial"
@@ -151,7 +154,9 @@ export const ComposeListPage: Component = () => {
                     <IBtn title={available().restart ? "docker compose restart" : "没有运行中的容器可重启"} disabled={!available().restart} loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺</IBtn>
                     <IBtn title={available().stop ? "docker compose stop" : "没有运行中的容器可停止"} disabled={!available().stop} loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■</IBtn>
                     <span class="mx-0.5 text-zinc-400">│</span>
-                    <IBtn title="Pull/Build：拉取镜像并构建；不执行 down/up" loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull", canBuild: p.can_build })}>↓</IBtn>
+                    <IBtn title={p.can_build ? "Build：构建镜像并拉取其余镜像；不执行 down/up" : "Pull：拉取镜像；不执行 down/up"} loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull", canBuild: p.can_build })}>
+                      <Show when={p.can_build} fallback="↓"><Ico path={BUILD_ICON} /></Show>
+                    </IBtn>
                     <IBtn title="Update：Pull/Build → down → up" loading={isRunning(p.id, "update")} onClick={() => request({ id: p.id, name: p.name, verb: "update", canBuild: p.can_build })}>↑</IBtn>
                     <span class="mx-0.5 text-zinc-400">│</span>
                   </Show>
@@ -195,7 +200,14 @@ export const ComposeListPage: Component = () => {
                               onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                             >{p.name}</a>
                             <Show when={p.discovered}>
-                              <span class="bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300" title={p.discovery_source === "directory" ? "在当前服务器的 Compose 存储目录中发现 YAML 文件；尚未手动注册，点击加号可注册" : "根据 Docker 容器的 Compose 标签发现；尚未手动注册，点击加号可注册"}>自动发现</span>
+                              <Show when={fromDir()} fallback={
+                                <span class="border border-violet-500/40 bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300" title="根据运行中 Docker 容器的 Compose 标签发现；尚未手动注册，点击加号可注册">运行中发现</span>
+                              }>
+                                <span class="border border-dashed border-teal-500/50 px-1.5 py-0.5 text-[10px] text-teal-400" title="在 Compose 设置的搜索目录中发现 YAML 文件；尚未部署或注册，点击加号可注册">目录中发现</span>
+                              </Show>
+                            </Show>
+                            <Show when={p.can_build}>
+                              <span class="bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-400" title="Compose 文件中有服务声明了 build">build</span>
                             </Show>
                             <span class={`text-xs sm:hidden ${statusColor() || "text-zinc-500"}`}>
                               {p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}

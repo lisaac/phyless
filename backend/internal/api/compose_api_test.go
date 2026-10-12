@@ -202,12 +202,12 @@ func TestComposeStorageCreatesProjectWithoutOverwriting(t *testing.T) {
 
 func TestComposeDirectoryDiscoveryDeduplicatesRegisteredFiles(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"registered", "found"} {
+	for name, content := range map[string]string{"registered": "services: {}\n", "found": "services:\n  app:\n    build: .\n"} {
 		dir := filepath.Join(root, name)
 		if err := os.Mkdir(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services: {}\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,6 +216,11 @@ func TestComposeDirectoryDiscoveryDeduplicatesRegisteredFiles(t *testing.T) {
 		ComposeFile: filepath.Join(root, "registered", "compose.yaml"),
 	}
 	server := newComposeDiscoveryServer(t, registered, nil)
+	runtime, err := dockercompose.NewRuntime(server.docker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.composeRuntime = runtime
 	if err := server.store.Update(func(cfg *store.Config) error {
 		// Overlapping roots must not list the same file twice.
 		cfg.ComposeDirs = []string{root, filepath.Join(root, "found")}
@@ -241,7 +246,7 @@ func TestComposeDirectoryDiscoveryDeduplicatesRegisteredFiles(t *testing.T) {
 			found = project
 		}
 	}
-	if !found.Discovered || found.DiscoverySource != "directory" || !strings.HasPrefix(found.ID, "disk:") || strings.Contains(found.ID, "/") {
+	if !found.Discovered || found.DiscoverySource != "directory" || !found.CanBuild || !strings.HasPrefix(found.ID, "disk:") || strings.Contains(found.ID, "/") {
 		t.Fatalf("discovered project = %+v", found)
 	}
 	resolved, err := server.resolveCompose(context.Background(), found.ID)

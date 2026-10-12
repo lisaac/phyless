@@ -213,21 +213,31 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canBuild := s.computeCanBuild(r.Context(), cfg.ComposeProjects)
 	out := mergeFilesystemCompose(mergeComposeProjects(cfg.ComposeProjects, groups), cfg.ComposeDirs)
-	byID := make(map[string]bool, len(cfg.ComposeProjects))
-	for i, p := range cfg.ComposeProjects {
-		byID[p.ID] = canBuild[i]
-	}
+	// Discovered rows are parsed too so the list can mark build projects; skip
+	// ones whose compose file this process can't see (e.g. a remote daemon's
+	// labels) instead of failing and logging on every poll.
+	var checked []models.ComposeProject
+	var rows []int
 	for i := range out {
-		if !out[i].Discovered {
-			out[i].CanBuild = byID[out[i].ID]
+		if files := normalizeComposePaths(out[i].BaseDir, out[i].ComposeFile); out[i].Discovered && (len(files) == 0 || !fileExists(files[0])) {
+			continue
 		}
+		checked = append(checked, out[i].ComposeProject)
+		rows = append(rows, i)
+	}
+	for j, canBuild := range s.computeCanBuild(r.Context(), checked) {
+		out[rows[j]].CanBuild = canBuild
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 var composeFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
 
 // scanComposeDirectories scans every configured directory, dropping files
 // reached twice through overlapping roots.
