@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { createStore, unwrap } from "solid-js/store";
 import { getToken, reportBackendDown, setToken } from "../api/client";
+import { awaitHelper, awaitRestart, helperStops, isHelperEvent, STOPPED_NOTE } from "../api/selfRestart";
 import type { RegistryCreds } from "../api/registryPull";
 import { runBrowserPull, runBrowserPullCompose, runBrowserCreate, runBrowserUpgrade, runComposeUpdate, type BrowserPullCallbacks } from "./browserPull";
 import { runUpdateCheck } from "./updateCheck";
@@ -199,7 +200,7 @@ function taskDetails(spec: TaskSpec): TaskDetail[] {
     ? spec.body as Record<string, unknown> : {};
   const facts: Record<string, unknown> = { ...body, ...spec.meta };
   for (const [key, raw] of Object.entries(facts)) {
-    if (key === "type" || key === "verb" || key === "action" || key === "containerId" || key === "composeId" || key === "checkIds") continue;
+    if (key === "type" || key === "verb" || key === "action" || key === "containerId" || key === "composeId" || key === "checkIds" || key === "self") continue;
     const value = safeDetailValue(key, raw);
     if (value !== undefined) details.push({ label: DETAIL_LABELS[key] ?? key, value });
   }
@@ -427,7 +428,20 @@ function start(id: string) {
   let buf = "";
   let readLen = 0;
   let err = "";
-  const fail = (m: string) => { if (!err) err = m; };
+  // Set once phyless hands the operation to its helper container: from then
+  // on the helper's result settles the task, whatever the stream does.
+  let handedOff = false;
+  const note = (m: string) => setTasks("list", (x) => x.id === id, "notes", (n) => [...n, m.slice(0, MAX_ERROR)].slice(-MAX_NOTES));
+  const fail = (m: string) => { if (handedOff) note(`✕ ${m}`); else if (!err) err = m; };
+  // Cancelling the task stops the watch too (onabort below).
+  const watch = new AbortController();
+  const handOff = (stops: boolean) => {
+    handedOff = true;
+    void awaitHelper(note, watch.signal, stops).then(
+      () => settle(id, "done"),
+      (e) => settle(id, "error", e instanceof Error ? e.message : String(e)),
+    ).finally(() => req.abort()); // the stream may hang behind a proxy once phyless is gone
+  };
 
   const applyLine = (line: string) => {
     if (line.length > MAX_PROGRESS_LINE) { fail("进度行过大"); return; }
@@ -440,6 +454,7 @@ function start(id: string) {
     // inspect them before status/id so a terminal error cannot look complete.
     const failure = eventError(evt);
     if (failure) { fail(failure); return; }
+    if (isHelperEvent(evt) && !handedOff) handOff(helperStops(evt));
     if (evt.id && typeof evt.status === "string") {
       const lid = String(evt.id);
       if (!layerMap.has(lid) && layerMap.size >= MAX_LAYERS) {
@@ -509,6 +524,7 @@ function start(id: string) {
       settle(id, "error", "未授权");
       return;
     }
+    if (req.status >= 500 && !isJSON() && selfDisconnected()) return;
     if (req.status < 200 || req.status >= 300) {
       settle(id, "error", httpError(req.status, req.responseText));
       return;
@@ -521,9 +537,26 @@ function start(id: string) {
     }
     if (!consumeResponse()) return;
     if (buf) applyLine(buf);
+    if (handedOff) return;
     settle(id, err ? "error" : "done", err);
   };
-  req.onerror = () => settle(id, "error", reportBackendDown().message);
-  req.onabort = () => settle(id, "cancelled", "已取消");
+  // The user confirmed acting on phyless's own container: losing the
+  // connection (directly, or as a proxy's non-JSON 5xx) is the expected
+  // outcome, not a failure.
+  const selfDisconnected = () => {
+    if (!t.meta?.self) return false;
+    if (t.meta.verb === "restart") {
+      void awaitRestart(note, watch.signal).then(() => settle(id, "done"), (e) => settle(id, "error", e instanceof Error ? e.message : String(e)));
+    } else {
+      note(STOPPED_NOTE);
+      settle(id, "done");
+    }
+    return true;
+  };
+  req.onerror = () => {
+    if (handedOff || selfDisconnected()) return;
+    settle(id, "error", reportBackendDown().message);
+  };
+  req.onabort = () => { watch.abort(); settle(id, "cancelled", "已取消"); };
   req.send(payload);
 }

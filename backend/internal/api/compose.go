@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"phyless/backend/internal/docker/self"
 	"regexp"
 	"slices"
 	"sort"
@@ -49,6 +50,7 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Post("/api/compose/pull", s.handleComposePull)
 	r.Post("/api/compose/build", s.handleComposeBuild)
 	r.Post("/api/compose/restart", s.handleComposeRestart)
+	r.Post("/api/compose/redeploy", s.handleComposeRedeploy)
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
 	r.Delete("/api/compose/files", s.handleComposeDeleteFile)
 	r.Post("/api/compose/files/rename", s.handleComposeRenameFile)
@@ -148,6 +150,9 @@ type ComposeInfo struct {
 	// CanBuild is true only when the project's compose file is readable and at
 	// least one service declares a build. The list's Build button keys off it.
 	CanBuild bool `json:"can_build"`
+	// Self marks the project running phyless itself; stop/down then need a
+	// confirmation and pause is refused.
+	Self bool `json:"self,omitempty"`
 }
 
 // discoverProjects groups all containers by their compose project label.
@@ -228,6 +233,11 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 	}
 	for j, canBuild := range s.computeCanBuild(r.Context(), checked) {
 		out[rows[j]].CanBuild = canBuild
+	}
+	if sid := s.selfID(r.Context()); sid != "" {
+		for i := range out {
+			out[i].Self = out[i].ProjectName != "" && slices.ContainsFunc(groups[out[i].ProjectName], func(c container.Summary) bool { return c.ID == sid })
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1000,6 +1010,12 @@ func (s *Server) handleComposePull(w http.ResponseWriter, r *http.Request) {
 	s.runComposeOperation(w, r, "pull")
 }
 
+// handleComposeRedeploy is down + up in one request, so a project that
+// contains phyless itself can be handed to the helper as a whole.
+func (s *Server) handleComposeRedeploy(w http.ResponseWriter, r *http.Request) {
+	s.runComposeOperation(w, r, "redeploy")
+}
+
 func (s *Server) handleComposeRestart(w http.ResponseWriter, r *http.Request) {
 	s.runComposeOperation(w, r, "restart")
 }
@@ -1028,114 +1044,180 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 		s.auditFromCtx(r, "compose."+operation, resolved.display.Name, composeOperationResult(finalErr))
 		return
 	}
-	{
-		var project *composetypes.Project
-		project, err = s.loadResolvedComposeProject(ctx, resolved)
-		if err != nil && composeCanUseRunningFallback(operation, resolved, err) {
-			// Stop/down/restart/logs can reconstruct the project from trusted
-			// Compose labels. Keep Up/Pull strict: they need the file and must
-			// never silently deploy a different configuration.
-			err = nil
-			project = nil
+	project, projectName, err := s.loadComposeForOperation(ctx, resolved, operation)
+	handedOff := false
+	if err == nil {
+		release, acquired := tryComposeOperation(projectName)
+		if !acquired {
+			writeError(w, http.StatusConflict, fmt.Sprintf("compose project %q already has an active operation", projectName))
+			s.auditFromCtx(r, "compose."+operation, projectName, "failed")
+			return
 		}
-		projectName := resolved.effective.Name
-		if project != nil {
-			projectName = project.Name
-		}
-		if resolved.running && resolved.effective.Name != "" {
-			projectName = resolved.effective.Name
-		}
-		var release func()
-		if err == nil {
-			var acquired bool
-			release, acquired = tryComposeOperation(projectName)
-			if !acquired {
-				writeError(w, http.StatusConflict, fmt.Sprintf("compose project %q already has an active operation", projectName))
-				s.auditFromCtx(r, "compose."+operation, projectName, "failed")
-				return
-			}
-			defer release()
-		}
-		if err == nil {
-			err = validateComposeOperation(ctx, operation, project)
-		}
-		if err == nil {
-			service, serviceErr := s.composeRuntime.NewService(ctx, request)
-			err = serviceErr
-			if err == nil {
-				switch operation {
-				case "up":
-					if project == nil {
-						err = fmt.Errorf("compose up requires a readable project file")
-						break
-					}
-					if phyDocker.HasPullProxy(ctx) {
-						if err = s.prePullBuildBases(ctx, project, request.AuthConfigs, options.Platform, output); err != nil {
-							break
-						}
-					}
-					applyComposePullPolicy(project, options.PullPolicy)
-					err = service.Compose().Up(ctx, project, composeapi.UpOptions{
-						Create: composeapi.CreateOptions{
-							Build: &composeapi.BuildOptions{
-								Deps:     true,
-								Quiet:    true,
-								Progress: "quiet",
-								Out:      output,
-							},
-							Recreate:             composeapi.RecreateDiverged,
-							RecreateDependencies: composeapi.RecreateDiverged,
-							Inherit:              true,
-						},
-						Start: composeapi.StartOptions{Project: project},
-					})
-				case "stop":
-					err = service.Compose().Stop(ctx, projectName, composeapi.StopOptions{Project: project})
-				case "pause":
-					err = service.Compose().Pause(ctx, projectName, composeapi.PauseOptions{Project: project})
-				case "down":
-					err = service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project})
-				case "build":
-					if project == nil {
-						err = fmt.Errorf("compose build requires a readable project file")
-						break
-					}
-					if phyDocker.HasPullProxy(ctx) {
-						if err = s.prePullBuildBases(ctx, project, request.AuthConfigs, options.Platform, output); err != nil {
-							break
-						}
-					}
-					err = service.Compose().Build(ctx, project, composeapi.BuildOptions{
-						Progress: "plain",
-						Out:      output,
-					})
-				case "pull":
-					if project == nil {
-						err = fmt.Errorf("compose pull requires a readable project file")
-						break
-					}
-					// ponytail: Compose v2.40.3 appends build fallbacks from concurrent pull
-					// goroutines without a lock. Keep this one operation serial until
-					// an upstream release fixes that race; Up retains normal parallelism.
-					service.MaxConcurrency(1)
-					// Build services are handled by the follow-up build step (see
-					// runComposeUpdate); pulling their image tag here is meaningless
-					// and unsupported through the pull proxy.
-					err = service.Compose().Pull(ctx, project, composeapi.PullOptions{IgnoreBuildable: true})
-				case "restart":
-					err = service.Compose().Restart(ctx, projectName, composeapi.RestartOptions{Project: project})
-				default:
-					err = fmt.Errorf("unsupported compose operation %q", operation)
-				}
-			}
+		defer release()
+		err = validateComposeOperation(ctx, operation, project)
+	}
+	if err == nil {
+		if selfID := s.composeSelf(ctx, projectName, operation); selfID != "" {
+			handedOff = true
+			err = s.composeHandoff(ctx, w, output, selfID, operation, r.URL.Query().Get("id"), auditUser(r), project, request, options)
+		} else {
+			err = s.composeExec(ctx, operation, project, projectName, request, options, output)
 		}
 	}
 	finalErr := finishComposeOperation(w, output, ctx, err)
+	if handedOff && finalErr == nil {
+		return // the helper audits the outcome
+	}
 	auditTarget := resolved.display.Name
 	if auditTarget == "" {
 		auditTarget = resolved.effective.Name
 	}
 	s.auditFromCtx(r, "compose."+operation, auditTarget, composeOperationResult(finalErr))
+}
+
+// loadComposeForOperation loads the project file and settles the Compose
+// project name an operation acts on.
+func (s *Server) loadComposeForOperation(ctx context.Context, resolved composeResolution, operation string) (*composetypes.Project, string, error) {
+	project, err := s.loadResolvedComposeProject(ctx, resolved)
+	if err != nil && composeCanUseRunningFallback(operation, resolved, err) {
+		// Stop/down/restart/logs can reconstruct the project from trusted
+		// Compose labels. Keep Up/Pull strict: they need the file and must
+		// never silently deploy a different configuration.
+		err = nil
+		project = nil
+	}
+	projectName := resolved.effective.Name
+	if project != nil {
+		projectName = project.Name
+	}
+	if resolved.running && resolved.effective.Name != "" {
+		projectName = resolved.effective.Name
+	}
+	return project, projectName, err
+}
+
+// composeExec runs one Compose operation in this process.
+func (s *Server) composeExec(ctx context.Context, operation string, project *composetypes.Project, projectName string, request dockercompose.ServiceOptions, options requestPullOptions, output io.Writer) error {
+	service, err := s.composeRuntime.NewService(ctx, request)
+	if err != nil {
+		return err
+	}
+	switch operation {
+	case "up", "redeploy":
+		if project == nil {
+			return fmt.Errorf("compose %s requires a readable project file", operation)
+		}
+		if phyDocker.HasPullProxy(ctx) {
+			if err := s.prePullBuildBases(ctx, project, request.AuthConfigs, options.Platform, output); err != nil {
+				return err
+			}
+		}
+		if operation == "redeploy" {
+			if err := service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project}); err != nil {
+				return err
+			}
+		}
+		applyComposePullPolicy(project, options.PullPolicy)
+		return service.Compose().Up(ctx, project, composeapi.UpOptions{
+			Create: composeapi.CreateOptions{
+				Build: &composeapi.BuildOptions{
+					Deps:     true,
+					Quiet:    true,
+					Progress: "quiet",
+					Out:      output,
+				},
+				Recreate:             composeapi.RecreateDiverged,
+				RecreateDependencies: composeapi.RecreateDiverged,
+				Inherit:              true,
+			},
+			Start: composeapi.StartOptions{Project: project},
+		})
+	case "stop":
+		return service.Compose().Stop(ctx, projectName, composeapi.StopOptions{Project: project})
+	case "pause":
+		return service.Compose().Pause(ctx, projectName, composeapi.PauseOptions{Project: project})
+	case "down":
+		return service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project})
+	case "build":
+		if project == nil {
+			return fmt.Errorf("compose build requires a readable project file")
+		}
+		if phyDocker.HasPullProxy(ctx) {
+			if err := s.prePullBuildBases(ctx, project, request.AuthConfigs, options.Platform, output); err != nil {
+				return err
+			}
+		}
+		return service.Compose().Build(ctx, project, composeapi.BuildOptions{
+			Progress: "plain",
+			Out:      output,
+		})
+	case "pull":
+		if project == nil {
+			return fmt.Errorf("compose pull requires a readable project file")
+		}
+		// ponytail: Compose v2.40.3 appends build fallbacks from concurrent pull
+		// goroutines without a lock. Keep this one operation serial until
+		// an upstream release fixes that race; Up retains normal parallelism.
+		service.MaxConcurrency(1)
+		// Build services are handled by the follow-up build step (see
+		// runComposeUpdate); pulling their image tag here is meaningless
+		// and unsupported through the pull proxy.
+		return service.Compose().Pull(ctx, project, composeapi.PullOptions{IgnoreBuildable: true})
+	case "restart":
+		return service.Compose().Restart(ctx, projectName, composeapi.RestartOptions{Project: project})
+	default:
+		return fmt.Errorf("unsupported compose operation %q", operation)
+	}
+}
+
+// composeSelf returns phyless's own container ID when operation would stop or
+// recreate it as part of projectName.
+func (s *Server) composeSelf(ctx context.Context, projectName, operation string) string {
+	switch operation {
+	case "up", "redeploy", "restart", "stop", "down", "pause":
+	default:
+		return ""
+	}
+	sid := s.selfID(ctx)
+	if sid == "" {
+		return ""
+	}
+	info, err := s.docker.ContainerInspect(ctx, sid)
+	if err != nil || info.Config == nil || info.Config.Labels[labelProject] != projectName {
+		return ""
+	}
+	return sid
+}
+
+// composeHandoff runs an operation on phyless's own project in the helper
+// container. Image pulls stay here, where the request's registry credentials
+// and proxy live; the helper then deploys from local images only.
+func (s *Server) composeHandoff(ctx context.Context, w io.Writer, output *dockercompose.NDJSONWriter, selfID, operation, id, user string, project *composetypes.Project, request dockercompose.ServiceOptions, options requestPullOptions) error {
+	if operation == "pause" {
+		return fmt.Errorf("不能暂停 phyless 自身所在的 Compose 项目：暂停后 phyless 无法自行恢复")
+	}
+	if (operation == "up" || operation == "redeploy") && project != nil && options.PullPolicy != "never" {
+		service, err := s.composeRuntime.NewService(ctx, request)
+		if err != nil {
+			return err
+		}
+		if phyDocker.HasPullProxy(ctx) {
+			if err := s.prePullBuildBases(ctx, project, request.AuthConfigs, options.Platform, output); err != nil {
+				return err
+			}
+		}
+		policy := options.PullPolicy
+		if policy == "" {
+			policy = composetypes.PullPolicyMissing // Up's default; Pull's own default is always
+		}
+		applyComposePullPolicy(project, policy)
+		if err := service.Compose().Pull(ctx, project, composeapi.PullOptions{IgnoreBuildable: true}); err != nil {
+			return err
+		}
+	}
+	output.Flush()
+	stops := operation == "stop" || operation == "down"
+	return self.Launch(ctx, s.docker, selfID, s.dataDir, w, stops, "--user", user, "compose", operation, id)
 }
 
 func (s *Server) composeRequest(ctx context.Context, r *http.Request, output io.Writer) (context.Context, requestPullOptions, dockercompose.ServiceOptions, error) {
@@ -1282,14 +1364,14 @@ func validateComposeOperation(ctx context.Context, operation string, project *co
 		return nil
 	}
 	for name, service := range project.Services {
-		if (operation == "up" || operation == "down") && service.Provider != nil {
+		if (operation == "up" || operation == "down" || operation == "redeploy") && service.Provider != nil {
 			provider := service.Provider.Type
 			if provider == "" {
 				provider = "unknown"
 			}
 			return fmt.Errorf("compose service %q uses external provider %q, which is not supported by the embedded API", name, provider)
 		}
-		if operation != "up" && operation != "pull" && operation != "build" || service.Build == nil {
+		if operation != "up" && operation != "redeploy" && operation != "pull" && operation != "build" || service.Build == nil {
 			continue
 		}
 		// up/build pre-pull FROM base images through the proxy before an offline

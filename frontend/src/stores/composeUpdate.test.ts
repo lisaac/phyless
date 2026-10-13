@@ -43,12 +43,12 @@ describe("runComposeUpdate", () => {
     expect(verbs(streamCompose)).toEqual(["build"]);
   });
 
-  it("update appends down and up after pull/build", async () => {
+  it("update appends one redeploy (down + up) after pull/build", async () => {
     const d = deps({ images: [{ service: "db", ref: "postgres:16" }], rejected: [] });
     await runComposeUpdate({ id: "1", mode: "server", canBuild: true, token: "t", restart: true }, cb(), d);
     const sc = d.streamCompose as ReturnType<typeof vi.fn>;
-    expect(verbs(sc)).toEqual(["pull", "build", "down", "up"]);
-    expect(sc.mock.calls[3][2]).toMatchObject({ body: { pull_policy: "never" } });
+    expect(verbs(sc)).toEqual(["pull", "build", "redeploy"]);
+    expect(sc.mock.calls[2][2]).toMatchObject({ body: { pull_policy: "never" } });
   });
 
   it("browser mode: build server-side and preload pull images without up", async () => {

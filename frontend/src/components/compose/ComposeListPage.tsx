@@ -48,7 +48,7 @@ export const ComposeListPage: Component = () => {
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [composeTarget, setComposeTarget] = createSignal<ComposeAction | null>(null);
   const isRunning = isComposeRunning;
-  const request = (a: ComposeAction) => requestComposeAction(a, setComposeTarget);
+  const request = (a: ComposeAction) => void requestComposeAction(a, setComposeTarget);
   // Run/Compose reuses the same flow as the container list's own Run/Compose
   // button: feed CreateContainerModal the merged run commands and let its
   // own single-vs-multi detection decide between "创建容器" and "注册
@@ -97,11 +97,6 @@ export const ComposeListPage: Component = () => {
       await store.refresh();
       toast.success("已注册");
     } catch (e) { toast.error((e as Error).message); }
-  };
-  const down = async (p: ComposeProject) => {
-    if (await confirmAction(`停止并移除 ${p.name} 的所有容器和网络？`, { title: "停止并移除 Compose", confirmText: "继续", danger: true })) {
-      request({ id: p.id, name: p.name, verb: "down" });
-    }
   };
 
   return (
@@ -154,9 +149,9 @@ export const ComposeListPage: Component = () => {
                 <>
                   <Show when={hasRole("operator")}>
                     <IBtn title={available().up ? "docker compose up -d" : "项目中的容器均已运行"} disabled={!available().up} loading={isRunning(p.id, "up")} onClick={() => request({ id: p.id, name: p.name, verb: "up" })}>▶</IBtn>
-                    <IBtn title={available().pause ? "docker compose pause" : "没有运行中的容器可暂停"} disabled={!available().pause} loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸</IBtn>
+                    <IBtn title={available().pause ? "docker compose pause" : p.self ? "phyless 自身所在项目不能暂停" : "没有运行中的容器可暂停"} disabled={!available().pause} loading={isRunning(p.id, "pause")} onClick={() => request({ id: p.id, name: p.name, verb: "pause" })}>⏸</IBtn>
                     <IBtn title={available().restart ? "docker compose restart" : "没有运行中的容器可重启"} disabled={!available().restart} loading={isRunning(p.id, "restart")} onClick={() => request({ id: p.id, name: p.name, verb: "restart" })}>↺</IBtn>
-                    <IBtn title={available().stop ? "docker compose stop" : "没有运行中的容器可停止"} disabled={!available().stop} loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop" })}>■</IBtn>
+                    <IBtn title={available().stop ? "docker compose stop" : "没有运行中的容器可停止"} disabled={!available().stop} loading={isRunning(p.id, "stop")} onClick={() => request({ id: p.id, name: p.name, verb: "stop", self: p.self })}>■</IBtn>
                     <span class="mx-0.5 text-zinc-400">│</span>
                     <IBtn title={p.can_build ? "Build：构建镜像并拉取其余镜像；不执行 down/up" : "Pull：拉取镜像；不执行 down/up"} loading={isRunning(p.id, "pull")} onClick={() => request({ id: p.id, name: p.name, verb: "pull", canBuild: p.can_build })}>
                       <Show when={p.can_build} fallback="↓"><Ico path={BUILD_ICON} /></Show>
@@ -180,7 +175,7 @@ export const ComposeListPage: Component = () => {
                       title={available().down ? "docker compose down（停止并移除容器、网络）" : "没有已部署的容器可移除"}
                       disabled={!available().down}
                       loading={isRunning(p.id, "down")}
-                      onClick={() => void down(p)}
+                      onClick={() => request({ id: p.id, name: p.name, verb: "down", self: p.self })}
                     >
                       <Ico path="M12 2v10M18.4 6.4a8 8 0 1 1-12.8 0" />
                     </IBtn>

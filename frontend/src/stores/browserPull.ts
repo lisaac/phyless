@@ -6,6 +6,7 @@ import { buildDockerLoadTar } from "../api/dockerTar";
 import { resolveImage, matchesRemote, remoteDigests, blobUrl, proxiedGet, authHeaderFromChallenge, registryResponseError, credsFor, type Creds, type RegistryCreds, type ResolvedImage } from "../api/registryPull";
 import { streamTarToDaemon } from "../api/imageLoadStream";
 import { backendFetch, get, imageInspectUrl } from "../api/client";
+import { awaitHelper, helperStops, isHelperEvent } from "../api/selfRestart";
 import { upgradeImageRef, imagePlatform } from "../api/inspect";
 
 export interface BrowserPullParams {
@@ -151,13 +152,26 @@ export async function streamPost(
   if (!resp.body) throw new Error("请求未返回进度流");
   const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
+  // Set at the handoff to phyless's helper container; from then on the
+  // helper's result decides, whether this stream ends, drops or hangs.
+  let helper: Promise<void> | undefined;
+  let helperEnded: Promise<typeof ended> | undefined;
+  const ended = { done: true as const, value: undefined };
   const consume = (line: string) => {
     if (line.length > MAX_STREAM_LINE) throw new Error("进度行过大");
     const s = line.trim();
     if (!s) return;
     try {
       const evt = JSON.parse(s) as { error?: string; errorDetail?: { message?: string }; status?: string; stream?: string };
-      if (evt.error || evt.errorDetail) throw new Error(evt.error || evt.errorDetail?.message || "请求失败");
+      if (evt.error || evt.errorDetail) {
+        const msg = evt.error || evt.errorDetail?.message || "请求失败";
+        if (helper) { opts.onProgress?.(`✕ ${msg}`); return; }
+        throw new Error(msg);
+      }
+      if (isHelperEvent(evt) && !helper) {
+        helper = awaitHelper((m) => opts.onProgress?.(m), opts.signal, helperStops(evt));
+        helperEnded = helper.then(() => ended, () => ended); // also marks the rejection handled; awaited below
+      }
       const progress = evt.stream ?? evt.status;
       if (progress) opts.onProgress?.(progress.trim());
     } catch (e) {
@@ -167,7 +181,8 @@ export async function streamPost(
   };
   try {
     for (;;) {
-      const { value, done } = await reader.read();
+      const read = reader.read();
+      const { value, done } = helperEnded ? await Promise.race([read, helperEnded]) : await read;
       if (done) break;
       buf += value;
       const lines = buf.split("\n");
@@ -177,11 +192,13 @@ export async function streamPost(
     }
     if (buf) consume(buf);
   } catch (err) {
-    await reader.cancel().catch(() => {});
-    throw err;
+    // After the handoff a broken stream is phyless being stopped by the helper.
+    if (!helper || opts.signal.aborted) throw err;
   } finally {
+    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+  await helper;
 }
 
 async function streamResponseError(resp: Response): Promise<Error> {
@@ -444,10 +461,9 @@ export async function runComposeUpdate(
 
   if (!params.restart) return;
 
-  cb.note("停止并移除旧容器…");
-  await deps.streamCompose("down", id, { token, onProgress: cb.progress, signal });
-
-  cb.note("启动 Compose（使用本地镜像）…");
-  await deps.streamCompose("up", id, { body: { pull_policy: "never" }, token, onProgress: cb.progress, signal });
+  // down + up in one request: if the project runs phyless itself, the backend
+  // hands the pair to its helper container instead of dying between them.
+  cb.note("停止并移除旧容器，再启动 Compose（使用本地镜像）…");
+  await deps.streamCompose("redeploy", id, { body: { pull_policy: "never" }, token, onProgress: cb.progress, signal });
 
 }

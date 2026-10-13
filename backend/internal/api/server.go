@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"phyless/backend/internal/docker/self"
 	"strings"
+	"sync"
 
 	dockerclient "github.com/docker/docker/client"
 	"github.com/go-chi/chi/v5"
@@ -35,6 +37,27 @@ type Server struct {
 	imagefs        *imagefs.Manager
 	buildCache     *buildCapabilityCache
 	reloadDocker   func() error
+
+	// phyless's own container on this daemon, scanned once per runtime (see
+	// self.ID); a Docker server switch builds a new Server and rescans.
+	selfMu    sync.Mutex
+	selfKnown bool
+	selfCID   string
+}
+
+// selfID returns phyless's own container ID on this daemon, "" when it runs
+// bare or elsewhere. A failed scan is retried on the next call.
+func (s *Server) selfID(ctx context.Context) string {
+	s.selfMu.Lock()
+	defer s.selfMu.Unlock()
+	if !s.selfKnown {
+		id, err := self.ID(ctx, s.docker)
+		if err != nil {
+			return ""
+		}
+		s.selfKnown, s.selfCID = true, id
+	}
+	return s.selfCID
 }
 
 func New(s *store.Store, jwtSecret []byte, dataDir string) http.Handler {
@@ -79,6 +102,15 @@ func (s *Server) routes() http.Handler {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	// nosniff also stops Chrome buffering the first ~1 KB of text/plain NDJSON
+	// progress streams for MIME sniffing: a short stream cut off by a restart
+	// (self upgrade hands off, then phyless stops) would otherwise never show.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -278,6 +310,8 @@ func (s *Server) mountViewerResourceRoutes(r chi.Router) {
 	r.Get("/api/templates", s.handleListTemplates)
 	r.Get("/api/system/info", s.handleSystemInfo)
 	r.Get("/api/system/summary", s.handleSystemSummary)
+	r.Get("/api/system/helper", s.handleHelperResult)
+	r.Get("/api/system/self", s.handleSelf)
 }
 
 const maxJSONBody = 10 << 20

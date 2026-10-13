@@ -46,8 +46,13 @@ export class ApiError extends Error {
 // so that failure surfaces once, as a sticky toast, with one readable message.
 export const isBackendDown = (error: unknown) => error instanceof ApiError && error.status === 0;
 
+// While phyless restarts itself (see api/selfRestart.ts) an unreachable
+// backend is expected, not an error worth a sticky toast.
+let restarting = 0;
+export function quietBackendDown(on: boolean): void { restarting = Math.max(0, restarting + (on ? 1 : -1)); }
+
 export function reportBackendDown(): ApiError {
-  toast.error(BACKEND_DOWN);
+  if (!restarting) toast.error(BACKEND_DOWN);
   return new ApiError(0, BACKEND_DOWN);
 }
 

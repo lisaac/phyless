@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	pathpkg "path"
+	"phyless/backend/internal/docker/self"
 	"slices"
 	"sort"
 	"strings"
@@ -412,6 +413,12 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerPause(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if sid := s.selfID(r.Context()); sid != "" {
+		if info, err := s.docker.ContainerInspect(r.Context(), id); err == nil && info.ID == sid {
+			writeError(w, http.StatusBadRequest, "不能暂停 phyless 自身容器：暂停后 phyless 无法自行恢复")
+			return
+		}
+	}
 	if err := s.docker.ContainerPause(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -480,9 +487,13 @@ func (s *Server) handleContainerDuplicate(w http.ResponseWriter, r *http.Request
 func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	result := "failed"
+	handedOff := false
 	defer func() {
 		if result != "ok" && r.Context().Err() != nil {
 			result = "canceled"
+		}
+		if handedOff && result == "ok" {
+			return // the helper audits the outcome
 		}
 		s.auditFromCtx(r, "container.upgrade", id, result)
 	}()
@@ -513,6 +524,13 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 	if imageRef == "" {
 		writeError(w, http.StatusBadRequest, "container has no image reference")
 		return
+	}
+	if info.ID == s.selfID(ctx) {
+		uopts.Handoff = func() error {
+			handedOff = true
+			args := append([]string{"--user", auditUser(r), "container-upgrade", info.ID}, body.EnvFromImage...)
+			return self.Launch(ctx, s.docker, info.ID, s.dataDir, w, false, args...)
+		}
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")

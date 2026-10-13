@@ -18,13 +18,15 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func (s *Server) auditFromCtx(r *http.Request, action, target, result string) {
-	claims := auth.FromContext(r.Context())
-	user := "anonymous"
-	if claims != nil {
-		user = claims.Username
+func auditUser(r *http.Request) string {
+	if claims := auth.FromContext(r.Context()); claims != nil {
+		return claims.Username
 	}
-	if err := s.audit.Log(user, action, target, result); err != nil {
+	return "anonymous"
+}
+
+func (s *Server) auditFromCtx(r *http.Request, action, target, result string) {
+	if err := s.audit.Log(auditUser(r), action, target, result); err != nil {
 		log.Printf("audit: write failed: %v", err)
 	}
 }

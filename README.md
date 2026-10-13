@@ -111,6 +111,7 @@ Docker 主机与版本、操作系统和内核、总内存、存储驱动与可�
 - 创建：表单或直接粘贴 `docker run` 命令；可把常用命令保存为模板；随时查看任意容器对应的 `docker run` 命令或 `compose.yaml`。
 - 复制、导出与导入容器。
 - 检查升级 / 升级：单个或批量；显示本地与远端 digest；升级失败自动回滚。详见 [docs/container-upgrade.md](docs/container-upgrade.md)。
+- 管理 phyless 自身容器：升级、Compose 重建等会停掉自己的操作交给一次性的 `phyless-helper` 容器完成；停止、删除、重启自身前先确认，暂停自身被拒绝。详见 [docs/self-update.md](docs/self-update.md)。
 
 ### Compose
 

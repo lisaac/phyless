@@ -34,13 +34,14 @@ export function composeProjectState(p: Pick<ComposeProject, "running" | "total">
   return running < (p.total ?? 0) ? "partial" : "running";
 }
 
-export function composeActionAvailability(p: Pick<ComposeProject, "running" | "total">) {
+export function composeActionAvailability(p: Pick<ComposeProject, "running" | "total" | "self">) {
   const state = composeProjectState(p);
   const running = p.running ?? 0;
   const total = p.total ?? 0;
   return {
     up: state !== "running",
-    pause: running > 0,
+    // A paused phyless could never unpause itself; the backend refuses too.
+    pause: running > 0 && !p.self,
     restart: running > 0,
     stop: running > 0,
     down: total > 0,

@@ -25,7 +25,6 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { containersOf, representative, ActBtn, ComposeIcon, servicesHaveBuild, type ComposeVerb } from "./composeShared";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
-import { confirmAction } from "../shared/ConfirmModal";
 import { queued } from "../../stores/taskQueue";
 import type { ComposeProject, ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
@@ -83,13 +82,8 @@ export const ComposeDetailPage: Component = () => {
   // ── compose actions — shared with ComposeListPage via ComposeActionModal.
   const [composeTarget, setComposeTarget] = createSignal<ComposeAction | null>(null);
   const isRunning = (verb: ComposeVerb) => isComposeRunning(id(), verb);
-  const request = (a: ComposeAction) => requestComposeAction(a, setComposeTarget);
-  const down = async () => {
-    const name = project()?.name ?? id();
-    if (await confirmAction(`停止并移除 ${name} 的所有容器和网络？`, { title: "停止并移除 Compose", confirmText: "继续", danger: true })) {
-      request({ id: id(), name, verb: "down" });
-    }
-  };
+  const request = (a: ComposeAction) => void requestComposeAction(a, setComposeTarget);
+  const down = () => request({ id: id(), name: project()?.name ?? id(), verb: "down", self: project()?.self });
   const [logRange, setLogRange] = createSignal<TimeRange>({});
   // Run/Compose reuses the same flow as the container list's own Run/Compose
   // button — feed CreateContainerModal the merged run commands and let its
@@ -265,7 +259,7 @@ export const ComposeDetailPage: Component = () => {
         <div class="mb-3 flex flex-wrap items-center gap-0.5 border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
           <ActBtn title="docker compose up -d" loading={isRunning("up")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "up" })}>▶ Up</ActBtn>
           <ActBtn title="docker compose restart" loading={isRunning("restart")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "restart" })}>↺ Restart</ActBtn>
-          <ActBtn title="docker compose stop" loading={isRunning("stop")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "stop" })}>■ Stop</ActBtn>
+          <ActBtn title="docker compose stop" loading={isRunning("stop")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "stop", self: project()?.self })}>■ Stop</ActBtn>
           <ActBtn title="docker compose pause" loading={isRunning("pause")} onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "pause" })}>⏸ Pause</ActBtn>
           <ActBtn
             danger

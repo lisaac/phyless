@@ -35,6 +35,10 @@ type UpgradeOptions struct {
 	// Used for values an older phyless froze from a previous image, which are
 	// indistinguishable from deliberate overrides.
 	EnvFromImage []string
+	// Handoff, when set, replaces the in-process recreate once a newer image
+	// is verified: used when the target is phyless's own container, which
+	// cannot stop itself and then start its replacement.
+	Handoff func() error
 }
 
 func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, skipPull bool, uopts UpgradeOptions) (string, error) {
@@ -135,6 +139,9 @@ func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 		EmitStream(w, "镜像已是最新，按所选环境变量重建容器…")
 	} else {
 		EmitStream(w, "检测到新版本，开始重建容器…")
+	}
+	if uopts.Handoff != nil {
+		return "", uopts.Handoff()
 	}
 	newID, stopped, err := replaceContainer(ctx, cli, w, replacement{
 		info: info, name: originalName, imageRef: imageRef, imageID: newImg.ID, oldImage: oldImage, platform: platform,

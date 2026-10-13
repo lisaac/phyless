@@ -11,18 +11,22 @@ import (
 	"time"
 
 	"phyless/backend/internal/api"
+	"phyless/backend/internal/docker/self"
 	"phyless/backend/internal/store"
 )
 
 const defaultDataDir = "./data"
 
 func main() {
-	dataDir, err := configDir(os.Args[1:])
+	dataDir, rest, err := configDir(os.Args[1:])
 	if errors.Is(err, flag.ErrHelp) {
 		return
 	}
 	if err != nil {
 		log.Fatal(err)
+	}
+	if len(rest) > 0 && rest[0] == "helper" {
+		os.Exit(api.RunHelper(dataDir, rest[1:]))
 	}
 
 	// ponytail: soft heap ceiling for small hosts (routers); GOMEMLIMIT/GOGC env override.
@@ -40,6 +44,7 @@ func main() {
 		log.Fatal(err)
 	}
 	s := store.New(filepath.Join(dataDir, "config.json"))
+	self.Init(dataDir)
 
 	log.Println("phyless listening on :8080")
 	server := &http.Server{
@@ -54,11 +59,11 @@ func main() {
 	}
 }
 
-func configDir(args []string) (string, error) {
+func configDir(args []string) (string, []string, error) {
 	flags := flag.NewFlagSet("phyless", flag.ContinueOnError)
 	dir := flags.String("C", defaultDataDir, "configuration directory")
 	if err := flags.Parse(args); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return *dir, nil
+	return *dir, flags.Args(), nil
 }

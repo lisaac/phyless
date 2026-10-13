@@ -33,9 +33,9 @@ const (
 	maxIndexBytes     = 128 << 20
 )
 
-// IsHelper reports whether a container's labels mark it as an imagefs helper,
+// IsHelper reports whether a container is any phyless helper (imagefs, self),
 // so listings can hide it.
-func IsHelper(labels map[string]string) bool { return labels[RoleLabel] == RoleValue }
+func IsHelper(labels map[string]string) bool { return labels[RoleLabel] != "" }
 
 type session struct {
 	key         string

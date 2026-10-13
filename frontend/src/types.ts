@@ -72,6 +72,8 @@ export interface ComposeProject {
   total?: number;
   // List responses only: compose file is readable and a service declares build.
   can_build?: boolean;
+  // List responses only: this project runs phyless itself.
+  self?: boolean;
 }
 
 export interface Registry {

@@ -4,8 +4,9 @@ import { Modal } from "../shared/Modal";
 import { PullOptions, createPullOptions, isBrowserDownload, browserWorkerReady, browserSecret } from "../shared/PullOptions";
 import { enqueue, isPending } from "../../stores/taskQueue";
 import { VERB_LABEL, type ComposeVerb } from "./composeShared";
+import { confirmAction } from "../shared/ConfirmModal";
 
-export interface ComposeAction { id: string; name: string; verb: ComposeVerb; canBuild?: boolean; }
+export interface ComposeAction { id: string; name: string; verb: ComposeVerb; canBuild?: boolean; self?: boolean; }
 
 // compose up/stop/down/restart/pull through the global task queue. One
 // implementation shared by ComposeListPage and ComposeDetailPage (they used
@@ -26,9 +27,20 @@ export const isComposeRunning = (id: string, verb: ComposeVerb) =>
 // up/pull/build/update take proxy/registry options → open the modal. Pull and
 // Update share the frontend pull/build flow; Update additionally recreates the
 // project after the images are ready.
-export const requestComposeAction = (a: ComposeAction, openOptions: (a: ComposeAction) => void) => {
-  if (a.verb === "up" || a.verb === "pull" || a.verb === "build" || a.verb === "update") openOptions(a);
-  else void startComposeAction(a);
+// Down always asks; stop asks only for phyless's own project, which it cannot
+// start again by itself afterwards.
+const SELF_STOP_WARNING = "此项目包含 phyless 自身，执行后 phyless 将停止，需在主机上手动启动。";
+export const requestComposeAction = async (a: ComposeAction, openOptions: (a: ComposeAction) => void) => {
+  if (a.verb === "up" || a.verb === "pull" || a.verb === "build" || a.verb === "update") { openOptions(a); return; }
+  if (a.verb === "down" && !await confirmAction(
+    `停止并移除 ${a.name} 的所有容器和网络？${a.self ? `\n${SELF_STOP_WARNING}` : ""}`,
+    { title: "停止并移除 Compose", confirmText: "继续", danger: true },
+  )) return;
+  if (a.verb === "stop" && a.self && !await confirmAction(
+    `停止 ${a.name}？\n${SELF_STOP_WARNING}`,
+    { title: "停止 Compose", confirmText: "停止", danger: true },
+  )) return;
+  void startComposeAction(a);
 };
 
 export const ComposeActionModal: Component<{ target: ComposeAction | null; onClose: () => void }> = (props) => {

@@ -1,4 +1,7 @@
 import { enqueue, isPending } from "../../stores/taskQueue";
+import { selfContainerId } from "../../api/selfRestart";
+import { confirmAction } from "../shared/ConfirmModal";
+import { toast } from "../shared/Toast";
 import type { ContainerSummary } from "../../types";
 
 export function containerName(c: ContainerSummary): string {
@@ -40,15 +43,33 @@ export const VERB_LABEL: Record<string, string> = {
 // Per-container start/stop/pause/kill/delete through the global task queue
 // (stores/taskQueue.ts): same container id = same key, so verbs on one
 // container run in order; list stores refresh themselves on settle.
+// Acting on phyless's own container cuts the connection that carries the
+// result, so these verbs warn first (pause is refused: phyless could never
+// unpause itself).
+const SELF_WARNING: Record<string, string> = {
+  stop: "停止后 phyless 将不可用，需在主机上手动启动。",
+  kill: "强制关闭后 phyless 将不可用，需在主机上手动启动。",
+  delete: "删除后 phyless 将不可用，需在主机上重新创建。",
+  restart: "重启期间连接会中断，页面会在 phyless 恢复后自动刷新。",
+};
+
 export function createContainerActions() {
   const isP = (id: string, verb: string) => isPending((t) => t.meta?.containerId === id && t.meta?.verb === verb);
-  const act = (id: string, verb: string, name?: string) => enqueue({
-    title: `${VERB_LABEL[verb] ?? verb} ${name || id.slice(0, 12)}`,
-    method: verb === "delete" ? "DELETE" : "POST",
-    url: verb === "delete" ? `/api/containers/${id}` : `/api/containers/${id}/${verb}`,
-    key: id,
-    meta: { containerId: id, verb },
-  }).done;
+  const act = async (id: string, verb: string, name?: string): Promise<void> => {
+    const label = VERB_LABEL[verb] ?? verb;
+    const self = (verb === "pause" || verb in SELF_WARNING) && await selfContainerId() === id;
+    if (self && verb === "pause") { toast.error("不能暂停 phyless 自身容器：暂停后 phyless 无法自行恢复"); return; }
+    if (self && !await confirmAction(`${name || id.slice(0, 12)} 是 phyless 自身所在的容器。${SELF_WARNING[verb]}`, {
+      title: `${label} phyless 自身`, confirmText: label, danger: true,
+    })) return;
+    await enqueue({
+      title: `${label} ${name || id.slice(0, 12)}`,
+      method: verb === "delete" ? "DELETE" : "POST",
+      url: verb === "delete" ? `/api/containers/${id}` : `/api/containers/${id}/${verb}`,
+      key: id,
+      meta: { containerId: id, verb, self },
+    }).done;
+  };
   return { isP, act };
 }
 
