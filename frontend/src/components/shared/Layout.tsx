@@ -1,7 +1,7 @@
 import { Component, JSX, createSignal, createEffect, onMount, onCleanup, startTransition, For, Show } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
-import { theme, toggleTheme } from "../../stores/theme";
+import { cycleTheme, themeLabel } from "../../stores/theme";
 import { ThemeIcon } from "./ThemeIcon";
 import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, tabSearch, setTabSearch, type PageTab } from "../../stores/tabs";
 import { ComposeIcon } from "../compose/composeShared";
@@ -295,11 +295,11 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           </details>
           <button
             class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            onClick={toggleTheme}
-            title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
-            aria-label={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
+            onClick={cycleTheme}
+            title={themeLabel()}
+            aria-label={themeLabel()}
           >
-            <ThemeIcon dark={theme() === "dark"} />
+            <ThemeIcon />
           </button>
         </header>
 

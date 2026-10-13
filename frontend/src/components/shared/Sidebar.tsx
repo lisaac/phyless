@@ -1,7 +1,7 @@
 import { Component, For, Show } from "solid-js";
 import { A, useNavigate } from "@solidjs/router";
 import { currentUser, doLogout, hasRole } from "../../stores/auth";
-import { theme, toggleTheme } from "../../stores/theme";
+import { cycleTheme, themeLabel } from "../../stores/theme";
 import { ThemeIcon } from "./ThemeIcon";
 
 // Flat list kept as the single source of truth for path→label lookups
@@ -51,12 +51,12 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
         </div>
         <div class="flex items-center gap-1">
           <button
-            title={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
-            aria-label={theme() === "dark" ? "切换日间模式" : "切换夜间模式"}
+            title={themeLabel()}
+            aria-label={themeLabel()}
             class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
-            onClick={toggleTheme}
+            onClick={cycleTheme}
           >
-            <ThemeIcon dark={theme() === "dark"} />
+            <ThemeIcon />
           </button>
           <Show when={props.onClose}>
             <button

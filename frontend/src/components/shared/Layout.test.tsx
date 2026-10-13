@@ -22,7 +22,7 @@ vi.mock("../../stores/refresh", () => ({
   autoRefresh: () => true, refreshSeconds: () => 5, setAutoRefresh: vi.fn(),
   setRefreshSeconds: vi.fn(), refreshAll: vi.fn(),
 }));
-vi.mock("../../stores/theme", () => ({ theme: () => "dark", toggleTheme: vi.fn() }));
+vi.mock("../../stores/theme", () => ({ mode: () => "auto", themeLabel: () => "主题：自动", cycleTheme: vi.fn() }));
 
 afterEach(cleanup);
 
