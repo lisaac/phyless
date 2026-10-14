@@ -3,6 +3,7 @@ package fsbrowse
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -36,6 +37,7 @@ type fakeDocker struct {
 	execs   []string // "container:path"
 	creates []*container.HostConfig
 	exit    map[string]int // exec id → exit code
+	badVols bool           // creating with VolumesFrom fails (bind source gone)
 }
 
 func (f *fakeDocker) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
@@ -53,6 +55,9 @@ func (f *fakeDocker) VolumeInspect(context.Context, string) (volume.Volume, erro
 func (f *fakeDocker) ContainerCreate(_ context.Context, _ *container.Config, h *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, _ string) (container.CreateResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.badVols && len(h.VolumesFrom) > 0 {
+		return container.CreateResponse{}, errors.New("invalid mount config: bind source path does not exist")
+	}
 	f.creates = append(f.creates, h)
 	return container.CreateResponse{ID: fmt.Sprintf("box%d", len(f.creates))}, nil
 }
@@ -201,8 +206,8 @@ func TestListStoppedContainerMergesImageWithChanges(t *testing.T) {
 	if _, err := fs.ListContainer(context.Background(), "target", "/bin"); err == nil {
 		t.Fatal("deleted directory listed")
 	}
-	// The image box is shared; no box needed the container's own namespaces.
-	if len(f.creates) != 1 || f.creates[0].PidMode != "" || len(f.creates[0].VolumesFrom) != 0 || f.diffs != 1 {
+	// One box — its image with its volumes — served every path.
+	if len(f.creates) != 1 || f.creates[0].PidMode != "" || f.creates[0].VolumesFrom[0] != "target:ro" || f.diffs != 1 {
 		t.Fatalf("creates=%+v diffs=%d", f.creates, f.diffs)
 	}
 }
@@ -250,5 +255,55 @@ func TestMergeHandlesNestedAndDeletedChildren(t *testing.T) {
 	}
 	if !(&changeSet{changes: []change{{"/a", container.ChangeDelete}}}).deleted("/a/b/c") {
 		t.Fatal("ancestor deletion missed")
+	}
+}
+
+func TestStoppedContainerMountAndRootShareOneBox(t *testing.T) {
+	f := stopped()
+	fs := New(f)
+	for _, p := range []string{"/data", "/", "/etc", "/data"} {
+		if _, err := fs.ListContainer(context.Background(), "target", p); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+	}
+	if len(f.creates) != 1 {
+		t.Fatalf("browse containers created: %d, want 1", len(f.creates))
+	}
+}
+
+func TestStoppedContainerWithBrokenMountStillBrowsesItsImage(t *testing.T) {
+	f := stopped()
+	f.badVols = true
+	fs := New(f)
+	root, err := fs.ListContainer(context.Background(), "target", "/")
+	if err != nil || names(root) != "app/ etc/ proc/ usr/" {
+		t.Fatalf("root=%v err=%v", names(root), err)
+	}
+	if _, err := fs.ListContainer(context.Background(), "target", "/data"); err == nil {
+		t.Fatal("broken mount listed as if fine")
+	}
+	if len(f.creates) != 1 || len(f.creates[0].VolumesFrom) != 0 {
+		t.Fatalf("fallback box %+v", f.creates)
+	}
+}
+
+func TestChildrenSkipsSubtreesWithoutMissingSiblings(t *testing.T) {
+	cs := &changeSet{}
+	for _, p := range []string{"/a/b", "/a/b-x", "/a/b.y", "/a/b/c", "/a/b/d/e", "/a/c/z", "/b"} {
+		cs.changes = append(cs.changes, change{path: p, kind: container.ChangeAdd})
+	}
+	slices.SortFunc(cs.changes, func(a, b change) int { return strings.Compare(a.path, b.path) })
+	got := cs.children("/a")
+	want := map[string]child{
+		"b": {kind: container.ChangeAdd, explicit: true, dir: true}, "b-x": {kind: container.ChangeAdd, explicit: true},
+		"b.y": {kind: container.ChangeAdd, explicit: true}, "c": {dir: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("children = %+v", got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("children[%q] = %+v, want %+v", k, got[k], v)
+		}
 	}
 }

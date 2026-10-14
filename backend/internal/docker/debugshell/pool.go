@@ -29,8 +29,13 @@ const (
 	opTimeout = 30 * time.Second
 )
 
+// ErrBoxStart wraps a browse container that could not be created or started
+// — e.g. a VolumesFrom target whose bind source vanished from the host.
+var ErrBoxStart = errors.New("浏览容器无法启动")
+
 // Spec describes a browse container. Image "" means the debug image.
 type Spec struct {
+	Name   string // what it browses, for the container name
 	Image  string
 	Host   container.HostConfig // namespace/volume sharing; the pool adds the rest
 	Labels map[string]string
@@ -208,17 +213,18 @@ func (p *Pool) start(ctx context.Context, spec Spec) (string, error) {
 		Labels:      labels,
 	}
 	var resp container.CreateResponse
+	name := HelperName("browse", spec.Name)
 	if spec.Image == "" {
-		resp, err = createDebug(ctx, p.cli, cfg, &hc)
+		resp, err = createDebug(ctx, p.cli, name, cfg, &hc)
 	} else {
-		resp, err = p.cli.ContainerCreate(ctx, cfg, &hc, nil, nil, "")
+		resp, err = p.cli.ContainerCreate(ctx, cfg, &hc, nil, nil, name)
 	}
 	if err != nil {
-		return "", fmt.Errorf("创建浏览容器失败: %w", err)
+		return "", fmt.Errorf("%w（创建）: %w", ErrBoxStart, err)
 	}
 	if err := p.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		_ = p.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-		return "", fmt.Errorf("启动浏览容器失败: %w", err)
+		return "", fmt.Errorf("%w（启动）: %w", ErrBoxStart, err)
 	}
 	return resp.ID, nil
 }

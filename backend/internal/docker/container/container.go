@@ -140,6 +140,9 @@ func ExecLs(ctx context.Context, cli client.APIClient, containerID, path string,
 	if code, err := execExitCode(ctx, cli, exec.ID); err != nil {
 		return nil, err
 	} else if err := exitError(code); err != nil && (code != 1 || stdout.Len() == 0) {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg) // ls says why ("No such file…")
+		}
 		return nil, err
 	}
 

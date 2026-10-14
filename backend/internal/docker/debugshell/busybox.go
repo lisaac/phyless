@@ -80,13 +80,13 @@ func assetFor(ctx context.Context, cli client.APIClient) (asset, error) {
 
 // createDebug runs ContainerCreate on the debug image, importing it on first
 // use (or after someone deleted it) — the hot path costs no extra round trip.
-func createDebug(ctx context.Context, cli client.APIClient, cfg *container.Config, hc *container.HostConfig) (container.CreateResponse, error) {
+func createDebug(ctx context.Context, cli client.APIClient, name string, cfg *container.Config, hc *container.HostConfig) (container.CreateResponse, error) {
 	a, err := assetFor(ctx, cli)
 	if err != nil {
 		return container.CreateResponse{}, err
 	}
 	cfg.Image = a.image()
-	resp, err := cli.ContainerCreate(ctx, cfg, hc, nil, nil, "")
+	resp, err := cli.ContainerCreate(ctx, cfg, hc, nil, nil, name)
 	if !errdefs.IsNotFound(err) {
 		return resp, err
 	}
@@ -98,7 +98,7 @@ func createDebug(ctx context.Context, cli client.APIClient, cfg *container.Confi
 	if err := importImage(ctx, cli, a); err != nil {
 		return container.CreateResponse{}, err
 	}
-	return cli.ContainerCreate(ctx, cfg, hc, nil, nil, "")
+	return cli.ContainerCreate(ctx, cfg, hc, nil, nil, name)
 }
 
 // importImage turns the embedded busybox into a local image — no registry,
@@ -138,7 +138,7 @@ func busyboxMount(ctx context.Context, cli client.APIClient) (mount.Mount, error
 	} else if !errdefs.IsNotFound(err) {
 		return mount.Mount{}, err
 	}
-	resp, err := createDebug(ctx, cli, &container.Config{
+	resp, err := createDebug(ctx, cli, HelperName("busybox-init", ""), &container.Config{
 		Cmd:    []string{"/bin/busybox"},
 		Labels: map[string]string{docker.RoleLabel: Role},
 	}, &container.HostConfig{NetworkMode: "none", Mounts: []mount.Mount{{

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +37,7 @@ type fakeClient struct {
 	execGoneN  int // fail this many exec creates with NotFound
 	execMissN  int // this many execs exit 126 (busybox missing)
 	volRemoved int
+	names      []string
 	startedIDs []string
 }
 
@@ -83,9 +85,10 @@ func (f *fakeClient) VolumeInspect(context.Context, string) (volume.Volume, erro
 	return volume.Volume{}, nil
 }
 
-func (f *fakeClient) ContainerCreate(_ context.Context, c *container.Config, h *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, _ string) (container.CreateResponse, error) {
+func (f *fakeClient) ContainerCreate(_ context.Context, c *container.Config, h *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, name string) (container.CreateResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.names = append(f.names, name)
 	if strings.HasPrefix(c.Image, "phyless-debug:") && !f.imported {
 		return container.CreateResponse{}, errdefs.NotFound(errors.New("No such image"))
 	}
@@ -271,5 +274,30 @@ func TestPoolRepairsAnEmptyBusyboxVolume(t *testing.T) {
 	// Box removed, blank volume dropped and refilled, box recreated.
 	if f.volRemoved != 1 || !f.volume || len(f.browseCreates()) != 2 {
 		t.Fatalf("volRemoved=%d volume=%v creates=%d", f.volRemoved, f.volume, len(f.browseCreates()))
+	}
+}
+
+func TestHelperNamesAreReadableAndDockerSafe(t *testing.T) {
+	valid := regexp.MustCompile(`^phyless-autoremove-[a-zA-Z0-9][a-zA-Z0-9_.-]*-[0-9a-f]{6}$`)
+	for target, want := range map[string]string{
+		"/sntlbb":       "phyless-autoremove-browse-sntlbb-",
+		"ghcr.io/a/b:1": "phyless-autoremove-browse-ghcr.io-a-b-1-",
+		"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789": "phyless-autoremove-browse-abcdef012345-",
+		"": "phyless-autoremove-browse-",
+	} {
+		got := HelperName("browse", target)
+		if !strings.HasPrefix(got, want) || len(got) != len(want)+6 || !valid.MatchString(got) {
+			t.Errorf("HelperName(%q) = %q, want %s<6 hex>", target, got, want)
+		}
+	}
+	if HelperName("x", "y") == HelperName("x", "y") {
+		t.Error("names must not collide")
+	}
+	f := &fakeClient{imported: true, volume: true}
+	if _, err := NewPool(f).Ls(context.Background(), "k", Spec{Name: "/web"}, "/"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.names) != 1 || !strings.HasPrefix(f.names[0], "phyless-autoremove-browse-web-") {
+		t.Fatalf("browse container names %v", f.names)
 	}
 }

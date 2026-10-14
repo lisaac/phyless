@@ -11,7 +11,9 @@ export interface FileSourceRef { kind: FileSourceKind; id: string; name: string 
 
 const e = encodeURIComponent;
 
-export function fileSource(kind: FileSourceKind, id: string) {
+// `stopped`: a container that is not running. Listing, download and upload
+// still work (archive API); delete/rename exec rm/mv inside it, so they don't.
+export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: boolean } = {}) {
   const base = {
     container: `/api/containers/${e(id)}/files`,
     image: "/api/images/files",
@@ -23,6 +25,7 @@ export function fileSource(kind: FileSourceKind, id: string) {
   const url = (suffix: string, query = "") => `${base}${suffix}?${idq}${query}`;
   const key = kind === "compose" ? `compose:${id}` : kind === "config" ? "config" : id;
   const writable = kind === "container" || kind === "compose" || kind === "config";
+  const execWrites = writable && !(kind === "container" && opts.stopped);
   const joinName = (dir: string, name: string) => (dir.endsWith("/") ? dir + name : dir + "/" + name);
 
   return {
@@ -39,10 +42,10 @@ export function fileSource(kind: FileSourceKind, id: string) {
     create: kind === "compose" || kind === "config"
       ? async (path: string) => { await queued(`新建 ${path}`, "PUT", url("/content", `path=${e(path)}`), "", { key }); }
       : undefined,
-    remove: !writable ? undefined : async (path: string) => {
+    remove: !execWrites ? undefined : async (path: string) => {
       await queued(`删除 ${path}`, "DELETE", url("", `path=${e(path)}`), undefined, { key });
     },
-    rename: !writable ? undefined : async (oldPath: string, newPath: string) => {
+    rename: !execWrites ? undefined : async (oldPath: string, newPath: string) => {
       await queued(`重命名 ${oldPath}`, "POST", url("/rename"), { old_path: oldPath, new_path: newPath }, { key });
     },
   };

@@ -28,6 +28,19 @@ import (
 // can release its helpers first (Docker refuses while they exist).
 const ImageLabel = "phyless.image"
 
+// Pool keys: one browse container per image, per running container without
+// ls (PID-sharing), and per stopped container (its image + its volumes, or
+// without volumes when those cannot be mounted).
+func imageKey(id string) string       { return "image:" + id }
+func pidKey(id string) string         { return "pid:" + id }
+func stoppedKey(id string) string     { return "stopped:" + id }
+func stoppedBareKey(id string) string { return "stopped-novols:" + id }
+
+// containerKeys are every key that can pin container id.
+func containerKeys(id string) []string {
+	return []string{pidKey(id), stoppedKey(id), stoppedBareKey(id)}
+}
+
 // statTimeout bounds the stats of one listing; entries not stat'ed in time
 // keep their placeholder metadata.
 const statTimeout = 30 * time.Second
@@ -71,20 +84,30 @@ func (f *FS) ListImage(ctx context.Context, ref, p string) ([]ctr.FileEntry, err
 	if err != nil {
 		return nil, err
 	}
-	return f.listImage(ctx, id, path.Clean("/"+p))
+	return f.listImage(ctx, id, ref, path.Clean("/"+p))
 }
 
 // runtimeDirs are mounted by the runtime into the browse container; in an
 // image they are empty mount points, so its view of them would be a lie.
 var runtimeDirs = []string{"/proc", "/sys", "/dev"}
 
-func (f *FS) listImage(ctx context.Context, id, p string) ([]ctr.FileEntry, error) {
+// listImage lists p in image id; ref is how the user named it (a tag reads
+// better than an ID in the helper's container name).
+func (f *FS) listImage(ctx context.Context, id, ref, p string) ([]ctr.FileEntry, error) {
+	return imageView(p, func() ([]ctr.FileEntry, error) {
+		return f.pool.Ls(ctx, imageKey(id), debugshell.Spec{Name: ref, Image: id, Labels: map[string]string{ImageLabel: id}}, p)
+	})
+}
+
+// imageView is ls of an image's own files as a browse container sees them,
+// minus what the container runtime adds.
+func imageView(p string, ls func() ([]ctr.FileEntry, error)) ([]ctr.FileEntry, error) {
 	for _, d := range runtimeDirs {
 		if p == d || strings.HasPrefix(p, d+"/") {
 			return []ctr.FileEntry{}, nil
 		}
 	}
-	entries, err := f.pool.Ls(ctx, "image:"+id, debugshell.Spec{Image: id, Labels: map[string]string{ImageLabel: id}}, p)
+	entries, err := ls()
 	if p == "/" { // hide the busybox mount point
 		entries = slices.DeleteFunc(entries, func(e ctr.FileEntry) bool { return "/"+e.Name == path.Dir(debugshell.Busybox) })
 	}
@@ -101,9 +124,8 @@ func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry,
 		return nil, fmt.Errorf("容器状态未知: %s", ref)
 	}
 	p = path.Clean("/" + p)
-	pidKey := "pid:" + t.ID
 	switch {
-	case t.State.Running && !t.State.Paused && !f.pool.Has(pidKey):
+	case t.State.Running && !t.State.Paused && !f.pool.Has(pidKey(t.ID)):
 		// Its own ls is live and free; a pid box for it means it has none.
 		entries, err := ctr.ExecLs(ctx, f.cli, t.ID, p)
 		if !errors.Is(err, ctr.ErrExecNotFound) {
@@ -111,23 +133,24 @@ func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry,
 		}
 		fallthrough
 	case t.State.Running: // no ls (distroless), or paused (exec refused)
-		return f.pool.Ls(ctx, pidKey, debugshell.Spec{Host: container.HostConfig{
+		return f.pool.Ls(ctx, pidKey(t.ID), debugshell.Spec{Name: t.Name, Host: container.HostConfig{
 			PidMode: container.PidMode("container:" + t.ID),
 			CapAdd:  []string{"SYS_PTRACE"}, // /proc/<pid>/root of another uid
 		}}, debugshell.TargetRoot(t)+p)
-	case underMount(t.Mounts, p):
-		return f.pool.Ls(ctx, "vols:"+t.ID, debugshell.Spec{Host: container.HostConfig{
-			VolumesFrom: []string{t.ID + ":ro"},
-		}}, p)
 	default:
 		return f.listStopped(ctx, t, p)
 	}
 }
 
-// listStopped lists a stopped container's own filesystem: its image's listing
-// merged with its writable-layer changes. Nothing streams the layer's bytes
-// (a 4 GB layer took minutes via archive/export).
+// listStopped lists a stopped container's filesystem without streaming its
+// bytes (a 4 GB layer took minutes via archive/export). One browse container
+// — its image with its own volumes mounted read-only — serves every path:
+// mounts are listed as they are, the rest is the image's listing merged with
+// the writable-layer changes.
 func (f *FS) listStopped(ctx context.Context, t container.InspectResponse, p string) ([]ctr.FileEntry, error) {
+	if underMount(t.Mounts, p) {
+		return f.lsStopped(ctx, t, p)
+	}
 	cs, err := f.changes.get(ctx, f.cli, t.ID, t.State.FinishedAt)
 	if err != nil {
 		return nil, err
@@ -136,7 +159,7 @@ func (f *FS) listStopped(ctx context.Context, t container.InspectResponse, p str
 		return nil, fmt.Errorf("目录不存在: %s", p)
 	}
 	kids := cs.children(p)
-	base, err := f.listImage(ctx, t.Image, p)
+	base, err := imageView(p, func() ([]ctr.FileEntry, error) { return f.lsStopped(ctx, t, p) })
 	if err != nil {
 		// A directory the container created exists only in its changes.
 		if c, ok := cs.find(p); len(kids) == 0 && !(ok && c.kind == container.ChangeAdd) {
@@ -152,6 +175,20 @@ func (f *FS) listStopped(ctx context.Context, t container.InspectResponse, p str
 	return out, nil
 }
 
+// lsStopped runs ls in t's browse container. A mount source gone from the host
+// (say a deleted bind directory) fails that container as a whole; paths
+// outside the mounts then still list from a volume-less one.
+func (f *FS) lsStopped(ctx context.Context, t container.InspectResponse, p string) ([]ctr.FileEntry, error) {
+	spec := debugshell.Spec{Name: t.Name, Image: t.Image, Labels: map[string]string{ImageLabel: t.Image},
+		Host: container.HostConfig{VolumesFrom: []string{t.ID + ":ro"}}}
+	entries, err := f.pool.Ls(ctx, stoppedKey(t.ID), spec, p)
+	if errors.Is(err, debugshell.ErrBoxStart) && !underMount(t.Mounts, p) {
+		spec.Host.VolumesFrom = nil
+		return f.pool.Ls(ctx, stoppedBareKey(t.ID), spec, p)
+	}
+	return entries, err
+}
+
 // OpenImage streams p out of an image as a tar archive. It uses its own
 // never-started container: a browse container may expire mid-download.
 func (f *FS) OpenImage(ctx context.Context, ref, p string) (io.ReadCloser, error) {
@@ -163,7 +200,7 @@ func (f *FS) OpenImage(ctx context.Context, ref, p string) (io.ReadCloser, error
 		Image:  id,
 		Cmd:    []string{"/"}, // never run; images without CMD need one to create
 		Labels: map[string]string{docker.RoleLabel: debugshell.Role, ImageLabel: id},
-	}, &container.HostConfig{NetworkMode: "none"}, nil, nil, "")
+	}, &container.HostConfig{NetworkMode: "none"}, nil, nil, debugshell.HelperName("download", ref))
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +218,7 @@ func (f *FS) ReleaseImage(ctx context.Context, ref string) error {
 	if err != nil {
 		id = ref // may be uninspectable already; still clean by label
 	}
-	if err := f.pool.Remove(ctx, "image:"+id); err != nil {
+	if err := f.pool.Remove(ctx, imageKey(id)); err != nil {
 		return err
 	}
 	list, err := f.cli.ContainerList(ctx, container.ListOptions{All: true,
@@ -201,13 +238,18 @@ func (f *FS) ReleaseImage(ctx context.Context, ref string) error {
 // none keeps its volumes in use.
 func (f *FS) ReleaseContainer(ctx context.Context, ref string) error {
 	t, err := f.cli.ContainerInspect(ctx, ref)
-	if err != nil || t.ContainerJSONBase == nil {
+	if errdefs.IsNotFound(err) || err == nil && t.ContainerJSONBase == nil {
 		return nil // nothing of ours can pin what does not exist
 	}
-	if err := f.pool.Remove(ctx, "pid:"+t.ID); err != nil {
-		return err
+	if err != nil {
+		return err // unknown: deleting now could leave its volumes pinned
 	}
-	return f.pool.Remove(ctx, "vols:"+t.ID)
+	for _, key := range containerKeys(t.ID) {
+		if err := f.pool.Remove(ctx, key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Invalidate forgets cached changes after phyless wrote into a container.

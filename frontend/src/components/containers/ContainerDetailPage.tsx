@@ -61,7 +61,7 @@ type Tab = "info" | "stats" | "files" | "logs" | "inspect";
 const TABS: { key: Tab; label: string; requiresRunning?: true }[] = [
   { key: "info",    label: "基本信息" },
   { key: "stats",   label: "状态",    requiresRunning: true },
-  { key: "files",   label: "文件",    requiresRunning: true },
+  { key: "files",   label: "文件"   },
   { key: "logs",    label: "日志"   },
   { key: "inspect", label: "Inspect" },
 ];
@@ -275,7 +275,7 @@ export const ContainerDetailPage: Component = () => {
   };
 
   // ── File actions ──────────────────────────────────────────────────────────────
-  const files = () => fileSource("container", id());
+  const files = () => fileSource("container", id(), { stopped: state() !== "running" });
   const download = createDownloadTask();
   const downloadFile = (sub: string, name: string) => download.start(files().downloadUrl(sub), `${name}.tar`);
   onCleanup(() => download.cancel());

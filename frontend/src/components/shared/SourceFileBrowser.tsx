@@ -18,8 +18,9 @@ export const SourceFileBrowser: Component<{
   initialPath?: string;
   onPathChange?: (path: string) => void;
   noPopout?: boolean; // already inside the standalone window
+  stopped?: boolean; // container not running: no exec-based delete/rename
 }> = (props) => {
-  const src = () => fileSource(props.src.kind, props.src.id);
+  const src = () => fileSource(props.src.kind, props.src.id, { stopped: props.stopped });
   const op = () => !!props.writable && hasRole("operator");
   const [viewPath, setViewPath] = createSignal<string | null>(null);
   const viewUrl = () => { const p = viewPath(); return p ? src().downloadUrl(p) : null; };

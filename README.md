@@ -2,7 +2,7 @@
 
 轻量的自托管 Docker 管理面板：**一个二进制，无需任何依赖。**
 
-整个程序就是一个约 31 MB 的静态可执行文件（压缩后约 12 MB），网页前端和 Compose 引擎都编译在里面。不需要数据库、运行时或额外的库，也不需要安装 docker CLI 或 docker compose。只要机器上有 Docker Engine，下载后直接运行即可。
+整个程序就是一个约 35 MB 的静态可执行文件（压缩后约 14 MB），网页前端和 Compose 引擎都编译在里面。不需要数据库、运行时或额外的库，也不需要安装 docker CLI 或 docker compose。只要机器上有 Docker Engine，下载后直接运行即可。
 
 [在线演示](https://lisaac.github.io/phyless/) · [Docker 镜像](https://github.com/lisaac/phyless/pkgs/container/phyless) · [下载二进制](https://github.com/lisaac/phyless/releases/latest)
 
@@ -81,7 +81,7 @@ sudo ./phyless-linux-$ARCH -C /var/lib/phyless
 
 ### 轻量
 
-- **单个二进制**：后端、网页和 Compose 引擎编译进同一个文件，Linux amd64 约 31 MB（压缩包约 12 MB）。容器镜像基于 Alpine，里面也只有这一个文件。
+- **单个二进制**：后端、网页和 Compose 引擎编译进同一个文件，Linux amd64 约 35 MB（压缩包约 14 MB）。容器镜像基于 scratch，里面只有这一个文件，根证书也编译在程序里。
 - **无需任何依赖**：静态编译，不依赖 glibc 或其他系统库；不需要数据库，账号和配置是数据目录里的普通文件；Compose 通过内嵌的 Go API 执行，宿主机无需安装 `docker` 或 `docker compose` 命令。
 - **省内存**：默认把堆内存软上限设为 128 MB，路由器、NAS、小 VPS 也跑得动（可用 `GOMEMLIMIT`、`GOGC` 环境变量调整）。
 - **部署简单**：一条 `docker run`，或者下载二进制直接运行。
@@ -106,8 +106,8 @@ Docker 主机与版本、操作系统和内核、总内存、存储驱动与可�
 
 - 列表：状态、端口、镜像、CPU/内存曲线；支持批量启动、停止、重启、删除。
 - 生命周期：启动、停止、重启、暂停/恢复、强制结束、重命名、删除。
-- 详情：配置（inspect）、实时日志、资源占用、进程列表（top）、网页终端（可在独立窗口打开）。
-- 文件：浏览容器内文件，上传、下载、重命名，在容器之间复制文件。
+- 详情：配置（inspect）、实时日志、资源占用、进程列表（top）、网页终端（可在独立窗口打开）。没有 shell 的容器（distroless、scratch）自动进入 busybox 调试模式，不修改目标容器。
+- 文件：浏览容器内文件，上传、下载、重命名，在容器之间复制文件。运行中、已停止、没有 `ls` 的容器都能浏览，不会把整个文件系统传回来。详见 [docs/file-browsing.md](docs/file-browsing.md)。
 - 创建：表单或直接粘贴 `docker run` 命令；可把常用命令保存为模板；随时查看任意容器对应的 `docker run` 命令或 `compose.yaml`。
 - 复制、导出与导入容器。
 - 检查升级 / 升级：单个或批量；显示本地与远端 digest；升级失败自动回滚。详见 [docs/container-upgrade.md](docs/container-upgrade.md)。

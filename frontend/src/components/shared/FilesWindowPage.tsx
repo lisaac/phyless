@@ -62,6 +62,7 @@ export const FilesWindowPage: Component = () => {
           src={{ kind: kind(), id: id(), name: name() }}
           download={download}
           writable
+          stopped={kind() === "container" && container()?.State !== "running"}
           noPopout
           initialPath={(search.path as string) || "/"}
           onPathChange={(path) => setSearch({ path }, { replace: true })}

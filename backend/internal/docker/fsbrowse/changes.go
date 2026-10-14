@@ -22,6 +22,9 @@ const (
 	maxCachedChanges = 300_000
 	// changesTTL frees a container's changes after this long unused.
 	changesTTL = 5 * time.Minute
+	// diffTimeout bounds fetching one container's changes (seconds for 100k
+	// paths over TCP).
+	diffTimeout = time.Minute
 	// maxStats caps per-listing stat calls for entries the changes list has no
 	// metadata for. ponytail: past it entries show without size/mode.
 	maxStats = 256
@@ -79,11 +82,20 @@ func (c *changeCache) get(ctx context.Context, cli client.APIClient, id, finishe
 	c.sets[id] = s
 	c.mu.Unlock()
 
-	raw, err := cli.ContainerDiff(ctx, id)
+	// Detached from the caller: concurrent waiters share this fetch, and a
+	// dropped request should still leave the result cached for its retry.
+	diffCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), diffTimeout)
+	raw, err := cli.ContainerDiff(diffCtx, id)
+	cancel()
 	if err == nil {
 		s.changes = make([]change, len(raw))
 		for i, r := range raw {
-			s.changes[i] = change{path: path.Clean("/" + r.Path), kind: r.Kind}
+			p := r.Path
+			if !strings.HasPrefix(p, "/") {
+				p = "/" + p
+			}
+			// Clean returns an already-clean path as is: no copy per entry.
+			s.changes[i] = change{path: path.Clean(p), kind: r.Kind}
 		}
 		slices.SortFunc(s.changes, func(a, b change) int { return strings.Compare(a.path, b.path) })
 	}
@@ -150,8 +162,13 @@ func (c *changeCache) clear() {
 	c.mu.Unlock()
 }
 
+// search returns the index of the first change at or after p.
+func (s *changeSet) search(p string) int {
+	return sort.Search(len(s.changes), func(i int) bool { return s.changes[i].path >= p })
+}
+
 func (s *changeSet) find(p string) (change, bool) {
-	i := sort.Search(len(s.changes), func(i int) bool { return s.changes[i].path >= p })
+	i := s.search(p)
 	if i < len(s.changes) && s.changes[i].path == p {
 		return s.changes[i], true
 	}
@@ -178,16 +195,21 @@ type child struct {
 func (s *changeSet) children(dir string) map[string]child {
 	prefix := strings.TrimSuffix(dir, "/") + "/"
 	out := map[string]child{}
-	i := sort.Search(len(s.changes), func(i int) bool { return s.changes[i].path >= prefix })
-	for ; i < len(s.changes) && strings.HasPrefix(s.changes[i].path, prefix); i++ {
+	for i := s.search(prefix); i < len(s.changes) && strings.HasPrefix(s.changes[i].path, prefix); {
 		name, _, nested := strings.Cut(s.changes[i].path[len(prefix):], "/")
 		ch := out[name]
-		if nested {
-			ch.dir = true
-		} else {
+		if !nested {
 			ch.kind, ch.explicit = s.changes[i].kind, true
+			out[name] = ch
+			i++
+			continue
 		}
+		// Everything under name/ sorts contiguously before name0 ('0' is
+		// '/'+1): skip the subtree instead of walking it, or a root listing
+		// would scan every change.
+		ch.dir = true
 		out[name] = ch
+		i = s.search(prefix + name + "0")
 	}
 	return out
 }

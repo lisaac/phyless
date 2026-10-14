@@ -47,7 +47,7 @@ exec sh`
 		// Reading /proc/<pid>/root of a process owned by another uid.
 		CapAdd: []string{"SYS_PTRACE"},
 	}
-	resp, err := createDebug(ctx, cli, cfg, hc)
+	resp, err := createDebug(ctx, cli, HelperName("shell", t.Name), cfg, hc)
 	if err != nil {
 		return "", none, fmt.Errorf("创建调试容器失败: %w", err)
 	}
