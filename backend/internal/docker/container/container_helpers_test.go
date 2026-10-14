@@ -152,4 +152,10 @@ func TestExecListDirChecksStreamAndExit(t *testing.T) {
 	if _, err := ExecListDir(context.Background(), c, "id", "/"); err == nil {
 		t.Fatal("nonzero ls exit was accepted")
 	}
+
+	c = &lsClient{output: frame}
+	c.execCode = 127
+	if _, err := ExecListDir(context.Background(), c, "id", "/"); !errors.Is(err, ErrExecNotFound) {
+		t.Fatalf("missing ls not reported as ErrExecNotFound: %v", err)
+	}
 }

@@ -15,13 +15,15 @@ COPY . .
 COPY --from=frontend /frontend/dist ./backend/web/dist
 ARG TARGETOS TARGETARCH TARGETVARIANT
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} CGO_ENABLED=0 \
-    ./scripts/go-build.sh -o phyless ./backend/cmd/server/
+    ./scripts/go-build.sh -o phyless ./backend/cmd/server/ \
+ && mkdir -m 1777 /rootfs-tmp
 
-FROM alpine:latest
-# Compose is embedded through the Go API; the runtime image intentionally has
-# no docker/compose CLI or buildx executable. Keep root certificates for
-# registry HTTPS requests made by the in-process pull backend.
-RUN apk add --no-cache ca-certificates
+# No shell, no package manager: the static binary is the whole runtime.
+# Compose is embedded through the Go API (no docker/compose CLI or buildx);
+# root CAs are compiled in (x509roots/fallback). /tmp is needed by
+# os.CreateTemp (imagefs indexes, uploads).
+FROM scratch
+COPY --from=builder /rootfs-tmp /tmp
 WORKDIR /app
 COPY --from=builder /app/phyless .
 VOLUME /data

@@ -13,6 +13,9 @@ import (
 	"phyless/backend/internal/api"
 	"phyless/backend/internal/docker/self"
 	"phyless/backend/internal/store"
+
+	// Bundled Mozilla roots, used only when the system has none (scratch image).
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 const defaultDataDir = "./data"

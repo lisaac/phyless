@@ -16,9 +16,11 @@ require (
 	github.com/google/go-containerregistry v0.20.6
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/moby/buildkit v0.25.1
+	github.com/moby/docker-image-spec v1.3.1
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/crypto v0.56.0
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20261011195143-3b414e3e8284
 	golang.org/x/net v0.57.0
 )
 
@@ -104,7 +106,6 @@ require (
 	github.com/miekg/pkcs11 v1.1.1 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
-	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.1.0 // indirect
 	github.com/moby/locker v1.0.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect

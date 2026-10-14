@@ -665,9 +665,13 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var entries []dockercontainer.FileEntry
-	if s.imagefs == nil || (inspect.ContainerJSONBase != nil && inspect.State != nil && inspect.State.Running && !inspect.State.Paused) {
+	running := inspect.ContainerJSONBase != nil && inspect.State != nil && inspect.State.Running && !inspect.State.Paused
+	if s.imagefs == nil || running {
 		entries, err = dockercontainer.ExecListDir(r.Context(), s.docker, id, dirPath)
-	} else {
+	}
+	// ponytail: no ls (distroless) falls back to the archive snapshot, which is
+	// a full-fs scan cached for minutes; a readdir API would make it live.
+	if s.imagefs != nil && (!running || errors.Is(err, dockercontainer.ErrExecNotFound)) {
 		entries, err = s.imagefs.ListContainer(r.Context(), id, dirPath)
 	}
 	if err != nil {

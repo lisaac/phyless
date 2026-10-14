@@ -98,7 +98,7 @@ type FileEntry struct {
 }
 
 // ExecListDir lists direct children of path by running ls inside the container.
-// Only works for running containers; returns an error for stopped/distroless containers.
+// Only works for running containers; wraps ErrExecNotFound when there is no ls.
 func ExecListDir(ctx context.Context, cli client.APIClient, containerID, path string) ([]FileEntry, error) {
 	return execLs(ctx, cli, containerID, path)
 }
@@ -363,6 +363,10 @@ func ExecChecked(ctx context.Context, cli client.APIClient, containerID string, 
 	return waitExec(ctx, cli, execResp.ID)
 }
 
+// ErrExecNotFound means the exec'd command is missing or not executable in the
+// container (shell exit codes 126/127), e.g. a distroless image without ls.
+var ErrExecNotFound = errors.New("command not found in container")
+
 func waitExec(ctx context.Context, cli client.APIClient, execID string) error {
 	if strings.TrimSpace(execID) == "" {
 		return fmt.Errorf("Docker returned an empty exec ID")
@@ -373,6 +377,9 @@ func waitExec(ctx context.Context, cli client.APIClient, execID string) error {
 			return err
 		}
 		if !inspect.Running {
+			if inspect.ExitCode == 126 || inspect.ExitCode == 127 {
+				return fmt.Errorf("%w (status %d)", ErrExecNotFound, inspect.ExitCode)
+			}
 			if inspect.ExitCode != 0 {
 				return fmt.Errorf("exec exited with status %d", inspect.ExitCode)
 			}
