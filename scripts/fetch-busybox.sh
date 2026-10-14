@@ -27,7 +27,8 @@ sha512() { if command -v sha512sum >/dev/null; then sha512sum "$1"; else shasum 
 if [ "${1:-}" = --source ]; then
 	out=${2:?usage: $0 --source DIR}
 	mkdir -p "$out"
-	curl -fsSL "https://busybox.net/downloads/busybox-$UPSTREAM.tar.bz2" -o "$out/busybox-$UPSTREAM.tar.bz2"
+	# busybox.net and mirrors block curl from CI runners (HTTP 418).
+	python3 -c "import urllib.request; urllib.request.urlretrieve('https://busybox.net/downloads/busybox-$UPSTREAM.tar.bz2', '$out/busybox-$UPSTREAM.tar.bz2')"
 	[ "$(sha512 "$out/busybox-$UPSTREAM.tar.bz2")" = "$UPSTREAM_SHA512" ] || { echo "busybox-$UPSTREAM.tar.bz2: checksum mismatch" >&2; exit 1; }
 	# Alpine's build recipe: APKBUILD, patches and configs at that commit.
 	curl -fsSL "https://gitlab.alpinelinux.org/alpine/aports/-/archive/$APORTS/aports-$APORTS.tar.gz?path=main/busybox" \
