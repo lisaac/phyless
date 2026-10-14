@@ -307,3 +307,26 @@ func TestChildrenSkipsSubtreesWithoutMissingSiblings(t *testing.T) {
 		}
 	}
 }
+
+func TestListContainerDiffShowsOnlyChangesWithTheirDirectories(t *testing.T) {
+	f := stopped()
+	fs := New(f)
+	root, err := fs.ListContainerDiff(context.Background(), "target", "/")
+	if err != nil || names(root) != "app/ bin etc" { // the fake stats only /app as a dir
+		t.Fatalf("root=%v err=%v", names(root), err)
+	}
+	changes := map[string]string{}
+	for _, e := range root {
+		changes[e.Name] = e.Change
+	}
+	if changes["app"] != "A" || changes["bin"] != "D" || changes["etc"] != "C" {
+		t.Fatalf("changes=%v", changes)
+	}
+	etc, err := fs.ListContainerDiff(context.Background(), "target", "/etc")
+	if err != nil || names(etc) != "hosts new.conf" || etc[0].Change != "C" || etc[1].Mode != "-rw-------" {
+		t.Fatalf("etc=%+v err=%v", etc, err)
+	}
+	if len(f.creates) != 0 || f.diffs != 1 { // no browse box, one diff
+		t.Fatalf("creates=%d diffs=%d", len(f.creates), f.diffs)
+	}
+}

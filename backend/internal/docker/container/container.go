@@ -95,6 +95,9 @@ type FileEntry struct {
 	Uname   string `json:"uname"`
 	Uid     int    `json:"uid"`
 	Gid     int    `json:"gid"`
+	// Change is set by diff listings: A added, C changed, D deleted, empty for
+	// a directory that only has changes beneath it.
+	Change string `json:"change,omitempty"`
 }
 
 // ExecLs lists the direct children of path by exec'ing `ls -la` in a running

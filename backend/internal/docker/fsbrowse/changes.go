@@ -248,6 +248,26 @@ func merge(base []ctr.FileEntry, kids map[string]child) (out []ctr.FileEntry, ne
 	return out, need
 }
 
+// diffEntries turns dir's changed children into entries; all but deleted ones
+// are returned in need for a stat (deleted paths no longer exist to stat).
+func diffEntries(kids map[string]child) (out []ctr.FileEntry, need []int) {
+	out = make([]ctr.FileEntry, 0, len(kids))
+	for name, ch := range kids {
+		e := ctr.FileEntry{Name: name, Mode: "-?????????"}
+		if ch.dir {
+			e.IsDir, e.Mode = true, "d?????????"
+		}
+		if ch.explicit {
+			e.Change = ch.kind.String()
+		}
+		if e.Change != "D" {
+			need = append(need, len(out))
+		}
+		out = append(out, e)
+	}
+	return out, need
+}
+
 // stat fills real metadata for out[need] (capped, cached per changeSet).
 func (s *changeSet) stat(ctx context.Context, cli client.APIClient, id, dir string, out []ctr.FileEntry, need []int) {
 	if len(need) > maxStats {
@@ -261,6 +281,7 @@ func (s *changeSet) stat(ctx context.Context, cli client.APIClient, id, dir stri
 		cached, ok := s.stats[full]
 		s.statMu.Unlock()
 		if ok {
+			cached.Change = out[i].Change
 			out[i] = cached
 			continue
 		}
@@ -272,7 +293,7 @@ func (s *changeSet) stat(ctx context.Context, cli client.APIClient, id, dir stri
 			if err != nil {
 				return
 			}
-			*e = ctr.FileEntry{Name: e.Name, Size: st.Size, Mode: modeString(st.Mode), IsDir: st.Mode.IsDir()}
+			*e = ctr.FileEntry{Name: e.Name, Size: st.Size, Mode: modeString(st.Mode), IsDir: st.Mode.IsDir(), Change: e.Change}
 			if st.Mode&fs.ModeSymlink != 0 {
 				e.Size = 0
 			}

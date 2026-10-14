@@ -662,7 +662,11 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 	if dirPath == "" {
 		dirPath = "/"
 	}
-	entries, err := s.fs.ListContainer(r.Context(), id, dirPath)
+	list := s.fs.ListContainer
+	if r.URL.Query().Get("diff") == "1" {
+		list = s.fs.ListContainerDiff
+	}
+	entries, err := list(r.Context(), id, dirPath)
 	if errdefs.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return

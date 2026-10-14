@@ -143,6 +143,36 @@ func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry,
 	}
 }
 
+// ListContainerDiff lists only what changed in p relative to the image (docker
+// diff), keeping the directory structure: a directory appears when something
+// beneath it changed.
+func (f *FS) ListContainerDiff(ctx context.Context, ref, p string) ([]ctr.FileEntry, error) {
+	t, err := f.cli.ContainerInspect(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	if t.ContainerJSONBase == nil || t.State == nil {
+		return nil, fmt.Errorf("容器状态未知: %s", ref)
+	}
+	p = path.Clean("/" + p)
+	key := t.State.FinishedAt
+	if t.State.Running {
+		// ponytail: a running container's changes move; reuse them for 10s
+		// so drilling down doesn't refetch each level.
+		key = "running@" + time.Now().Truncate(10*time.Second).String()
+	}
+	cs, err := f.changes.get(ctx, f.cli, t.ID, key)
+	if err != nil {
+		return nil, err
+	}
+	out, need := diffEntries(cs.children(p))
+	statCtx, cancel := context.WithTimeout(ctx, statTimeout)
+	defer cancel()
+	cs.stat(statCtx, f.cli, t.ID, p, out, need)
+	slices.SortFunc(out, func(a, b ctr.FileEntry) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
 // listStopped lists a stopped container's filesystem without streaming its
 // bytes (a 4 GB layer took minutes via archive/export). One browse container
 // — its image with its own volumes mounted read-only — serves every path:

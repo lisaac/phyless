@@ -139,6 +139,7 @@ export interface FileEntry {
   uname?: string;
   uid?: number;
   gid?: number;
+  change?: "A" | "C" | "D"; // diff listings only; absent on a dir with changes beneath
 }
 
 export interface Template {

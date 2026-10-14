@@ -34,6 +34,8 @@ function pathSegments(p: string) {
 
 interface FileBrowserProps {
   listPath: (sub: string) => Promise<FileEntry[]>;
+  // Shows a "diff" toggle that lists only changes relative to the image.
+  listDiff?: (sub: string) => Promise<FileEntry[]>;
   // (fullSubPath, displayName) — the caller drives the actual transfer
   // (progress widget, auth, etc.); this just tells it what got clicked.
   onDownload?: (sub: string, name: string) => void;
@@ -76,7 +78,11 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
     props.instanceKey;
     setPath(props.initialPath ?? "/");
   });
-  const [entries, { refetch }] = createResource(() => [props.instanceKey, path()] as const, ([, p]) => props.listPath(p));
+  const [diff, setDiff] = createSignal(false);
+  const [entries, { refetch }] = createResource(
+    () => [props.instanceKey, path(), diff() && !!props.listDiff] as const,
+    ([, p, d]) => (d ? props.listDiff!(p) : props.listPath(p)),
+  );
   const [sortCol, setSortCol] = createSignal("name");
   const [sortDir, setSortDir] = createSignal<1 | -1>(1);
   const toggleSort = (col: string) => {
@@ -243,6 +249,14 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
           </label>
         </Show>
 
+        <Show when={props.listDiff}>
+          <button
+            class={`shrink-0 px-2 py-0.5 text-xs transition-colors ${diff() ? "bg-indigo-500/15 text-indigo-300" : "text-zinc-500 hover:text-zinc-200"}`}
+            title="只显示相对镜像的改动（A 新增 / C 修改 / D 删除）"
+            onClick={() => setDiff((d) => !d)}
+          >± diff</button>
+        </Show>
+
         <Show when={props.popout}>
           {(ref) => (
             <button
@@ -292,21 +306,32 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
             <For each={sorted()}>
               {(e) => {
                 const isRenaming = () => renamingName() === e.name;
+                const gone = e.change === "D";
                 return (
                   <tr class="border-t border-zinc-800/50 hover:bg-white/[0.03] transition-colors">
                     <td class="py-1 pr-3">
-                      <Show when={isRenaming()} fallback={
+                      <Show when={isRenaming()} fallback={<>
                         <span
-                          class={`cursor-pointer font-mono text-xs transition-colors ${
-                            e.is_dir
-                              ? "font-medium text-sky-400 hover:text-sky-300"
-                              : "text-zinc-300 hover:text-zinc-100"
+                          class={`font-mono text-xs transition-colors ${
+                            gone
+                              ? "text-zinc-500 line-through"
+                              : e.is_dir
+                                ? "cursor-pointer font-medium text-sky-400 hover:text-sky-300"
+                                : "cursor-pointer text-zinc-300 hover:text-zinc-100"
                           }`}
-                          onClick={() => enter(e)}
+                          onClick={() => { if (!gone) enter(e); }}
                         >
                           {e.is_dir ? "▸ " : "  "}{e.name}
                         </span>
-                      }>
+                        <Show when={e.change}>
+                          {(c) => (
+                            <span
+                              class={`ml-2 font-mono text-[10px] ${{ A: "text-emerald-400", C: "text-amber-400", D: "text-red-400" }[c()]}`}
+                              title={{ A: "新增", C: "修改", D: "删除" }[c()]}
+                            >{c()}</span>
+                          )}
+                        </Show>
+                      </>}>
                         <input
                           class="border border-zinc-600 bg-zinc-900 px-1 font-mono text-xs text-zinc-100 outline-none"
                           value={renameVal()}
@@ -321,10 +346,10 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                     <td class="hidden py-1 pr-3 text-[11px] text-zinc-400 sm:table-cell">
                       {e.uname ?? (e.uid != null ? String(e.uid) : "")}{e.gid != null ? `:${e.gid}` : ""}
                     </td>
-                    <td class="py-1 pr-3 text-right font-mono text-[11px] text-zinc-400">{e.is_dir ? "—" : fmtSize(e.size)}</td>
+                    <td class="py-1 pr-3 text-right font-mono text-[11px] text-zinc-400">{e.is_dir || gone ? "—" : fmtSize(e.size)}</td>
                     <td class="hidden py-1 pr-3 text-[11px] text-zinc-400 sm:table-cell">{fmtTime(e.mod_time)}</td>
                     <td class="py-1">
-                      <div class="flex gap-2">
+                      <div class="flex gap-2" classList={{ hidden: gone }}>
                         <Show when={props.onRename}>
                           <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => startRename(e)}>重命名</button>
                         </Show>
@@ -350,7 +375,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
           </tbody>
         </table>
         <Show when={sorted().length === 0}>
-          <p class="py-4 text-center text-xs text-zinc-500">空目录</p>
+          <p class="py-4 text-center text-xs text-zinc-500">{diff() ? "此目录下无改动" : "空目录"}</p>
         </Show>
         </div>
         <Show when={entries.loading}>

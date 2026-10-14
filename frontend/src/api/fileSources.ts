@@ -30,6 +30,8 @@ export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: b
 
   return {
     listPath: (sub: string) => get<FileEntry[]>(url("", `path=${e(sub)}`)),
+    // Only what changed relative to the image (docker diff), directories kept.
+    listDiff: kind !== "container" ? undefined : (sub: string) => get<FileEntry[]>(url("", `path=${e(sub)}&diff=1`)),
     // Tar stream of a file/dir — also what the read-only viewer opens files through.
     downloadUrl: (sub: string) => url("/download", `path=${e(sub)}&token=${e(getToken() ?? "")}`),
     upload: !writable ? undefined : async (dir: string, file: File) => {
