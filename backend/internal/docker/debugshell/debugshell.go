@@ -16,9 +16,9 @@ import (
 )
 
 // Start creates the debug container for target and attaches to its shell.
-// The shell is the container's only process and stdin is StdinOnce, so
-// closing resp (or phyless dying) ends the shell and AutoRemove deletes the
-// container — nothing is left behind.
+// The shell is the container's main process (beside a sleep that anchors
+// /proc/<pid>/root) and stdin is StdinOnce, so closing resp (or phyless dying)
+// ends the shell, the container with it, and AutoRemove deletes it — nothing is left behind.
 func Start(ctx context.Context, cli client.APIClient, target string) (string, types.HijackedResponse, error) {
 	var none types.HijackedResponse
 	t, err := cli.ContainerInspect(ctx, target)
@@ -28,8 +28,21 @@ func Start(ctx context.Context, cli client.APIClient, target string) (string, ty
 	if t.ContainerJSONBase == nil || t.State == nil || !t.State.Running || t.State.Paused {
 		return "", none, fmt.Errorf("容器未运行，无法进入调试模式")
 	}
-	script := `/bin/busybox --install -s /bin
-printf '\033[33m[phyless] 容器内没有 shell，已进入调试模式：busybox 调试容器共享目标的进程与网络命名空间\n目标文件系统位于 %s\033[0m\n' "$ROOT"
+	// chroot into the target without mounting anything: /proc/$K/root is a
+	// magic link that still leads back to this container's /bin after the
+	// chroot, since the target's /proc shows the shared PID namespace. Hard
+	// links, not -s: absolute symlinks would resolve inside the target. If
+	// chroot fails (no /proc in the target, say), fall back to cd "$ROOT".
+	script := `/bin/busybox --install /bin
+sleep 2147483647 & K=$!
+B=/proc/$K/root/bin
+printf '\033[33m[phyless] 容器内没有 shell，已进入调试模式：busybox 调试容器共享目标的进程与网络命名空间\033[0m\n'
+if chroot "$ROOT" $B/busybox true 2>/dev/null; then
+  printf '\033[33m已 chroot 到目标文件系统（/ 即目标的 /），busybox 位于 %s\033[0m\n' "$B"
+  PATH=$B:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin exec chroot "$ROOT" $B/busybox sh
+fi
+kill $K
+printf '\033[33mchroot 失败，已回退：目标文件系统位于 %s\033[0m\n' "$ROOT"
 cd "$ROOT" 2>/dev/null || echo "无法进入 $ROOT"
 exec sh`
 	cfg := &container.Config{

@@ -69,7 +69,8 @@ phyless 要能浏览任意镜像和任意状态容器里的文件，也要能给
 终端请求的 shell 是绝对路径（默认 `/bin/sh`），用 `ContainerStatPath` 确认它在目标里不存在时，自动进入调试模式：
 
 - 调试容器用调试镜像创建，共享目标的 PID 和网络命名空间，加 `SYS_PTRACE` 权限（读取其他 uid 进程的 `/proc/<pid>/root` 需要它）。
-- 启动后执行 `busybox --install`，进入目标的文件系统目录，并在终端里用黄字提示当前是调试模式。
+- 启动后执行 `busybox --install`（硬链接，不用 `-s`：绝对路径的软链接在 chroot 后会指向目标里不存在的 busybox），后台留一个 `sleep`（PID 记为 K），然后 `chroot /proc/1/root /proc/K/root/bin/busybox sh`。`/proc/K/root` 是魔法链接，chroot 后仍指回调试容器的 `/bin`，而目标的 `/proc` 显示的是共享的 PID 命名空间，所以不用挂载、不加权限、不改目标，`/etc` 等绝对路径就是目标的。`PATH` 把 `/proc/K/root/bin` 放在最前。
+- chroot 失败（比如目标没有挂载 `/proc`）时回退到旧模式：不 chroot，只 `cd` 到目标的文件系统目录。两种模式都在终端里用黄字提示。
 - shell 就是容器的主进程，用 attach 接入，设置 `StdinOnce` 和 `AutoRemove`：会话结束或 phyless 崩溃时，shell 读到 EOF 退出，容器自动删除。正常结束时还会再显式删除一次。
 
 ## 命名、标签和可见性
