@@ -218,6 +218,16 @@ func TestListStoppedContainerMountUsesItsVolumes(t *testing.T) {
 	if err != nil || names(got) != "db/" || len(f.creates) != 1 || f.creates[0].VolumesFrom[0] != "target:ro" || f.diffs != 0 {
 		t.Fatalf("got=%v err=%v creates=%+v diffs=%d", names(got), err, f.creates, f.diffs)
 	}
+	if got[0].Mount == nil || got[0].Mount.Destination != "/data" { // contents inherit the mount tag
+		t.Fatalf("mount not tagged: %+v", got[0])
+	}
+	f.target.Mounts = append(f.target.Mounts, container.MountPoint{Destination: "/etc/app.conf"})
+	root, _ := New(f).ListContainer(context.Background(), "target", "/")
+	for _, e := range root {
+		if e.Mount != nil || e.MountBelow != (e.Name == "etc") {
+			t.Fatalf("%+v mis-tagged", e)
+		}
+	}
 }
 
 func TestChangesAreCachedUntilTheContainerRunsOrIsWritten(t *testing.T) {
@@ -311,7 +321,7 @@ func TestChildrenSkipsSubtreesWithoutMissingSiblings(t *testing.T) {
 func TestListContainerDiffShowsOnlyChangesWithTheirDirectories(t *testing.T) {
 	f := stopped()
 	fs := New(f)
-	root, err := fs.ListContainerDiff(context.Background(), "target", "/")
+	root, err := fs.ListContainerDiff(context.Background(), "target", "/", true)
 	if err != nil || names(root) != "app/ bin etc" { // the fake stats only /app as a dir
 		t.Fatalf("root=%v err=%v", names(root), err)
 	}
@@ -319,12 +329,16 @@ func TestListContainerDiffShowsOnlyChangesWithTheirDirectories(t *testing.T) {
 	for _, e := range root {
 		changes[e.Name] = e.Change
 	}
-	if changes["app"] != "A" || changes["bin"] != "D" || changes["etc"] != "C" {
+	if changes["app"] != "A" || changes["bin"] != "D" || changes["etc"] != "C" || root[0].Kinds != "A" {
 		t.Fatalf("changes=%v", changes)
 	}
-	etc, err := fs.ListContainerDiff(context.Background(), "target", "/etc")
+	etc, err := fs.ListContainerDiff(context.Background(), "target", "/etc", true)
 	if err != nil || names(etc) != "hosts new.conf" || etc[0].Change != "C" || etc[1].Mode != "-rw-------" {
 		t.Fatalf("etc=%+v err=%v", etc, err)
+	}
+	marks, err := fs.ListContainerDiff(context.Background(), "target", "/etc", false)
+	if err != nil || marks[0].Mode != "-?????????" { // names only, no stat
+		t.Fatalf("marks=%+v err=%v", marks, err)
 	}
 	if len(f.creates) != 0 || f.diffs != 1 { // no browse box, one diff
 		t.Fatalf("creates=%d diffs=%d", len(f.creates), f.diffs)

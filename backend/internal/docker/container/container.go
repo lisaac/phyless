@@ -98,6 +98,19 @@ type FileEntry struct {
 	// Change is set by diff listings: A added, C changed, D deleted, empty for
 	// a directory that only has changes beneath it.
 	Change string `json:"change,omitempty"`
+	// Kinds lists the change kinds beneath a directory in diff listings
+	// (e.g. "AC"), so a filter by kind knows which directories to keep.
+	Kinds string `json:"kinds,omitempty"`
+	// Mount is set when the entry is a mount point or lies inside one.
+	Mount *MountRef `json:"mount,omitempty"`
+	// MountBelow marks a directory with a mount point somewhere beneath it.
+	MountBelow bool `json:"mount_below,omitempty"`
+}
+
+type MountRef struct {
+	Type        string `json:"type"` // volume, bind, …
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
 }
 
 // ExecLs lists the direct children of path by exec'ing `ls -la` in a running

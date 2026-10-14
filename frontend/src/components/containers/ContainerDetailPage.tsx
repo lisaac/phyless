@@ -706,6 +706,7 @@ export const ContainerDetailPage: Component = () => {
           instanceKey={id()}
           listPath={(sub) => files().listPath(sub)}
           listDiff={files().listDiff}
+          listMarks={files().listMarks}
           onDownload={downloadFile}
           onOpenFile={openFile}
           onUpload={hasRole("operator") ? files().upload : undefined}

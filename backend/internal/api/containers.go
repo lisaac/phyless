@@ -662,11 +662,15 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 	if dirPath == "" {
 		dirPath = "/"
 	}
-	list := s.fs.ListContainer
-	if r.URL.Query().Get("diff") == "1" {
-		list = s.fs.ListContainerDiff
+	var entries []dockercontainer.FileEntry
+	var err error
+	// diff=1: changed entries with metadata; diff=marks: names and kinds only.
+	switch d := r.URL.Query().Get("diff"); d {
+	case "1", "marks":
+		entries, err = s.fs.ListContainerDiff(r.Context(), id, dirPath, d == "1")
+	default:
+		entries, err = s.fs.ListContainer(r.Context(), id, dirPath)
 	}
-	entries, err := list(r.Context(), id, dirPath)
 	if errdefs.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return

@@ -248,6 +248,30 @@ func merge(base []ctr.FileEntry, kids map[string]child) (out []ctr.FileEntry, ne
 	return out, need
 }
 
+// kindsUnder returns the change kinds beneath dir, in "ACD" order.
+// ponytail: walks the subtree (~100k changes at the root is a few ms).
+func (s *changeSet) kindsUnder(dir string) string {
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var seen [3]bool
+	for i := s.search(prefix); i < len(s.changes) && strings.HasPrefix(s.changes[i].path, prefix); i++ {
+		switch s.changes[i].kind {
+		case container.ChangeAdd:
+			seen[0] = true
+		case container.ChangeModify:
+			seen[1] = true
+		case container.ChangeDelete:
+			seen[2] = true
+		}
+	}
+	out := ""
+	for i, k := range "ACD" {
+		if seen[i] {
+			out += string(k)
+		}
+	}
+	return out
+}
+
 // diffEntries turns dir's changed children into entries; all but deleted ones
 // are returned in need for a stat (deleted paths no longer exist to stat).
 func diffEntries(kids map[string]child) (out []ctr.FileEntry, need []int) {
@@ -281,7 +305,7 @@ func (s *changeSet) stat(ctx context.Context, cli client.APIClient, id, dir stri
 		cached, ok := s.stats[full]
 		s.statMu.Unlock()
 		if ok {
-			cached.Change = out[i].Change
+			cached.Change, cached.Kinds = out[i].Change, out[i].Kinds
 			out[i] = cached
 			continue
 		}
@@ -293,7 +317,7 @@ func (s *changeSet) stat(ctx context.Context, cli client.APIClient, id, dir stri
 			if err != nil {
 				return
 			}
-			*e = ctr.FileEntry{Name: e.Name, Size: st.Size, Mode: modeString(st.Mode), IsDir: st.Mode.IsDir(), Change: e.Change}
+			*e = ctr.FileEntry{Name: e.Name, Size: st.Size, Mode: modeString(st.Mode), IsDir: st.Mode.IsDir(), Change: e.Change, Kinds: e.Kinds}
 			if st.Mode&fs.ModeSymlink != 0 {
 				e.Size = 0
 			}

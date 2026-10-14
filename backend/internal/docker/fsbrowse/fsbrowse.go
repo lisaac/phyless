@@ -125,6 +125,22 @@ func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry,
 		return nil, fmt.Errorf("容器状态未知: %s", ref)
 	}
 	p = path.Clean("/" + p)
+	entries, err := f.listContainer(ctx, t, p)
+	for i := range entries {
+		full := path.Join(p, entries[i].Name)
+		if m, ok := mountOf(t.Mounts, full); ok {
+			entries[i].Mount = &ctr.MountRef{Type: string(m.Type), Source: m.Source, Destination: m.Destination}
+		}
+		for _, m := range t.Mounts {
+			if strings.HasPrefix(path.Clean("/"+m.Destination), full+"/") {
+				entries[i].MountBelow = true
+			}
+		}
+	}
+	return entries, err
+}
+
+func (f *FS) listContainer(ctx context.Context, t container.InspectResponse, p string) ([]ctr.FileEntry, error) {
 	switch {
 	case t.State.Running && !t.State.Paused && !f.pool.Has(pidKey(t.ID)):
 		// Its own ls is live and free; a pid box for it means it has none.
@@ -145,8 +161,9 @@ func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry,
 
 // ListContainerDiff lists only what changed in p relative to the image (docker
 // diff), keeping the directory structure: a directory appears when something
-// beneath it changed.
-func (f *FS) ListContainerDiff(ctx context.Context, ref, p string) ([]ctr.FileEntry, error) {
+// beneath it changed. Without stat it returns names and change kinds only,
+// enough to mark a normal listing.
+func (f *FS) ListContainerDiff(ctx context.Context, ref, p string, stat bool) ([]ctr.FileEntry, error) {
 	t, err := f.cli.ContainerInspect(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -166,9 +183,16 @@ func (f *FS) ListContainerDiff(ctx context.Context, ref, p string) ([]ctr.FileEn
 		return nil, err
 	}
 	out, need := diffEntries(cs.children(p))
-	statCtx, cancel := context.WithTimeout(ctx, statTimeout)
-	defer cancel()
-	cs.stat(statCtx, f.cli, t.ID, p, out, need)
+	for i := range out {
+		if out[i].IsDir {
+			out[i].Kinds = cs.kindsUnder(path.Join(p, out[i].Name))
+		}
+	}
+	if stat {
+		statCtx, cancel := context.WithTimeout(ctx, statTimeout)
+		defer cancel()
+		cs.stat(statCtx, f.cli, t.ID, p, out, need)
+	}
 	slices.SortFunc(out, func(a, b ctr.FileEntry) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
 }
@@ -308,13 +332,21 @@ func (f *FS) remove(ctx context.Context, id string) error {
 
 // underMount reports whether p is a mount destination or lies beneath one.
 func underMount(mounts []container.MountPoint, p string) bool {
+	_, ok := mountOf(mounts, p)
+	return ok
+}
+
+// mountOf returns the innermost mount p is or lies beneath.
+func mountOf(mounts []container.MountPoint, p string) (container.MountPoint, bool) {
+	var best container.MountPoint
+	found := false
 	for _, m := range mounts {
 		d := path.Clean("/" + m.Destination)
-		if p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/") {
-			return true
+		if (p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/")) && (!found || len(d) > len(path.Clean("/"+best.Destination))) {
+			best, found = m, true
 		}
 	}
-	return false
+	return best, found
 }
 
 type removeOnClose struct {

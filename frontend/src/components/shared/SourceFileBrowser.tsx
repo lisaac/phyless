@@ -33,6 +33,7 @@ export const SourceFileBrowser: Component<{
         onPathChange={props.onPathChange}
         listPath={(sub) => src().listPath(sub)}
         listDiff={src().listDiff}
+        listMarks={src().listMarks}
         onDownload={(sub, n) => props.download.start(src().downloadUrl(sub), `${n}.tar`)}
         onOpenFile={async (p) => { if (await confirmOpenText(p)) setViewPath(p); }}
         onUpload={op() ? src().upload : undefined}

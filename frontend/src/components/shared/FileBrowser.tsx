@@ -24,6 +24,19 @@ const Spinner: Component<{ size?: number }> = (p) => (
   </svg>
 );
 
+type Change = "A" | "C" | "D";
+const CHANGES: Change[] = ["A", "C", "D"];
+const CHANGE_LABEL: Record<Change, string> = { A: "新增", C: "修改", D: "删除" };
+const CHANGE_COLOR: Record<Change, string> = {
+  A: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400",
+  C: "border-amber-500/40 bg-amber-500/15 text-amber-400",
+  D: "border-red-500/40 bg-red-500/15 text-red-400",
+};
+// Same look as the compose list's「运行中发现」tag.
+const tagClass = "border px-1.5 py-0.5 text-[10px] leading-none";
+
+const isMount = (e: FileEntry) => !!e.mount || !!e.mount_below;
+
 function pathSegments(p: string) {
   const parts = p.split("/").filter(Boolean);
   return [
@@ -36,6 +49,8 @@ interface FileBrowserProps {
   listPath: (sub: string) => Promise<FileEntry[]>;
   // Shows a "diff" toggle that lists only changes relative to the image.
   listDiff?: (sub: string) => Promise<FileEntry[]>;
+  // Names + change kinds of a directory, to tag A/C on the normal listing.
+  listMarks?: (sub: string) => Promise<FileEntry[]>;
   // (fullSubPath, displayName) — the caller drives the actual transfer
   // (progress widget, auth, etc.); this just tells it what got clicked.
   onDownload?: (sub: string, name: string) => void;
@@ -79,9 +94,44 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
     setPath(props.initialPath ?? "/");
   });
   const [diff, setDiff] = createSignal(false);
+  const [mountOnly, setMountOnly] = createSignal(false);
+  const [kinds, setKinds] = createSignal<Set<Change>>(new Set(CHANGES));
+  const toggleKind = (k: Change) => setKinds((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const [entries, { refetch }] = createResource(
-    () => [props.instanceKey, path(), diff() && !!props.listDiff] as const,
-    ([, p, d]) => (d ? props.listDiff!(p) : props.listPath(p)),
+    () => [props.instanceKey, path(), diff() && !!props.listDiff, mountOnly()] as const,
+    async ([, p, d, m]) => {
+      if (d && m) {
+        // Union: the diff never covers mounts, so mounts come from the normal
+        // listing, merged by name (a changed dir may also hold a mount).
+        const [ds, ns] = await Promise.all([props.listDiff!(p), props.listPath(p)]);
+        const byName = new Map(ds.map((e) => [e.name, e]));
+        for (const n of ns.filter(isMount)) {
+          const e = byName.get(n.name);
+          byName.set(n.name, e ? { ...e, mount: n.mount, mount_below: n.mount_below } : n);
+        }
+        return [...byName.values()];
+      }
+      if (d) return props.listDiff!(p);
+      try {
+        return await props.listPath(p);
+      } catch (err) {
+        // A file path (e.g. a file bind mount) can't be listed: show the
+        // directory that holds it instead.
+        const dir = p.replace(/\/+$/, "").replace(/\/[^/]+$/, "") || "/";
+        const name = p.replace(/\/+$/, "").split("/").pop();
+        if (dir === p) throw err;
+        const siblings = await props.listPath(dir).catch(() => { throw err; });
+        if (!siblings.some((e) => e.name === name && !e.is_dir)) throw err;
+        nav(dir); // ponytail: refetches dir once more; cheap next to the failed try
+        return siblings;
+      }
+    },
+  );
+  // Fetched beside the listing, never blocking it: rows get their A/C tag
+  // when the (possibly slower) change list arrives.
+  const [marks] = createResource(
+    () => (props.listMarks && !diff() ? [props.instanceKey, path()] as const : false),
+    ([, p]) => props.listMarks!(p).then((es) => new Map(es.map((e) => [e.name, e]))).catch(() => new Map<string, FileEntry>()),
   );
   const [sortCol, setSortCol] = createSignal("name");
   const [sortDir, setSortDir] = createSignal<1 | -1>(1);
@@ -94,7 +144,19 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
   // app to a bare "加载中…" on every folder click — blanking the modal (and
   // its click-outside-to-close) and jumping the page. `.latest` keeps the
   // previous rows visible during refetch and never triggers Suspense.
-  const rows = () => entries.latest;
+  const rows = () => {
+    const es = entries.latest;
+    if (!es) return es;
+    if (diff()) {
+      // A dir without its own change stays while anything beneath matches.
+      const ks = kinds();
+      return es.filter((e) => (e.change && ks.has(e.change)) || [...(e.kinds ?? "")].some((k) => ks.has(k as Change))
+        || (mountOnly() && isMount(e)));
+    }
+    const m = marks.latest;
+    const shown = mountOnly() ? es.filter(isMount) : es;
+    return m ? shown.map((e) => (m.get(e.name)?.change ? { ...e, change: m.get(e.name)!.change } : e)) : shown;
+  };
   const sorted = createMemo(() => {
     const es = [...(rows() ?? [])];
     const col = sortCol(), dir = sortDir();
@@ -255,6 +317,23 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
             title="只显示相对镜像的改动（A 新增 / C 修改 / D 删除）"
             onClick={() => setDiff((d) => !d)}
           >± diff</button>
+          <Show when={diff()}>
+            <For each={CHANGES}>
+              {(k) => (
+                <button
+                  class={`${tagClass} shrink-0 font-mono transition-opacity ${CHANGE_COLOR[k]} ${kinds().has(k) ? "" : "opacity-30"}`}
+                  title={`${kinds().has(k) ? "隐藏" : "显示"}${CHANGE_LABEL[k]}`}
+                  onClick={() => toggleKind(k)}
+                >{k}</button>
+              )}
+            </For>
+          </Show>
+          {/* Container-only like diff: only container listings carry mounts. */}
+          <button
+            class={`shrink-0 px-2 py-0.5 text-xs transition-colors ${mountOnly() ? "bg-violet-500/15 text-violet-300" : "text-zinc-500 hover:text-zinc-200"}`}
+            title="只显示挂载（volume / bind）及其所在目录；与 diff 同时开启时显示两者的并集"
+            onClick={() => setMountOnly((v) => !v)}
+          >⛁ mount</button>
         </Show>
 
         <Show when={props.popout}>
@@ -324,11 +403,14 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                           {e.is_dir ? "▸ " : "  "}{e.name}
                         </span>
                         <Show when={e.change}>
-                          {(c) => (
+                          {(c) => <span class={`${tagClass} ml-2 font-mono ${CHANGE_COLOR[c()]}`} title={`相对镜像${CHANGE_LABEL[c()]}`}>{c()}</span>}
+                        </Show>
+                        <Show when={e.mount}>
+                          {(m) => (
                             <span
-                              class={`ml-2 font-mono text-[10px] ${{ A: "text-emerald-400", C: "text-amber-400", D: "text-red-400" }[c()]}`}
-                              title={{ A: "新增", C: "修改", D: "删除" }[c()]}
-                            >{c()}</span>
+                              class={`${tagClass} ml-2 border-violet-500/40 bg-violet-500/15 text-violet-300`}
+                              title={`${m().type === "volume" ? "卷" : "挂载"}：${m().source || "—"} → ${m().destination}`}
+                            >{m().type === "volume" ? "volume" : "mount"}</span>
                           )}
                         </Show>
                       </>}>
@@ -375,7 +457,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
           </tbody>
         </table>
         <Show when={sorted().length === 0}>
-          <p class="py-4 text-center text-xs text-zinc-500">{diff() ? "此目录下无改动" : "空目录"}</p>
+          <p class="py-4 text-center text-xs text-zinc-500">{diff() || mountOnly() ? "此目录下无匹配项" : "空目录"}</p>
         </Show>
         </div>
         <Show when={entries.loading}>
