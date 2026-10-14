@@ -31,8 +31,12 @@ if [ "${1:-}" = --source ]; then
 	python3 -c "import urllib.request; urllib.request.urlretrieve('https://busybox.net/downloads/busybox-$UPSTREAM.tar.bz2', '$out/busybox-$UPSTREAM.tar.bz2')"
 	[ "$(sha512 "$out/busybox-$UPSTREAM.tar.bz2")" = "$UPSTREAM_SHA512" ] || { echo "busybox-$UPSTREAM.tar.bz2: checksum mismatch" >&2; exit 1; }
 	# Alpine's build recipe: APKBUILD, patches and configs at that commit.
-	curl -fsSL "https://gitlab.alpinelinux.org/alpine/aports/-/archive/$APORTS/aports-$APORTS.tar.gz?path=main/busybox" \
-		-o "$out/busybox-$VERSION-alpine-aports.tar.gz"
+	# gitlab.alpinelinux.org also answers CI runners with 418; use the GitHub
+	# mirror, fetching only that commit's main/busybox (blobless, by SHA).
+	git init -q "$TMP/aports"
+	git -C "$TMP/aports" fetch -q --depth 1 --filter=blob:none https://github.com/alpinelinux/aports "$APORTS"
+	git -C "$TMP/aports" archive --prefix="aports-$APORTS/" "$APORTS" main/busybox | gzip -9n \
+		>"$out/busybox-$VERSION-alpine-aports.tar.gz"
 	tar -tzf "$out/busybox-$VERSION-alpine-aports.tar.gz" | grep -q '/main/busybox/APKBUILD$'
 	ls -l "$out"/busybox-*
 	exit 0
