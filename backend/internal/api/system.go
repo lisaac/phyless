@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -10,7 +11,6 @@ import (
 	"github.com/docker/docker/api/types/volume"
 
 	"phyless/backend/internal/docker"
-	"phyless/backend/internal/docker/imagefs"
 )
 
 // dockerInfoResponse deliberately exposes only operational metadata. In
@@ -135,7 +135,7 @@ func (s *Server) handleSystemSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	total, running := 0, 0
 	for _, c := range containers {
-		if imagefs.IsHelper(c.Labels) {
+		if docker.IsHelper(c.Labels) {
 			continue
 		}
 		total++
@@ -143,6 +143,8 @@ func (s *Server) handleSystemSummary(w http.ResponseWriter, r *http.Request) {
 			running++
 		}
 	}
+	images = slices.DeleteFunc(images, func(img image.Summary) bool { return docker.IsHelper(img.Labels) })
+	volumes.Volumes = slices.DeleteFunc(volumes.Volumes, func(v *volume.Volume) bool { return docker.IsHelper(v.Labels) })
 	writeJSON(w, 200, map[string]int{
 		"containers": total, "running": running, "images": len(images),
 		"compose": len(mergeFilesystemCompose(mergeComposeProjects(cfg.ComposeProjects, groupComposeContainers(containers)), cfg.ComposeDirs)),

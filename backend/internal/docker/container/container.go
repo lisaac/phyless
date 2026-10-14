@@ -85,7 +85,7 @@ func EmitError(w io.Writer, err error) {
 	json.NewEncoder(w).Encode(streamEvent{Error: err.Error()}) //nolint:errcheck
 }
 
-// FileEntry is a directory listing entry returned by ExecListDir.
+// FileEntry is a directory listing entry returned by ExecLs.
 type FileEntry struct {
 	Name    string `json:"name"`
 	Size    int64  `json:"size"`
@@ -97,15 +97,20 @@ type FileEntry struct {
 	Gid     int    `json:"gid"`
 }
 
-// ExecListDir lists direct children of path by running ls inside the container.
-// Only works for running containers; wraps ErrExecNotFound when there is no ls.
-func ExecListDir(ctx context.Context, cli client.APIClient, containerID, path string) ([]FileEntry, error) {
-	return execLs(ctx, cli, containerID, path)
-}
-
-func execLs(ctx context.Context, cli client.APIClient, containerID, path string) ([]FileEntry, error) {
+// ExecLs lists the direct children of path by exec'ing `ls -la` in a running
+// container. ls is the binary's argv prefix — the container's own "ls" by
+// default, or e.g. a mounted busybox; ErrExecNotFound means it is missing.
+func ExecLs(ctx context.Context, cli client.APIClient, containerID, path string, ls ...string) ([]FileEntry, error) {
+	if len(ls) == 0 {
+		ls = []string{"ls"}
+	}
+	// A trailing slash lists a symlinked directory's contents (ubuntu's
+	// /bin -> usr/bin) instead of the link itself.
+	if !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
 	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-		Cmd:          []string{"ls", "-la", "--", path},
+		Cmd:          append(slices.Clip(ls), "-la", "--", path),
 		AttachStdout: true,
 		AttachStderr: true,
 		Env:          []string{"LANG=C", "LC_ALL=C"},
@@ -131,7 +136,10 @@ func execLs(ctx context.Context, cli client.APIClient, containerID, path string)
 		}
 		return nil, fmt.Errorf("读取 ls 输出失败: %w", err)
 	}
-	if err := waitExec(ctx, cli, exec.ID); err != nil {
+	// ls exits 1 when some entries are unreadable but still lists the rest.
+	if code, err := execExitCode(ctx, cli, exec.ID); err != nil {
+		return nil, err
+	} else if err := exitError(code); err != nil && (code != 1 || stdout.Len() == 0) {
 		return nil, err
 	}
 
@@ -387,30 +395,42 @@ func ExecChecked(ctx context.Context, cli client.APIClient, containerID string, 
 var ErrExecNotFound = errors.New("command not found in container")
 
 func waitExec(ctx context.Context, cli client.APIClient, execID string) error {
+	code, err := execExitCode(ctx, cli, execID)
+	if err != nil {
+		return err
+	}
+	return exitError(code)
+}
+
+func exitError(code int) error {
+	switch code {
+	case 0:
+		return nil
+	case 126, 127:
+		return fmt.Errorf("%w (status %d)", ErrExecNotFound, code)
+	default:
+		return fmt.Errorf("exec exited with status %d", code)
+	}
+}
+
+// execExitCode waits for an exec process to exit and returns its exit code.
+func execExitCode(ctx context.Context, cli client.APIClient, execID string) (int, error) {
 	if strings.TrimSpace(execID) == "" {
-		return fmt.Errorf("Docker returned an empty exec ID")
+		return 0, fmt.Errorf("Docker returned an empty exec ID")
 	}
 	for {
 		inspect, err := cli.ContainerExecInspect(ctx, execID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if !inspect.Running {
-			if inspect.ExitCode == 126 || inspect.ExitCode == 127 {
-				return fmt.Errorf("%w (status %d)", ErrExecNotFound, inspect.ExitCode)
-			}
-			if inspect.ExitCode != 0 {
-				return fmt.Errorf("exec exited with status %d", inspect.ExitCode)
-			}
-			return nil
+			return inspect.ExitCode, nil
 		}
 		timer := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return ctx.Err()
+			timer.Stop()
+			return 0, ctx.Err()
 		case <-timer.C:
 		}
 	}

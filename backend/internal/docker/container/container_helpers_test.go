@@ -142,20 +142,26 @@ func TestExecListDirChecksStreamAndExit(t *testing.T) {
 	frame[7] = byte(len(payload))
 	copy(frame[8:], payload)
 	c := &lsClient{output: frame}
-	entries, err := ExecListDir(context.Background(), c, "id", "/")
+	entries, err := ExecLs(context.Background(), c, "id", "/")
 	if err != nil || len(entries) != 1 || entries[0].Name != "file" {
 		t.Fatalf("entries=%v err=%v", entries, err)
 	}
 
 	c = &lsClient{output: frame}
 	c.execCode = 3
-	if _, err := ExecListDir(context.Background(), c, "id", "/"); err == nil {
+	if _, err := ExecLs(context.Background(), c, "id", "/"); err == nil {
 		t.Fatal("nonzero ls exit was accepted")
 	}
 
 	c = &lsClient{output: frame}
+	c.execCode = 1 // some entries unreadable: the rest still lists
+	if entries, err := ExecLs(context.Background(), c, "id", "/"); err != nil || len(entries) != 1 {
+		t.Fatalf("partial ls rejected: entries=%v err=%v", entries, err)
+	}
+
+	c = &lsClient{output: frame}
 	c.execCode = 127
-	if _, err := ExecListDir(context.Background(), c, "id", "/"); !errors.Is(err, ErrExecNotFound) {
+	if _, err := ExecLs(context.Background(), c, "id", "/"); !errors.Is(err, ErrExecNotFound) {
 		t.Fatalf("missing ls not reported as ErrExecNotFound: %v", err)
 	}
 }

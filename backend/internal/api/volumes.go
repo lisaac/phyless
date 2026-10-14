@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/go-chi/chi/v5"
+
+	"phyless/backend/internal/docker"
 )
 
 // volumeWithUsage adds which containers actually mount a volume — mirrors
@@ -44,8 +47,12 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	resp.Volumes = slices.DeleteFunc(resp.Volumes, func(v *volumetypes.Volume) bool { return docker.IsHelper(v.Labels) })
 	usedBy := make(map[string][]containerRef)
 	for _, c := range containers {
+		if docker.IsHelper(c.Labels) { // a browse container mounting it is not a user
+			continue
+		}
 		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")

@@ -20,7 +20,7 @@ import (
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/auth"
 	dockercompose "phyless/backend/internal/docker/compose"
-	"phyless/backend/internal/docker/imagefs"
+	"phyless/backend/internal/docker/fsbrowse"
 	"phyless/backend/internal/models"
 	"phyless/backend/internal/store"
 	"phyless/backend/internal/ws"
@@ -34,7 +34,7 @@ type Server struct {
 	audit          *audit.Logger
 	docker         dockerclient.APIClient
 	composeRuntime *dockercompose.Runtime
-	imagefs        *imagefs.Manager
+	fs             *fsbrowse.FS
 	buildCache     *buildCapabilityCache
 	reloadDocker   func() error
 

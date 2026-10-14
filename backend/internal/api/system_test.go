@@ -18,7 +18,7 @@ import (
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 
-	"phyless/backend/internal/docker/imagefs"
+	"phyless/backend/internal/docker"
 	"phyless/backend/internal/models"
 	"phyless/backend/internal/store"
 )
@@ -86,10 +86,10 @@ func (c *summaryClient) ContainerList(context.Context, container.ListOptions) ([
 	return c.containers, nil
 }
 func (*summaryClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
-	return make([]image.Summary, 3), nil
+	return []image.Summary{{}, {}, {}, {Labels: map[string]string{docker.RoleLabel: "debug"}}}, nil
 }
 func (*summaryClient) VolumeList(context.Context, volume.ListOptions) (volume.ListResponse, error) {
-	return volume.ListResponse{Volumes: make([]*volume.Volume, 2)}, nil
+	return volume.ListResponse{Volumes: []*volume.Volume{{}, {}, {Labels: map[string]string{docker.RoleLabel: "debug"}}}}, nil
 }
 func (*summaryClient) NetworkList(context.Context, network.ListOptions) ([]network.Summary, error) {
 	return make([]network.Summary, 4), nil
@@ -104,7 +104,7 @@ func TestSystemSummaryUsesOneContainerScanAndMatchesComposeList(t *testing.T) {
 	cli := &summaryClient{containers: []container.Summary{
 		{State: "running", Labels: map[string]string{labelProject: "app", labelWorkingDir: "/app", labelConfigFiles: "/app/compose.yaml"}},
 		{State: "exited", Labels: map[string]string{labelProject: "other"}},
-		{Labels: map[string]string{imagefs.RoleLabel: imagefs.RoleValue}},
+		{Labels: map[string]string{docker.RoleLabel: "debug"}},
 	}}
 	s := &Server{store: st, docker: cli}
 	response := httptest.NewRecorder()

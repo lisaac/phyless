@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,7 +17,8 @@ import (
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"phyless/backend/internal/audit"
-	"phyless/backend/internal/docker/imagefs"
+	"phyless/backend/internal/docker"
+	"phyless/backend/internal/docker/fsbrowse"
 )
 
 type imageActionClient struct {
@@ -69,7 +71,7 @@ func (c *imageActionClient) ImageRemove(_ context.Context, id string, options im
 
 func TestImageImportAndPruneUseRemoteSourceAndUnusedFilter(t *testing.T) {
 	client := &imageActionClient{}
-	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), imagefs: imagefs.New(client)}
+	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), fs: fsbrowse.New(client)}
 
 	importResponse := httptest.NewRecorder()
 	s.handleImageImport(importResponse, httptest.NewRequest(
@@ -137,12 +139,11 @@ func (c *imageHelperClient) ImageInspect(_ context.Context, id string, _ ...clie
 }
 
 func (c *imageHelperClient) ContainerList(_ context.Context, opts container.ListOptions) ([]container.Summary, error) {
-	// m.find (label=role + label=image) is the only caller passing both
-	// filters at once; other callers (e.g. GC cleanup) filter on role alone.
-	if len(opts.Filters.Get("label")) == 2 {
+	// ReleaseImage finds an image's helpers by their image label.
+	if slices.Contains(opts.Filters.Get("label"), fsbrowse.ImageLabel+"=sha256:image") {
 		return []container.Summary{{
 			ID:     "helper1",
-			Labels: map[string]string{imagefs.RoleLabel: imagefs.RoleValue, imagefs.ImageLabel: "sha256:image"},
+			Labels: map[string]string{docker.RoleLabel: "debug", fsbrowse.ImageLabel: "sha256:image"},
 		}}, nil
 	}
 	return nil, nil
@@ -160,7 +161,7 @@ func (c *imageHelperClient) ImageRemove(_ context.Context, id string, _ image.Re
 
 func TestDeleteImageReleasesHelperContainerBeforeRemovingImage(t *testing.T) {
 	client := &imageHelperClient{}
-	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), imagefs: imagefs.New(client)}
+	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), fs: fsbrowse.New(client)}
 
 	response := httptest.NewRecorder()
 	s.handleDeleteImage(response, httptest.NewRequest(http.MethodDelete, "/api/images?id=sha256:image", nil))
@@ -173,7 +174,7 @@ func TestDeleteImageReleasesHelperContainerBeforeRemovingImage(t *testing.T) {
 	}
 }
 
-func TestListContainersHidesImagefsHelper(t *testing.T) {
+func TestListContainersHidesFileBrowsingHelper(t *testing.T) {
 	s := &Server{docker: &imageHelperClientList{}}
 	response := httptest.NewRecorder()
 	s.handleListContainers(response, httptest.NewRequest(http.MethodGet, "/api/containers", nil))
@@ -192,7 +193,7 @@ type imageHelperClientList struct {
 func (c *imageHelperClientList) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
 	return []container.Summary{
 		{ID: "app1", Names: []string{"/app"}},
-		{ID: "helper1", Labels: map[string]string{imagefs.RoleLabel: imagefs.RoleValue, imagefs.ImageLabel: "sha256:image"}},
+		{ID: "helper1", Labels: map[string]string{docker.RoleLabel: "debug", fsbrowse.ImageLabel: "sha256:image"}},
 	}, nil
 }
 

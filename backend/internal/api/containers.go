@@ -23,8 +23,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
-	"phyless/backend/internal/docker/debugshell"
-	"phyless/backend/internal/docker/imagefs"
 )
 
 // sortMounts gives Mounts a deterministic order. The daemon builds this slice
@@ -51,7 +49,7 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	containers = slices.DeleteFunc(containers, func(c container.Summary) bool { return imagefs.IsHelper(c.Labels) })
+	containers = slices.DeleteFunc(containers, func(c container.Summary) bool { return docker.IsHelper(c.Labels) })
 	for i := range containers {
 		sortMounts(containers[i].Mounts)
 		sortPorts(containers[i].Ports)
@@ -373,6 +371,10 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteContainer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	force := r.URL.Query().Get("force") == "true"
+	if err := s.fs.ReleaseContainer(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, "释放文件浏览容器失败: "+err.Error())
+		return
+	}
 	err := s.docker.ContainerRemove(r.Context(), id, container.RemoveOptions{Force: force})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -660,29 +662,10 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 	if dirPath == "" {
 		dirPath = "/"
 	}
-	inspect, err := s.docker.ContainerInspect(r.Context(), id)
-	if err != nil {
+	entries, err := s.fs.ListContainer(r.Context(), id, dirPath)
+	if errdefs.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
-	}
-	var entries []dockercontainer.FileEntry
-	var state *container.State
-	if inspect.ContainerJSONBase != nil {
-		state = inspect.State
-	}
-	switch {
-	case state != nil && state.Running && !state.Paused:
-		entries, err = dockercontainer.ExecListDir(r.Context(), s.docker, id, dirPath)
-		if errors.Is(err, dockercontainer.ErrExecNotFound) { // no ls (distroless)
-			entries, err = debugshell.ListDir(r.Context(), s.docker, inspect, dirPath)
-		}
-	case state != nil && state.Running, underMount(inspect.Mounts, dirPath):
-		// Paused (exec refused) or a stopped container's mount: export skips mounts.
-		entries, err = debugshell.ListDir(r.Context(), s.docker, inspect, dirPath)
-	case s.imagefs != nil:
-		entries, err = s.imagefs.ListContainer(r.Context(), id, dirPath)
-	default:
-		err = fmt.Errorf("容器未运行")
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -733,6 +716,7 @@ func (s *Server) handleContainerUploadFile(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusRequestEntityTooLarge, "upload exceeds size limit")
 		return
 	}
+	defer s.fs.Invalidate()
 	if err := dockercontainer.UploadTarFile(r.Context(), s.docker, id, path, name, r.Body, maxUploadSize); err != nil {
 		if errors.Is(err, dockercontainer.ErrUploadTooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
@@ -763,22 +747,11 @@ func (s *Server) handleContainerCopyToContainer(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
 	dockercontainer.EmitStream(w, "正在复制 %s → %s:%s …", srcPath, body.TargetID[:min(12, len(body.TargetID))], body.TargetPath)
+	defer s.fs.Invalidate()
 	if err := dockercontainer.CopyBetweenContainers(r.Context(), s.docker, srcID, srcPath, body.TargetID, body.TargetPath); err != nil {
 		dockercontainer.EmitError(w, err)
 		return
 	}
 	s.auditFromCtx(r, "container.file.copy", srcID+" -> "+body.TargetID, "ok")
 	dockercontainer.EmitStream(w, "✓ 复制完成")
-}
-
-// underMount reports whether p is a mount destination or lies beneath one.
-func underMount(mounts []container.MountPoint, p string) bool {
-	p = pathpkg.Clean("/" + p)
-	for _, m := range mounts {
-		d := pathpkg.Clean("/" + m.Destination)
-		if p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/") {
-			return true
-		}
-	}
-	return false
 }

@@ -1,0 +1,224 @@
+package debugshell
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
+
+	"phyless/backend/internal/docker"
+	ctr "phyless/backend/internal/docker/container"
+)
+
+const (
+	// boxLife is how long a browse container lives: its main process is
+	// `busybox sleep boxLife`, so it exits and auto-removes on its own and a
+	// crashed phyless leaves nothing behind — no GC loop needed.
+	boxLife = 5 * time.Minute
+	// boxMargin replaces a box this close to expiry so an ls never races exit.
+	boxMargin = 30 * time.Second
+	// opTimeout bounds one listing: ls on a hung mount must not pin a request.
+	opTimeout = 30 * time.Second
+)
+
+// Spec describes a browse container. Image "" means the debug image.
+type Spec struct {
+	Image  string
+	Host   container.HostConfig // namespace/volume sharing; the pool adds the rest
+	Labels map[string]string
+}
+
+// Pool keeps one short-lived browse container per key and lists directories
+// by exec'ing the shared busybox in it (~50ms) instead of creating a container
+// per listing (~0.5s).
+type Pool struct {
+	cli client.APIClient
+	now func() time.Time
+
+	mu    sync.Mutex
+	boxes map[string]*box
+}
+
+type box struct {
+	id      string
+	expires time.Time
+	ready   chan struct{} // closed once id/err are set
+	err     error
+}
+
+func NewPool(cli client.APIClient) *Pool {
+	return &Pool{cli: cli, now: time.Now, boxes: map[string]*box{}}
+}
+
+// Has reports whether key has a live browse container.
+func (p *Pool) Has(key string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	b := p.boxes[key]
+	if b == nil || !b.expires.After(p.now()) {
+		return false
+	}
+	select {
+	case <-b.ready:
+		return b.err == nil
+	default:
+		return true
+	}
+}
+
+// Ls lists path inside key's browse container, creating it from spec when
+// missing or about to expire. One retry covers a container that vanished
+// early (removed by someone, its target stopped) and a busybox volume that
+// came up empty (deleted between inspect and create, Docker then creates a
+// blank one): that volume is dropped so the retry refills it.
+func (p *Pool) Ls(ctx context.Context, key string, spec Spec, path string) ([]ctr.FileEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	for retried := false; ; retried = true {
+		b, err := p.get(ctx, key, spec)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := ctr.ExecLs(ctx, p.cli, b.id, path, Busybox, "ls")
+		broken := errors.Is(err, ctr.ErrExecNotFound)
+		if err == nil || retried || !(broken || errdefs.IsNotFound(err) || errdefs.IsConflict(err)) {
+			return entries, err
+		}
+		if !broken {
+			p.forget(key, b)
+			continue
+		}
+		if err := p.Remove(ctx, key); err != nil {
+			return nil, err
+		}
+		if a, err := assetFor(ctx, p.cli); err == nil {
+			_ = p.cli.VolumeRemove(ctx, a.volume(), false) // in use elsewhere: leave it
+		}
+	}
+}
+
+// Remove deletes key's browse container now, e.g. before removing the image
+// or container it pins. Nothing to remove is fine.
+func (p *Pool) Remove(ctx context.Context, key string) error {
+	p.mu.Lock()
+	b := p.boxes[key]
+	delete(p.boxes, key)
+	p.mu.Unlock()
+	if b == nil {
+		return nil
+	}
+	select {
+	case <-b.ready:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if b.err != nil {
+		return nil
+	}
+	err := p.cli.ContainerRemove(ctx, b.id, container.RemoveOptions{Force: true})
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// get returns key's ready box. Concurrent callers share one creation.
+func (p *Pool) get(ctx context.Context, key string, spec Spec) (*box, error) {
+	p.mu.Lock()
+	now := p.now()
+	b := p.boxes[key]
+	if b == nil || b.expires.Sub(now) < boxMargin {
+		p.sweepLocked(now)
+		b = &box{ready: make(chan struct{}), expires: now.Add(boxLife)}
+		p.boxes[key] = b
+		p.mu.Unlock()
+		b.id, b.err = p.start(ctx, spec)
+		if b.err != nil {
+			p.forget(key, b) // the next call retries
+		}
+		close(b.ready)
+	} else {
+		p.mu.Unlock()
+	}
+	select {
+	case <-b.ready:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if b.err != nil {
+		return nil, b.err
+	}
+	return b, nil
+}
+
+// sweepLocked drops boxes whose containers already exited by themselves, so
+// the map holds only keys used within the last boxLife. Caller holds p.mu.
+func (p *Pool) sweepLocked(now time.Time) {
+	for k, b := range p.boxes {
+		if b.expires.Before(now) {
+			delete(p.boxes, k)
+		}
+	}
+}
+
+func (p *Pool) forget(key string, b *box) {
+	p.mu.Lock()
+	if p.boxes[key] == b {
+		delete(p.boxes, key)
+	}
+	p.mu.Unlock()
+}
+
+// start creates and starts a browse container. It is detached from the
+// caller's cancellation: a request dropped mid-create must not strand a
+// created-but-never-started container (AutoRemove only fires after start).
+func (p *Pool) start(ctx context.Context, spec Spec) (string, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), opTimeout)
+	defer cancel()
+	bb, err := busyboxMount(ctx, p.cli)
+	if err != nil {
+		return "", err
+	}
+	hc := spec.Host
+	hc.AutoRemove = true
+	hc.NetworkMode = "none"
+	hc.Mounts = append(slices.Clip(hc.Mounts), bb)
+	labels := maps.Clone(spec.Labels)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[docker.RoleLabel] = Role
+	cfg := &container.Config{
+		Image: spec.Image,
+		// Explicit Cmd: an image's own CMD must not leak in as sleep's args.
+		Entrypoint: []string{Busybox},
+		Cmd:        []string{"sleep", strconv.Itoa(int(boxLife / time.Second))},
+		User:       "0",
+		WorkingDir: "/",
+		// The image's healthcheck would run its own binaries every interval.
+		Healthcheck: &container.HealthConfig{Test: []string{"NONE"}},
+		Labels:      labels,
+	}
+	var resp container.CreateResponse
+	if spec.Image == "" {
+		resp, err = createDebug(ctx, p.cli, cfg, &hc)
+	} else {
+		resp, err = p.cli.ContainerCreate(ctx, cfg, &hc, nil, nil, "")
+	}
+	if err != nil {
+		return "", fmt.Errorf("创建浏览容器失败: %w", err)
+	}
+	if err := p.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		_ = p.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		return "", fmt.Errorf("启动浏览容器失败: %w", err)
+	}
+	return resp.ID, nil
+}

@@ -10,13 +10,13 @@ import (
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/docker"
 	dockercompose "phyless/backend/internal/docker/compose"
-	"phyless/backend/internal/docker/imagefs"
+	"phyless/backend/internal/docker/fsbrowse"
 	"phyless/backend/internal/models"
 	"phyless/backend/internal/store"
 )
 
 // dockerRuntime swaps a complete route graph so every new request captures one
-// Docker client, Compose runtime, and imagefs manager from the same server.
+// Docker client, Compose runtime, and file browser from the same server.
 // This is smaller and safer than teaching every APIClient method to delegate.
 type dockerRuntime struct {
 	store     *store.Store
@@ -87,8 +87,8 @@ func (r *dockerRuntime) newState(server models.DockerServer) (*dockerRuntimeStat
 		return nil, fmt.Errorf("initialize Compose for Docker server %q: %w", server.Name, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	mgr := imagefs.New(client)
-	go mgr.Run(ctx)
+	fs := fsbrowse.New(client)
+	go fs.Run(ctx)
 	srv := &Server{
 		store:          r.store,
 		jwtSecret:      r.jwtSecret,
@@ -96,7 +96,7 @@ func (r *dockerRuntime) newState(server models.DockerServer) (*dockerRuntimeStat
 		audit:          r.audit,
 		docker:         client,
 		composeRuntime: composeRuntime,
-		imagefs:        mgr,
+		fs:             fs,
 		buildCache:     newBuildCapabilityCache(),
 		reloadDocker:   r.reload,
 	}

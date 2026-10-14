@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +17,6 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
-	"phyless/backend/internal/docker/imagefs"
 )
 
 type containerRef struct {
@@ -67,7 +67,7 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 	}
 	usedBy := make(map[string][]containerRef)
 	for _, c := range containers {
-		if imagefs.IsHelper(c.Labels) {
+		if docker.IsHelper(c.Labels) {
 			continue
 		}
 		name := ""
@@ -76,6 +76,7 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		}
 		usedBy[c.ImageID] = append(usedBy[c.ImageID], containerRef{ID: c.ID, Name: name})
 	}
+	imgs = slices.DeleteFunc(imgs, func(img image.Summary) bool { return docker.IsHelper(img.Labels) })
 	out := make([]imageWithUsage, len(imgs))
 	for i, img := range imgs {
 		// RepoTags/RepoDigests come from the daemon's internal reference
@@ -111,11 +112,11 @@ func (s *Server) handleDeleteImage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// removeImage drops the image's imagefs helper container (if any) before
+// removeImage drops the image's file-browsing helpers (if any) before
 // removing the image itself — Docker refuses to remove an image that a
 // container, including our own browsing helper, still references.
 func (s *Server) removeImage(ctx context.Context, id string, force bool) error {
-	if err := s.imagefs.Release(ctx, id); err != nil {
+	if err := s.fs.ReleaseImage(ctx, id); err != nil {
 		return fmt.Errorf("释放镜像文件浏览容器失败: %w", err)
 	}
 	_, err := s.docker.ImageRemove(ctx, id, image.RemoveOptions{Force: force})
@@ -170,7 +171,7 @@ func (s *Server) handleImageListFiles(w http.ResponseWriter, r *http.Request) {
 	if dirPath == "" {
 		dirPath = "/"
 	}
-	entries, err := s.imagefs.List(r.Context(), id, dirPath)
+	entries, err := s.fs.ListImage(r.Context(), id, dirPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -188,7 +189,7 @@ func (s *Server) handleImageDownloadFile(w http.ResponseWriter, r *http.Request)
 	if path == "" {
 		path = "/"
 	}
-	rc, err := s.imagefs.Open(r.Context(), id, path)
+	rc, err := s.fs.OpenImage(r.Context(), id, path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

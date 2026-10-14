@@ -22,12 +22,13 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
+
+	"phyless/backend/internal/docker"
 )
 
 const (
 	markerPrefix = ".phyless-self-"
 	HelperName   = "phyless-helper"
-	RoleLabel    = "phyless.role" // shared with imagefs helpers
 	HelperRole   = "helper"
 )
 
@@ -167,7 +168,7 @@ func Launch(ctx context.Context, cli client.APIClient, selfID, dataDir string, w
 		Env:        me.Config.Env,
 		User:       me.Config.User,
 		WorkingDir: me.Config.WorkingDir,
-		Labels:     map[string]string{RoleLabel: HelperRole},
+		Labels:     map[string]string{docker.RoleLabel: HelperRole},
 	}, &container.HostConfig{
 		VolumesFrom:   []string{me.ID},
 		NetworkMode:   netMode,

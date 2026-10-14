@@ -15,7 +15,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
-	"phyless/backend/internal/docker/imagefs"
 )
 
 const (
@@ -120,7 +119,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, c := range list {
-			if !imagefs.IsHelper(c.Labels) {
+			if !docker.IsHelper(c.Labels) {
 				ids = append(ids, c.ID)
 			}
 		}

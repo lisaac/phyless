@@ -22,7 +22,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/auth"
-	"phyless/backend/internal/docker/imagefs"
+	"phyless/backend/internal/docker/fsbrowse"
 	"phyless/backend/internal/models"
 	"phyless/backend/internal/store"
 )
@@ -125,7 +125,7 @@ func routeTestServer(t *testing.T) (*Server, http.Handler, string, map[models.Ro
 		store:     s,
 		jwtSecret: []byte(secret),
 		docker:    dockerClient,
-		imagefs:   imagefs.New(dockerClient),
+		fs:        fsbrowse.New(dockerClient),
 		audit:     audit.New(filepath.Join(t.TempDir(), "audit.log")),
 	}
 	tokens := make(map[models.Role]string, len(users))
