@@ -413,6 +413,10 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                             >{m().type === "volume" ? "volume" : "mount"}</span>
                           )}
                         </Show>
+                        {/* Dashed (like「目录中发现」): not a mount itself, one lies beneath. */}
+                        <Show when={!e.mount && e.mount_below}>
+                          <span class={`${tagClass} ml-2 border-dashed border-violet-500/50 text-violet-400`} title="此目录下有挂载点">mount</span>
+                        </Show>
                       </>}>
                         <input
                           class="border border-zinc-600 bg-zinc-900 px-1 font-mono text-xs text-zinc-100 outline-none"
