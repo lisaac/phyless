@@ -47,7 +47,7 @@ cd "$ROOT" 2>/dev/null || echo "无法进入 $ROOT"
 exec sh`
 	cfg := &container.Config{
 		Cmd:       []string{"/bin/busybox", "sh", "-c", script},
-		Env:       []string{"ROOT=" + TargetRoot(t), "PATH=/bin", "TERM=xterm-256color"},
+		Env:       []string{"ROOT=" + TargetRoot(t), "PATH=/bin", "TERM=xterm-256color", "LANG=C.UTF-8"},
 		Tty:       true,
 		OpenStdin: true, StdinOnce: true,
 		AttachStdin: true, AttachStdout: true, AttachStderr: true,

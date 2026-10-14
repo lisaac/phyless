@@ -113,7 +113,10 @@ func ExecLs(ctx context.Context, cli client.APIClient, containerID, path string,
 		Cmd:          append(slices.Clip(ls), "-la", "--", path),
 		AttachStdout: true,
 		AttachStderr: true,
-		Env:          []string{"LANG=C", "LC_ALL=C"},
+		// C.UTF-8: English dates for ParseLs, but non-ASCII names intact —
+		// busybox (musl) in plain C swaps every byte >= 0x80 for '?'. glibc
+		// without C.UTF-8 falls back to C, where GNU ls prints raw bytes anyway.
+		Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"},
 	})
 	if err != nil {
 		return nil, err
