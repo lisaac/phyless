@@ -12,12 +12,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+
+	"phyless/backend/internal/docker/debugshell"
 )
 
 const (
@@ -120,8 +124,10 @@ func copyContainerLogs(dst io.Writer, src io.Reader, tty bool) (int64, error) {
 	return stdcopy.StdCopy(dst, dst, src)
 }
 
-// Terminal runs an exec session and pipes stdin/stdout over WebSocket.
-// Query params: cmd (space-separated, default "/bin/sh"), user (default "")
+// Terminal runs an exec session and pipes stdin/stdout over WebSocket. When
+// the shell does not exist in the container (distroless), it opens a debugshell
+// container instead. Query params: cmd (space-separated, default "/bin/sh"),
+// user (default "", ignored in debug mode)
 func Terminal(cli client.APIClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -139,19 +145,34 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 		if cmdStr != "" {
 			cmd = strings.Fields(cmdStr)
 		}
-		execID, err := cli.ContainerExecCreate(ctx, id, container.ExecOptions{
-			AttachStdin: true, AttachStdout: true, AttachStderr: true,
-			Tty: true, Cmd: cmd, User: r.URL.Query().Get("user"),
-		})
-		if err != nil {
-			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
-			return
-		}
-
-		resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{Tty: true})
-		if err != nil {
-			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
-			return
+		var resp types.HijackedResponse
+		var resize func(container.ResizeOptions) error
+		if missingCommand(ctx, cli, id, cmd[0]) {
+			var debugID string
+			debugID, resp, err = debugshell.Start(ctx, cli, id)
+			if err != nil {
+				_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
+				return
+			}
+			// Closing the attach already ends the shell (StdinOnce + AutoRemove);
+			// this removes it right away instead of trusting that.
+			defer cli.ContainerRemove(context.WithoutCancel(ctx), debugID, container.RemoveOptions{Force: true}) //nolint:errcheck
+			resize = func(o container.ResizeOptions) error { return cli.ContainerResize(ctx, debugID, o) }
+		} else {
+			execID, err := cli.ContainerExecCreate(ctx, id, container.ExecOptions{
+				AttachStdin: true, AttachStdout: true, AttachStderr: true,
+				Tty: true, Cmd: cmd, User: r.URL.Query().Get("user"),
+			})
+			if err != nil {
+				_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
+				return
+			}
+			resp, err = cli.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{Tty: true})
+			if err != nil {
+				_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
+				return
+			}
+			resize = func(o container.ResizeOptions) error { return cli.ContainerExecResize(ctx, execID.ID, o) }
 		}
 		defer resp.Close()
 
@@ -206,7 +227,7 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 				Rows uint   `json:"rows"`
 			}
 			if json.Unmarshal(msg, &ctrl) == nil && ctrl.Type == "resize" {
-				if err := cli.ContainerExecResize(ctx, execID.ID, container.ResizeOptions{Height: ctrl.Rows, Width: ctrl.Cols}); err != nil {
+				if err := resize(container.ResizeOptions{Height: ctrl.Rows, Width: ctrl.Cols}); err != nil {
 					closeSession()
 					return
 				}
@@ -355,4 +376,14 @@ func writeAll(w io.Writer, p []byte) error {
 		}
 	}
 	return nil
+}
+
+// missingCommand reports whether an absolute command path is absent from the
+// container. Relative names go through PATH and are left to exec.
+func missingCommand(ctx context.Context, cli client.APIClient, id, name string) bool {
+	if !strings.HasPrefix(name, "/") {
+		return false
+	}
+	_, err := cli.ContainerStatPath(ctx, id, name)
+	return errdefs.IsNotFound(err)
 }
