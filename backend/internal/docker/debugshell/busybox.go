@@ -3,29 +3,43 @@ package debugshell
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	_ "embed"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 
 	"phyless/backend/internal/docker"
 )
 
-// Static busybox from Alpine's busybox-static; refresh with scripts/fetch-busybox.sh.
-// Embedded as strings: read-only data, never copied onto the heap.
+// Static busybox from Alpine's busybox-static, gzipped (~0.65 MB each instead
+// of ~1.1 MB); refresh with scripts/fetch-busybox.sh. Embedded as strings:
+// read-only data, never copied onto the heap until an import inflates one.
 var (
-	//go:embed busybox-amd64
+	//go:embed busybox-amd64.gz
 	busyboxAmd64 string
-	//go:embed busybox-arm64
+	//go:embed busybox-arm64.gz
 	busyboxArm64 string
+	//go:embed busybox-arm.gz
+	busyboxArm string
+	//go:embed busybox-386.gz
+	busybox386 string
+	// GPL-2.0 text, shipped inside the debug image with the binary it covers
+	// (see busybox-NOTICE.md).
+	//go:embed busybox-COPYING
+	busyboxCopying string
 )
 
 // Role is the RoleLabel value of every object this package creates.
@@ -35,26 +49,36 @@ const Role = "debug"
 // image — distroless included — can run it.
 const Busybox = "/.phyless/busybox"
 
-// asset is the busybox build for one daemon architecture, named by content so
-// a binary upgrade gets a fresh image and volume instead of stale ones.
+// asset is the busybox build for one daemon architecture, named by content
+// (binary + license) so an upgrade gets a fresh image and volume instead of
+// stale ones; Prune drops the old ones.
 type asset struct {
-	arch, tag, bin string
+	arch, tag, gz string
 }
 
-func (a asset) image() string  { return "phyless-debug:" + a.tag }
-func (a asset) volume() string { return "phyless-busybox-" + a.tag }
+const (
+	imageRepo    = "phyless-debug"
+	volumePrefix = "phyless-busybox-"
+)
 
-func newAsset(arch, bin string) func() asset {
+func (a asset) image() string  { return imageRepo + ":" + a.tag }
+func (a asset) volume() string { return volumePrefix + a.tag }
+
+func newAsset(arch, gz string) func() asset {
 	return sync.OnceValue(func() asset {
-		sum := sha256.Sum256([]byte(bin)) // once per arch
-		return asset{arch: arch, tag: fmt.Sprintf("%s-%x", arch, sum[:6]), bin: bin}
+		sum := sha256.Sum256([]byte(gz + busyboxCopying)) // once per arch
+		return asset{arch: arch, tag: fmt.Sprintf("%s-%x", arch, sum[:6]), gz: gz}
 	})
 }
 
-// Daemon architecture (GOARCH, as /version reports it) → embedded build.
+// Daemon architecture (GOARCH, as /version reports it) → embedded build: the
+// four architectures phyless itself is released for. "arm" (armv6 and armv7
+// alike) gets Alpine's armhf build, which runs on both.
 var assets = map[string]func() asset{
 	"amd64": newAsset("amd64", busyboxAmd64),
 	"arm64": newAsset("arm64", busyboxArm64),
+	"arm":   newAsset("arm", busyboxArm),
+	"386":   newAsset("386", busybox386),
 }
 
 // archCache keeps each daemon's architecture so the hot path costs no extra
@@ -104,7 +128,15 @@ func createDebug(ctx context.Context, cli client.APIClient, name string, cfg *co
 // importImage turns the embedded busybox into a local image — no registry,
 // works offline and against remote daemons.
 func importImage(ctx context.Context, cli client.APIClient, a asset) error {
-	rootfs, err := rootfsTar(a.bin)
+	zr, err := gzip.NewReader(strings.NewReader(a.gz))
+	if err != nil {
+		return err
+	}
+	bin, err := io.ReadAll(zr) // ~1.1 MB, once per daemon (or after the image was deleted)
+	if err != nil {
+		return err
+	}
+	rootfs, err := rootfsTar(bin)
 	if err != nil {
 		return err
 	}
@@ -155,24 +187,55 @@ func busyboxMount(ctx context.Context, cli client.APIClient) (mount.Mount, error
 	return m, nil
 }
 
-func rootfsTar(bin string) ([]byte, error) {
+func rootfsTar(bin []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.Grow(len(bin) + 4<<10)
 	tw := tar.NewWriter(&buf)
-	for _, h := range []*tar.Header{
-		{Name: "bin/", Typeflag: tar.TypeDir, Mode: 0o755},
-		{Name: "tmp/", Typeflag: tar.TypeDir, Mode: 0o1777},
-		{Name: "bin/busybox", Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(bin))},
+	for _, f := range []struct {
+		h    tar.Header
+		body []byte
+	}{
+		{h: tar.Header{Name: "bin/", Typeflag: tar.TypeDir, Mode: 0o755}},
+		{h: tar.Header{Name: "tmp/", Typeflag: tar.TypeDir, Mode: 0o1777}},
+		{h: tar.Header{Name: "usr/share/licenses/busybox/", Typeflag: tar.TypeDir, Mode: 0o755}},
+		{h: tar.Header{Name: "bin/busybox", Typeflag: tar.TypeReg, Mode: 0o755}, body: bin},
+		{h: tar.Header{Name: "usr/share/licenses/busybox/COPYING", Typeflag: tar.TypeReg, Mode: 0o644}, body: []byte(busyboxCopying)},
 	} {
-		if err := tw.WriteHeader(h); err != nil {
+		f.h.Size = int64(len(f.body))
+		if err := tw.WriteHeader(&f.h); err != nil {
 			return nil, err
 		}
-	}
-	if _, err := io.WriteString(tw, bin); err != nil {
-		return nil, err
+		if _, err := tw.Write(f.body); err != nil {
+			return nil, err
+		}
 	}
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// Prune removes debug images and busybox volumes of other versions (left by a
+// phyless upgrade). In-use ones fail to remove and are skipped: another
+// phyless version may still be serving from them.
+func Prune(ctx context.Context, cli client.APIClient) {
+	a, err := assetFor(ctx, cli)
+	if err != nil {
+		return
+	}
+	role := filters.Arg("label", docker.RoleLabel+"="+Role)
+	if imgs, err := cli.ImageList(ctx, image.ListOptions{Filters: filters.NewArgs(role, filters.Arg("reference", imageRepo))}); err == nil {
+		for _, img := range imgs {
+			if !slices.Contains(img.RepoTags, a.image()) {
+				_, _ = cli.ImageRemove(ctx, img.ID, image.RemoveOptions{})
+			}
+		}
+	}
+	if vols, err := cli.VolumeList(ctx, volume.ListOptions{Filters: filters.NewArgs(role)}); err == nil {
+		for _, v := range vols.Volumes {
+			if strings.HasPrefix(v.Name, volumePrefix) && v.Name != a.volume() {
+				_ = cli.VolumeRemove(ctx, v.Name, false)
+			}
+		}
+	}
 }

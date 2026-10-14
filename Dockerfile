@@ -16,13 +16,15 @@ COPY --from=frontend /frontend/dist ./backend/web/dist
 ARG TARGETOS TARGETARCH TARGETVARIANT
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} CGO_ENABLED=0 \
     ./scripts/go-build.sh -o phyless ./backend/cmd/server/ \
- && mkdir -p /rootfs/app /rootfs/tmp && chmod 1777 /rootfs/tmp && mv phyless /rootfs/app/
+ && mkdir -p /rootfs/app /rootfs/tmp /rootfs/licenses && chmod 1777 /rootfs/tmp && mv phyless /rootfs/app/ \
+ && cp LICENSE backend/internal/docker/debugshell/busybox-NOTICE.md backend/internal/docker/debugshell/busybox-COPYING /rootfs/licenses/
 
 # No shell, no package manager: the static binary is the whole runtime.
 # Compose is embedded through the Go API (no docker/compose CLI or buildx);
 # root CAs are compiled in (x509roots/fallback). /tmp is needed by
-# os.CreateTemp (imagefs indexes, uploads); it is copied as a child of
+# os.CreateTemp (uploads); it is copied as a child of
 # /rootfs so its 1777 mode survives (COPY into a new dir would not keep it).
+# /licenses: phyless (MIT) and the BusyBox it embeds (GPL-2.0).
 FROM scratch
 COPY --from=builder /rootfs/ /
 WORKDIR /app

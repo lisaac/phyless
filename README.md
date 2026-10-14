@@ -2,7 +2,7 @@
 
 轻量的自托管 Docker 管理面板：**一个二进制，无需任何依赖。**
 
-整个程序就是一个约 35 MB 的静态可执行文件（压缩后约 14 MB），网页前端和 Compose 引擎都编译在里面。不需要数据库、运行时或额外的库，也不需要安装 docker CLI 或 docker compose。只要机器上有 Docker Engine，下载后直接运行即可。
+整个程序就是一个约 36 MB 的静态可执行文件（压缩后约 15 MB），网页前端和 Compose 引擎都编译在里面。不需要数据库、运行时或额外的库，也不需要安装 docker CLI 或 docker compose。只要机器上有 Docker Engine，下载后直接运行即可。
 
 [在线演示](https://lisaac.github.io/phyless/) · [Docker 镜像](https://github.com/lisaac/phyless/pkgs/container/phyless) · [下载二进制](https://github.com/lisaac/phyless/releases/latest)
 
@@ -81,7 +81,7 @@ sudo ./phyless-linux-$ARCH -C /var/lib/phyless
 
 ### 轻量
 
-- **单个二进制**：后端、网页和 Compose 引擎编译进同一个文件，Linux amd64 约 35 MB（压缩包约 14 MB）。容器镜像基于 scratch，里面只有这一个文件，根证书也编译在程序里。
+- **单个二进制**：后端、网页和 Compose 引擎编译进同一个文件，Linux amd64 约 36 MB（压缩包约 15 MB）。容器镜像基于 scratch，里面只有这一个文件，根证书也编译在程序里。
 - **无需任何依赖**：静态编译，不依赖 glibc 或其他系统库；不需要数据库，账号和配置是数据目录里的普通文件；Compose 通过内嵌的 Go API 执行，宿主机无需安装 `docker` 或 `docker compose` 命令。
 - **省内存**：默认把堆内存软上限设为 128 MB，路由器、NAS、小 VPS 也跑得动（可用 `GOMEMLIMIT`、`GOGC` 环境变量调整）。
 - **部署简单**：一条 `docker run`，或者下载二进制直接运行。
@@ -424,3 +424,7 @@ cd frontend && npm install && npm run dev   # 前端热更新，/api 代理到 l
 ## 许可证
 
 本项目基于 [MIT License](LICENSE) 发布。
+
+### 第三方组件
+
+phyless 内嵌了 [BusyBox](https://busybox.net/) 1.37.0 的静态可执行文件（来自 Alpine `busybox-static` 1.37.0-r31，amd64 / arm64 / arm / 386），只在 phyless 创建的辅助容器里运行，用于无 shell 终端和文件浏览，不与 phyless 链接。BusyBox 以 [GPL-2.0-only](backend/internal/docker/debugshell/busybox-COPYING) 授权，不影响 phyless 本身的 MIT 许可证。来源、校验值和对应源码见 [busybox-NOTICE.md](backend/internal/docker/debugshell/busybox-NOTICE.md)：每个 Release 都附带上游源码包和 Alpine 的构建脚本，发布包和容器镜像的 `licenses/` 目录里都有许可证文本。

@@ -3,11 +3,14 @@ package debugshell
 import (
 	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -169,7 +172,7 @@ func TestStartImportsBusyboxAndJoinsTargetNamespaces(t *testing.T) {
 	if id == "" || len(f.startedIDs) != 1 {
 		t.Fatalf("id=%q started=%v", id, f.startedIDs)
 	}
-	if f.platform != "linux/arm64" || f.files["bin/busybox"] != 0o755 {
+	if f.platform != "linux/arm64" || f.files["bin/busybox"] != 0o755 || f.files["usr/share/licenses/busybox/COPYING"] != 0o644 {
 		t.Fatalf("import platform=%q files=%v", f.platform, f.files)
 	}
 	cfg, host := f.creates[0], f.hosts[0]
@@ -299,5 +302,62 @@ func TestHelperNamesAreReadableAndDockerSafe(t *testing.T) {
 	}
 	if len(f.names) != 1 || !strings.HasPrefix(f.names[0], "phyless-autoremove-browse-web-") {
 		t.Fatalf("browse container names %v", f.names)
+	}
+}
+
+type pruneClient struct {
+	fakeClient
+	imgs         []image.Summary
+	vols         []*volume.Volume
+	rmImg, rmVol []string
+}
+
+func (c *pruneClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
+	return c.imgs, nil
+}
+func (c *pruneClient) ImageRemove(_ context.Context, id string, _ image.RemoveOptions) ([]image.DeleteResponse, error) {
+	c.rmImg = append(c.rmImg, id)
+	return nil, nil
+}
+func (c *pruneClient) VolumeList(context.Context, volume.ListOptions) (volume.ListResponse, error) {
+	return volume.ListResponse{Volumes: c.vols}, nil
+}
+func (c *pruneClient) VolumeRemove(_ context.Context, name string, _ bool) error {
+	c.rmVol = append(c.rmVol, name)
+	return nil
+}
+
+func TestPruneKeepsOnlyTheCurrentDebugImageAndVolume(t *testing.T) {
+	c := &pruneClient{}
+	a, err := assetFor(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.imgs = []image.Summary{{ID: "cur", RepoTags: []string{a.image()}}, {ID: "old", RepoTags: []string{"phyless-debug:arm64-000000000000"}}}
+	c.vols = []*volume.Volume{{Name: a.volume()}, {Name: "phyless-busybox-arm64-000000000000"}, {Name: "users-own-volume"}}
+	Prune(context.Background(), c)
+	if !slices.Equal(c.rmImg, []string{"old"}) || !slices.Equal(c.rmVol, []string{"phyless-busybox-arm64-000000000000"}) {
+		t.Fatalf("removed images=%v volumes=%v", c.rmImg, c.rmVol)
+	}
+}
+
+func TestEmbeddedBusyboxMatchesEachArch(t *testing.T) {
+	machine := map[string]uint16{"amd64": 62, "arm64": 183, "arm": 40, "386": 3} // ELF e_machine
+	for arch, want := range machine {
+		a := assets[arch]()
+		zr, err := gzip.NewReader(strings.NewReader(a.gz))
+		if err != nil {
+			t.Fatalf("%s: %v", arch, err)
+		}
+		bin, err := io.ReadAll(zr)
+		if err != nil || len(bin) < 20 || string(bin[:4]) != "\x7fELF" {
+			t.Fatalf("%s: not an ELF (%d bytes, err=%v)", arch, len(bin), err)
+		}
+		if got := binary.LittleEndian.Uint16(bin[18:]); got != want {
+			t.Errorf("%s: e_machine %d, want %d", arch, got, want)
+		}
+	}
+	if len(assets) != len(machine) {
+		t.Errorf("assets %d, tested %d", len(assets), len(machine))
 	}
 }

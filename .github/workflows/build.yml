@@ -95,15 +95,17 @@ jobs:
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: ${{ matrix.cgo }}
         run: |
-          mkdir -p backend/web/dist dist
+          mkdir -p backend/web/dist dist/licenses
           cp -R frontend/dist/. backend/web/dist/
+          # Every binary embeds BusyBox (GPL-2.0): ship its notice and license.
+          cp LICENSE backend/internal/docker/debugshell/busybox-NOTICE.md backend/internal/docker/debugshell/busybox-COPYING dist/licenses/
           name="phyless-$GOOS-$GOARCH${GOARM:+v$GOARM}" # arm + GOARM=7 -> armv7
           if [ "$GOOS" = windows ]; then
             ./scripts/go-build.sh -o "dist/$name.exe" ./backend/cmd/server/
-            (cd dist && zip "$name.zip" "$name.exe")
+            (cd dist && zip -r "$name.zip" "$name.exe" licenses)
           else
             ./scripts/go-build.sh -o "dist/$name" ./backend/cmd/server/
-            tar -C dist -czf "dist/$name.tar.gz" "$name"
+            tar -C dist -czf "dist/$name.tar.gz" "$name" licenses
           fi
       - uses: actions/upload-artifact@v5
         with:
@@ -118,10 +120,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
+      # GPL-2.0 §3: the BusyBox the binaries embed gets its corresponding
+      # source from the same place (upstream tarball + Alpine's build recipe).
+      - name: BusyBox corresponding source
+        run: ./scripts/fetch-busybox.sh --source dist
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}

@@ -10,10 +10,11 @@ phyless 要能浏览任意镜像和任意状态容器里的文件，也要能给
 
 ## busybox 从哪里来
 
-- **来源**：Alpine 的 `busybox-static` 静态二进制，amd64 和 arm64 两份，嵌入在 phyless 程序里（以 string 嵌入，只占只读数据段）。用 `scripts/fetch-busybox.sh` 更新，版本固定写在脚本里。
+- **来源**：Alpine 的 `busybox-static` 静态二进制，覆盖 phyless 发布的四个架构：amd64、arm64、arm（Alpine armhf 版，armv6 和 armv7 都能运行）、386。以 gzip 压缩后嵌入程序（每份约 0.65 MB，以 string 嵌入，只占只读数据段），只在导入调试镜像时解压一次。用 `scripts/fetch-busybox.sh` 更新，版本固定写在脚本里；脚本会拒绝不是由固定 aports commit 构建出来的包。
+- **许可证**：BusyBox 是 GPL-2.0-only，见 `backend/internal/docker/debugshell/busybox-NOTICE.md`。调试镜像里也带一份 GPL 原文（`/usr/share/licenses/busybox/COPYING`）；发布包和容器镜像的 `licenses/` 目录里有许可证文本；每个 Release 都附带对应源码（`fetch-busybox.sh --source`）。
 - **调试镜像** `phyless-debug:<架构>-<哈希>`：第一次需要时，把对应 daemon 架构的 busybox 打成 rootfs，通过 `ImageImport` 导入成本地镜像。不需要镜像仓库，离线也能用。
 - **busybox 卷** `phyless-busybox-<架构>-<哈希>`：用调试镜像创建一个容器（只创建、不启动），把这个空的命名卷挂到 `/bin`。Docker 会把镜像里 `/bin` 的内容复制进空卷，容器随即删除，卷保留下来。之后**任何镜像**起的容器都可以把这个卷只读挂到 `/.phyless`，执行 `/.phyless/busybox`。
-- **名字带内容哈希**：busybox 升级后会得到新的镜像和卷，不会复用旧的。两者被删除后，下次使用时自动重建。
+- **名字带内容哈希**（busybox 加许可证文本）：busybox 升级后会得到新的镜像和卷，不会复用旧的；phyless 启动时会删除其他版本的调试镜像和卷，正在使用的会跳过。两者被删除后，下次使用时自动重建。
 
 ## 浏览时怎么选路
 
@@ -89,7 +90,7 @@ phyless 要能浏览任意镜像和任意状态容器里的文件，也要能给
 | PID 浏览容器 | 同上；目标停止时随之结束 | 同上 |
 | 终端调试容器 | 会话结束时立即删除 | 连接断开后自动删除 |
 | 下载容器、`busybox-init` 容器 | 用完立即删除 | phyless 下次启动时清理，只清理已存在超过 1 小时的（同一个 daemon 上可能还有别的 phyless 实例在用） |
-| 调试镜像、busybox 卷 | 常驻，各约 1 MB；被删除后按需重建 | — |
+| 调试镜像、busybox 卷 | 常驻，各约 1 MB；被删除后按需重建；旧版本在 phyless 启动时删除 | — |
 | 变更缓存（phyless 内存） | 5 分钟没用就释放 | 随进程释放 |
 
 ## 资源上限

@@ -61,10 +61,11 @@ func New(cli client.APIClient) *FS {
 
 // Run removes helpers a crashed phyless left created-but-never-started
 // (downloads; running helpers expire on their own), including the image-fs
-// helpers of older versions.
+// helpers of older versions, then debug images/volumes of other versions.
 func (f *FS) Run(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	defer debugshell.Prune(ctx, f.cli)
 	list, err := f.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: filters.NewArgs(
 		filters.Arg("label", docker.RoleLabel), filters.Arg("status", "created"))})
 	if err != nil {
