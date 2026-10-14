@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -208,5 +209,34 @@ func TestResourceUsageDiscoveryErrorsAreReported(t *testing.T) {
 	(&Server{docker: client}).handleListVolumes(response, httptest.NewRequest("GET", "/api/volumes", nil))
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("volume discovery status = %d", response.Code)
+	}
+}
+
+type platformClient struct {
+	imageActionClient
+	inspects int
+}
+
+func (c *platformClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+	c.inspects++
+	return image.InspectResponse{ID: id, Os: "linux", Architecture: "arm64", Variant: "v8"}, nil
+}
+
+func (c *platformClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
+	return []image.Summary{{ID: "sha256:platform-test"}}, nil
+}
+
+func TestListImagesReportsCachedPlatform(t *testing.T) {
+	c := &platformClient{}
+	for range 2 {
+		response := httptest.NewRecorder()
+		(&Server{docker: c}).handleListImages(response, httptest.NewRequest("GET", "/api/images", nil))
+		var out []imageWithUsage
+		if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil || len(out) != 1 || out[0].Platform != "linux/arm64/v8" {
+			t.Fatalf("list = %s (%v)", response.Body.String(), err)
+		}
+	}
+	if c.inspects != 1 {
+		t.Fatalf("inspects = %d, want 1 (cached by image ID)", c.inspects)
 	}
 }

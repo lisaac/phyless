@@ -1,10 +1,14 @@
-import { Component, createEffect, onCleanup, Show } from "solid-js";
+import { Component, createEffect, createResource, onCleanup, Show } from "solid-js";
 import { useParams, useSearchParams } from "@solidjs/router";
 import { SourceFileBrowser } from "./SourceFileBrowser";
 import { DownloadStatusWidget } from "./UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import type { FileSourceKind } from "../../api/fileSources";
 import { currentUser } from "../../stores/auth";
+import { get } from "../../api/client";
+import { findContainer } from "../containers/containerActions";
+import type { ContainerSummary, ImageSummary } from "../../types";
+import { InfoBar, Info, ContainerInfo, ImageInfo, ImageInspectModal } from "./Inspect";
 
 // Standalone file-browser window, the file-side twin of TerminalWindowPage:
 // a top-level route outside Guard/Layout, opened via FileBrowser's "独立窗口"
@@ -25,22 +29,35 @@ export const FilesWindowPage: Component = () => {
 
   createEffect(() => { document.title = `文件 · ${name()}`; });
 
+  // Container/image basic info for the header strip; other kinds (and a
+  // failed lookup) fall back to just the kind + name.
+  const [container] = createResource(() => (kind() === "container" ? id() : null), (cid) =>
+    get<ContainerSummary[]>("/api/containers").then((all) => findContainer(all, cid)).catch(() => undefined));
+  const [image] = createResource(() => (kind() === "image" ? id() : null), (iid) =>
+    get<ImageSummary[]>("/api/images").then((all) => all.find((i) => i.Id === iid)).catch(() => undefined));
+
   const download = createDownloadTask();
   onCleanup(() => download.cancel());
 
   return (
     <Show when={currentUser()} fallback={<p class="p-8 text-sm text-zinc-500">未登录，请先在主窗口登录。</p>}>
       <div class="min-h-screen bg-zinc-950 p-3">
-        <div class="mb-3 flex min-w-0 items-baseline gap-2 border-b border-zinc-800 pb-2">
-          <span class="shrink-0 border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-400">{KIND_LABEL[kind()] ?? kind()}</span>
-          {/* 本机配置 has no name/id of its own — the label says it all. */}
-          <Show when={kind() !== "config"}>
-            <span class="truncate text-sm font-semibold text-zinc-200" title={name()}>{name()}</span>
-            <Show when={id() !== name()}>
-              <span class="truncate font-mono text-[11px] text-zinc-500" title={id()}>{id()}</span>
-            </Show>
+        {/* Same info strip as the in-page 文件 / Inspect modals. */}
+        <Show when={kind() === "container" && container()} fallback={
+          <Show when={kind() === "image" && image()} fallback={
+            <InfoBar kind={KIND_LABEL[kind()] ?? kind()}>
+              {/* 本机配置 has no name/id of its own — the label says it all. */}
+              <Show when={kind() !== "config"}>
+                <Info k="名称" title={name()}>{name()}</Info>
+                <Show when={id() !== name()}><Info k="ID" title={id()}>{id()}</Info></Show>
+              </Show>
+            </InfoBar>
+          }>
+            {(img) => <ImageInfo img={img()} />}
           </Show>
-        </div>
+        }>
+          {(c) => <ContainerInfo c={c()} />}
+        </Show>
         <SourceFileBrowser
           src={{ kind: kind(), id: id(), name: name() }}
           download={download}
@@ -51,6 +68,7 @@ export const FilesWindowPage: Component = () => {
         />
       </div>
       <DownloadStatusWidget task={download} />
+      <ImageInspectModal />
     </Show>
   );
 };

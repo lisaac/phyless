@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -25,7 +26,32 @@ type containerRef struct {
 
 type imageWithUsage struct {
 	image.Summary
-	UsedBy []containerRef `json:"UsedBy"`
+	UsedBy   []containerRef `json:"UsedBy"`
+	Platform string         `json:"Platform,omitempty"`
+}
+
+// imagePlatforms caches image ID → "os/arch[/variant]": ImageList carries no
+// platform, and an ID is a content address, so an entry never goes stale.
+// ponytail: never evicted; bounded by the images this process has listed.
+var imagePlatforms sync.Map
+
+func (s *Server) imagePlatform(ctx context.Context, id string) string {
+	if v, ok := imagePlatforms.Load(id); ok {
+		return v.(string)
+	}
+	info, err := s.docker.ImageInspect(ctx, id)
+	if err != nil {
+		return ""
+	}
+	var parts []string
+	for _, p := range []string{info.Os, info.Architecture, info.Variant} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	platform := strings.Join(parts, "/")
+	imagePlatforms.Store(id, platform)
+	return platform
 }
 
 func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +83,7 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		// call to call — same instability class as Mounts/Ports.
 		sort.Strings(img.RepoTags)
 		sort.Strings(img.RepoDigests)
-		out[i] = imageWithUsage{Summary: img, UsedBy: usedBy[img.ID]}
+		out[i] = imageWithUsage{Summary: img, UsedBy: usedBy[img.ID], Platform: s.imagePlatform(r.Context(), img.ID)}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

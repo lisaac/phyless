@@ -79,7 +79,7 @@ export const ImageLink: Component<{ id?: string; label: string; class?: string }
 
 /** Image info strip — the image inspect modal and the image 文件 modal. */
 export const ImageInfo: Component<{
-  img: { Id: string; RepoTags?: string[] | null; Size?: number; Created?: number | string; platform?: string; UsedBy?: { Id: string; Name: string }[] };
+  img: { Id: string; RepoTags?: string[] | null; Size?: number; Created?: number | string; Platform?: string; UsedBy?: { Id: string; Name: string }[] };
 }> = (p) => {
   const tags = () => (p.img.RepoTags ?? []).join(", ") || "<none>";
   return (
@@ -87,7 +87,7 @@ export const ImageInfo: Component<{
       <Info k="标签" title={tags()}>{tags()}</Info>
       <Info k="ID" title={p.img.Id}><span class="select-all">{shortId(p.img.Id)}</span></Info>
       <Info k="大小">{fmtBytes(p.img.Size)}</Info>
-      <Show when={p.img.platform}><Info k="平台">{p.img.platform}</Info></Show>
+      <Show when={p.img.Platform}><Info k="平台">{p.img.Platform}</Info></Show>
       <Info k="创建">{fmtWhen(p.img.Created)}</Info>
       <Info k="使用容器"><ContainerLinks items={p.img.UsedBy ?? []} /></Info>
     </InfoBar>
@@ -134,7 +134,7 @@ export const ImageInspectModal: Component = () => {
         when={!res.loading && d()}
         fallback={<p class={r()?.error ? "text-xs text-red-400" : "text-xs text-zinc-500"}>{r()?.error ? `加载失败：${(r()!.error as Error).message}` : "加载中…"}</p>}
       >
-        <ImageInfo img={{ ...d(), platform: [d().Os, d().Architecture, d().Variant].filter(Boolean).join("/"), UsedBy: r()!.usedBy }} />
+        <ImageInfo img={{ ...d(), Platform: [d().Os, d().Architecture, d().Variant].filter(Boolean).join("/"), UsedBy: r()!.usedBy }} />
         <JsonView data={d()} />
       </Show>
     </Modal>

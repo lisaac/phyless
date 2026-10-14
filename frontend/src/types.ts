@@ -30,6 +30,7 @@ export interface ImageSummary {
   Size: number;
   Created: number;
   UsedBy?: { Id: string; Name: string }[];
+  Platform?: string; // "os/arch[/variant]"
 }
 
 export interface NetworkSummary {
