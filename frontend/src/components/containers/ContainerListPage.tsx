@@ -1,6 +1,5 @@
 import { Component, createSignal, onMount, onCleanup, Show, For } from "solid-js";
 import { Button, PageHeader } from "../shared/Button";
-import { createTabState } from "../../stores/tabs";
 import { createResourceStore } from "../../stores/resource";
 import { get, imageInspectUrl } from "../../api/client";
 import { inspectToRunCmd } from "../../api/inspect";
@@ -9,7 +8,7 @@ import { createContainerActions, containerName } from "./containerActions";
 import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { ViewCmdModal } from "./ViewCmdModal";
-import { ContainerRow, ContainerRowHeader } from "./ContainerRow";
+import { ContainerRow, ContainerRowHeader, containerSorts } from "./ContainerRow";
 import { UpgradeContainerModal, toUpgradeTarget, type UpgradeTarget } from "./UpgradeContainerModal";
 import { CheckUpdatesModal } from "./CheckUpdatesModal";
 import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
@@ -17,8 +16,17 @@ import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
 import { ComposeIcon } from "../compose/composeShared";
-import { createListView, SearchBox, LoadMore } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, FilterChips, type ListFilter } from "../shared/ListView";
 import type { ContainerSummary } from "../../types";
+
+const has = (...states: string[]) => (c: ContainerSummary) => states.includes(c.State);
+const STATUS_FILTERS: ListFilter<ContainerSummary>[] = [
+  { key: "running", label: "运行中", tone: "emerald", match: has("running") },
+  { key: "stopped", label: "已停止", tone: "zinc", match: has("exited", "created") },
+  { key: "paused", label: "暂停", tone: "amber", match: has("paused") },
+  { key: "restarting", label: "重启中", tone: "sky", match: has("restarting") },
+  { key: "dead", label: "异常", tone: "red", match: has("dead") },
+];
 
 const DEFAULT_BULK_RUN = "docker run -d --name my-container nginx:latest";
 
@@ -27,10 +35,10 @@ export const ContainerListPage: Component = () => {
   const store = createResourceStore<ContainerSummary>("/api/containers");
   const { isP, act } = createContainerActions();
   const upgradable = (c: ContainerSummary) => isUpgradable(updateCheckFor(c.Id, c.ImageID));
-  const upgradableCount = () => store.items().filter(upgradable).length;
-  const [onlyUpgradable, setOnlyUpgradable] = createTabState("onlyUpgradable", false);
-  const view = createListView(() => onlyUpgradable() ? store.items().filter(upgradable) : store.items(), (c) =>
-    `${c.Names.join(" ")} ${c.Image} ${c.Id} ${c.Status}`);
+  const view = createListView(store.items, (c) => `${c.Names.join(" ")} ${c.Image} ${c.Id} ${c.Status}`, {
+    sort: containerSorts,
+    filters: [...STATUS_FILTERS, { key: "upgradable", label: "可升级", tone: "amber", group: "upgrade", title: "筛选可升级的容器", match: upgradable }],
+  });
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [showCreate, setShowCreate] = createSignal(false);
   const [showImport, setShowImport] = createSignal(false);
@@ -123,17 +131,8 @@ export const ContainerListPage: Component = () => {
           <Btn title={n() > 0 ? "检查选中容器是否有新镜像" : "检查全部容器是否有新镜像"} onClick={openCheck}>↻ 检查升级</Btn>
           <Btn title="升级选中容器" disabled={n() === 0} onClick={openBulkUpgrade}>↑ 升级选中</Btn>
         </Show>
-        <Show when={upgradableCount() > 0 || onlyUpgradable()}>
-          <button
-            class={`border px-1.5 py-0.5 text-[11px] transition-colors ${onlyUpgradable()
-              ? "border-amber-500 bg-amber-500/20 text-amber-300"
-              : "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"}`}
-            title={onlyUpgradable() ? "显示全部容器" : "只显示可升级的容器"}
-            onClick={() => { setOnlyUpgradable((v) => !v); setSelected(new Set<string>()); }}
-          >
-            可升级 {upgradableCount()}{onlyUpgradable() ? " ✕" : ""}
-          </button>
-        </Show>
+        <span class="text-zinc-400">│</span>
+        <FilterChips view={view} onChange={() => setSelected(new Set<string>())} />
 
         <Show when={n() > 0}>
           <button class="ml-auto text-zinc-400 hover:text-zinc-400" onClick={() => setSelected(new Set())}>
@@ -149,7 +148,7 @@ export const ContainerListPage: Component = () => {
       {/* ── List (div-simulated table, so rows can be reused elsewhere — e.g.
           ComposeListPage's expanded project section) ───────────────────────── */}
       <div class="overflow-x-auto border border-zinc-800">
-        <ContainerRowHeader />
+        <ContainerRowHeader view={view} />
         <div class="divide-y divide-zinc-800">
           <For each={view.visible()}>
             {(c) => (

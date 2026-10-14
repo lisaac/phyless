@@ -13,7 +13,7 @@ import { toast } from "../shared/Toast";
 import { confirmAction } from "../shared/ConfirmModal";
 import { hasRole } from "../../stores/auth";
 import { midPath } from "../containers/containerActions";
-import { createListView, SearchBox, LoadMore } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, SortHead, by } from "../shared/ListView";
 import type { VolumeSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 
@@ -30,7 +30,15 @@ export const VolumeListPage: Component = () => {
   const navigate = useNavigate();
   const store = createResourceStore<VolumeSummary>("/api/volumes", "Name");
   const view = createListView(store.items, (v) =>
-    `${v.Name} ${v.Driver} ${v.Mountpoint} ${v.UsedBy?.map((c) => c.Name).join(" ") ?? ""}`);
+    `${v.Name} ${v.Driver} ${v.Mountpoint} ${v.UsedBy?.map((c) => c.Name).join(" ") ?? ""}`, {
+    sort: {
+      name: by((v) => v.Name),
+      driver: by((v) => v.Driver),
+      mountpoint: by((v) => v.Mountpoint),
+      used: by((v) => v.UsedBy?.length ?? 0),
+      created: by((v) => (v.CreatedAt ? Date.parse(v.CreatedAt) || 0 : 0)),
+    },
+  });
   const [show, setShow] = createSignal(false);
   const [name, setName] = createSignal("");
   const [browse, setBrowse] = createSignal<VolumeSummary | null>(null);
@@ -71,11 +79,11 @@ export const VolumeListPage: Component = () => {
           whenever a name happened to be long. */}
       <div class="overflow-x-auto border border-zinc-800">
         <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-          <div class="w-64 shrink-0 px-3 py-2">名称</div>
-          <div class="w-24 shrink-0 px-3 py-2">驱动 / 范围</div>
-          <div class="min-w-0 flex-1 px-3 py-2">挂载点</div>
-          <div class="w-48 shrink-0 px-3 py-2">使用容器</div>
-          <div class="w-40 shrink-0 px-3 py-2 text-center">创建时间</div>
+          <SortHead view={view} k="name" class="w-64 shrink-0 px-3 py-2">名称</SortHead>
+          <SortHead view={view} k="driver" class="w-24 shrink-0 px-3 py-2">驱动 / 范围</SortHead>
+          <SortHead view={view} k="mountpoint" class="min-w-0 flex-1 px-3 py-2">挂载点</SortHead>
+          <SortHead view={view} k="used" class="w-48 shrink-0 px-3 py-2">使用容器</SortHead>
+          <SortHead view={view} k="created" class="w-40 shrink-0 px-3 py-2 text-center">创建时间</SortHead>
         </div>
         <div class="divide-y divide-zinc-800">
           <For each={view.visible()}>

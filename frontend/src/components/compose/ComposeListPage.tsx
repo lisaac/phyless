@@ -4,7 +4,7 @@ import { useNavigate } from "@solidjs/router";
 import { createResourceStore } from "../../stores/resource";
 import { Button, PageHeader } from "../shared/Button";
 import { Modal } from "../shared/Modal";
-import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
+import { ComposeActionModal, isComposeRunning, requestComposeAction, startComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { get, imageInspectUrl } from "../../api/client";
 import { queued, isPending } from "../../stores/taskQueue";
 import { inspectToRunCmd } from "../../api/inspect";
@@ -17,9 +17,9 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { ComposeSettingsModal } from "./ComposeSettingsModal";
-import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import { composeActionAvailability, composeProjectState, containersOf, representative, ComposeIcon, ComposeInfo } from "./composeShared";
-import { IBtn, Ico } from "../shared/ActionButton";
+import { createListView, SearchBox, LoadMore, SortHead, FilterChips, by, type ListFilter } from "../shared/ListView";
+import { composeActionAvailability, composeProjectState, containersOf, representative, ComposeIcon, ComposeInfo, type ComposeProjectState } from "./composeShared";
+import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
@@ -34,6 +34,14 @@ export const composeFileRel = (baseDir: string, file: string) => {
 // Lucide "hammer".
 const BUILD_ICON = "m15 12-8.5 8.5c-.83.83-2.17.83-3 0a2.12 2.12 0 0 1 0-3L12 9M17.64 15 22 10.64M20.91 11.7l-1.25-1.25c-.6-.6-.93-1.4-.93-2.25v-.86L16.01 4.6a5.56 5.56 0 0 0-3.94-1.64H9l.92.82A6.18 6.18 0 0 1 12 8.4v1.56l2 2h2.47l2.26 1.91";
 const DEFAULT_RUN = "docker run -d --name my-container nginx:latest";
+const inState = (s: ComposeProjectState) => (p: ComposeProject) => composeProjectState(p) === s;
+const STATUS_FILTERS: ListFilter<ComposeProject>[] = [
+  { key: "running", label: "运行中", tone: "emerald", match: inState("running") },
+  { key: "partial", label: "部分运行", tone: "sky", match: inState("partial") },
+  { key: "stopped", label: "已停止", tone: "zinc", match: inState("stopped") },
+  { key: "empty", label: "未部署", tone: "zinc", match: inState("empty") },
+  { key: "discovered", label: "未注册", tone: "violet", group: "source", title: "筛选发现但尚未注册的项目", match: (p) => !!p.discovered },
+];
 
 export const ComposeListPage: Component = () => {
   const navigate = useNavigate();
@@ -42,7 +50,17 @@ export const ComposeListPage: Component = () => {
   const { isP, act } = createContainerActions();
   const view = createListView(store.items, (p) =>
     `${p.name} ${p.id} ${p.base_dir} ${p.compose_file} ${containersOf(p, containers.items())
-      .map((c) => `${c.Names.join(" ")} ${c.Image}`).join(" ")}`, { rowHeight: 72 });
+      .map((c) => `${c.Names.join(" ")} ${c.Image}`).join(" ")}`, {
+    rowHeight: 72,
+    filters: STATUS_FILTERS,
+    sort: {
+      name: by((p) => p.name),
+      // Ratio running/total; undeployed sorts below fully stopped.
+      status: by((p) => (p.total ? (p.running ?? 0) / p.total : -1)),
+      file: by((p) => p.compose_file),
+    },
+  });
+  const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [expanded, setExpanded] = createTabState<Set<string>>("expanded", new Set());
   const [runTarget, setRunTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
@@ -62,6 +80,32 @@ export const ComposeListPage: Component = () => {
 
   onMount(() => { store.startPolling(); containers.startPolling(); });
   onCleanup(() => { store.stopPolling(); containers.stopPolling(); });
+
+  const toggle = (id: string) =>
+    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = (v: boolean) => setSelected(v ? new Set(view.filtered().map((p) => p.id)) : new Set<string>());
+  const n = () => selected().size;
+  const allSel = () => view.filtered().length > 0 && view.filtered().every((p) => selected().has(p.id));
+  const picked = () => store.items().filter((p) => selected().has(p.id));
+
+  // Bulk lifecycle: projects where the verb doesn't apply are skipped. Up runs
+  // with default options (pull_policy missing) — per-project proxy/registry
+  // options stay on the row's own ▶.
+  const bulk = async (verb: "up" | "stop" | "pause" | "restart" | "down") => {
+    const ps = picked().filter((p) => composeActionAvailability(p)[verb]);
+    if (!ps.length) return;
+    if (verb === "down" && !await confirmAction(
+      `停止并移除选中的 ${ps.length} 个项目的所有容器和网络？${ps.some((p) => p.self) ? "\n其中包含 phyless 自身，执行后 phyless 将停止，需在主机上手动启动。" : ""}`,
+      { title: "停止并移除 Compose", confirmText: "继续", danger: true },
+    )) return;
+    setSelected(new Set<string>());
+    for (const p of ps) {
+      const a: ComposeAction = { id: p.id, name: p.name, verb, self: p.self };
+      if (verb === "up" || verb === "down") void startComposeAction(a);
+      else request(a);
+    }
+  };
+  const bulkRun = () => void runProject(picked().flatMap((p) => containersOf(p, containers.items()).map((c) => c.Id)));
 
   const toggleExpand = (id: string) =>
     setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -112,13 +156,35 @@ export const ComposeListPage: Component = () => {
       <div class="mb-3">
         <SearchBox value={view.query()} onInput={view.setQuery} placeholder="搜索 Compose…" />
       </div>
+
+      <div class="mb-3 flex flex-wrap items-center gap-1.5 border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs">
+        <input type="checkbox" aria-label="全选项目" checked={allSel()} onChange={(e) => toggleAll(e.currentTarget.checked)} />
+        <span class="min-w-[4rem] text-zinc-500">{n() > 0 ? `${n()} 已选` : "全选"}</span>
+        <Show when={hasRole("operator")}>
+          <span class="text-zinc-400">│</span>
+          <Btn title="docker compose up -d（默认选项）" disabled={n() === 0} onClick={() => void bulk("up")}>▶ 启动</Btn>
+          <Btn title="docker compose stop" disabled={n() === 0} onClick={() => void bulk("stop")}>■ 停止</Btn>
+          <Btn title="docker compose pause" disabled={n() === 0} onClick={() => void bulk("pause")}>⏸ 暂停</Btn>
+          <Btn title="docker compose restart" disabled={n() === 0} onClick={() => void bulk("restart")}>↺ 重启</Btn>
+          <Btn title="docker compose down（停止并移除容器、网络）" danger disabled={n() === 0} onClick={() => void bulk("down")}>⏻ Down</Btn>
+        </Show>
+        <span class="text-zinc-400">│</span>
+        <Btn title="基于选中项目的所有容器创建容器 / 注册 Compose" onClick={bulkRun}>
+          <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
+        </Btn>
+        <span class="text-zinc-400">│</span>
+        <FilterChips view={view} onChange={() => setSelected(new Set<string>())} />
+        <Show when={n() > 0}>
+          <button class="ml-auto text-zinc-400 hover:text-zinc-100" onClick={() => setSelected(new Set<string>())}>清除</button>
+        </Show>
+      </div>
       <Show when={store.error()}><p class="mb-2 text-sm text-red-400">{store.error()}</p></Show>
 
       <div class="overflow-x-auto border border-zinc-800">
         <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-          <div class="w-96 shrink-0 px-3 py-2">项目</div>
-          <div class="w-32 shrink-0 px-3 py-2">运行状态</div>
-          <div class="min-w-0 flex-1 px-3 py-2">Compose 文件</div>
+          <SortHead view={view} k="name" class="w-96 shrink-0 px-3 py-2">项目</SortHead>
+          <SortHead view={view} k="status" class="w-32 shrink-0 px-3 py-2">运行状态</SortHead>
+          <SortHead view={view} k="file" class="min-w-0 flex-1 px-3 py-2">Compose 文件</SortHead>
         </div>
         <div class="divide-y divide-zinc-800">
           <For each={view.visible()}>
@@ -145,6 +211,21 @@ export const ComposeListPage: Component = () => {
                   : state() === "empty"
                     ? "bg-slate-500/[0.06] hover:bg-slate-500/[0.11]"
                     : "hover:bg-white/[0.03]";
+              // Clicking the running-status text expands the project's containers;
+              // the rest of the row selects it.
+              const statusText = () => (
+                <Show when={hasContainers()} fallback={<span class={statusColor() || "text-zinc-500"}>{p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}</span>}>
+                  <button
+                    class={`inline-flex items-center gap-1 border-b border-dashed border-current transition-opacity hover:opacity-80 ${statusColor() || "text-zinc-400"}`}
+                    title={isOpen() ? "收起容器" : "展开容器"}
+                    aria-expanded={isOpen()}
+                    onClick={(e) => { e.stopPropagation(); toggleExpand(p.id); }}
+                  >
+                    <span class={`inline-block text-[9px] transition-transform ${isOpen() ? "rotate-90" : ""}`}>▶</span>
+                    {p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}
+                  </button>
+                </Show>
+              );
               const actionButtons = () => (
                 <>
                   <Show when={hasRole("operator")}>
@@ -185,8 +266,8 @@ export const ComposeListPage: Component = () => {
               return (
                 <div>
                   <div
-                    class={`flex flex-col text-sm transition-colors sm:flex-row sm:items-start ${rowBg()} ${hasContainers() ? "cursor-pointer" : ""}`}
-                    onClick={() => { if (hasContainers()) toggleExpand(p.id); }}
+                    class={`flex flex-col text-sm transition-colors sm:flex-row sm:items-start ${rowBg()} ${selected().has(p.id) ? "ring-1 ring-inset ring-indigo-500/60" : ""}`}
+                    onClick={() => toggle(p.id)}
                   >
                     <div class="w-full px-3 py-2 sm:w-96 sm:shrink-0">
                       <div class="flex min-w-0 gap-2.5">
@@ -208,9 +289,7 @@ export const ComposeListPage: Component = () => {
                             <Show when={p.can_build}>
                               <span class="bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-400" title="Compose 文件中有服务声明了 build">build</span>
                             </Show>
-                            <span class={`text-xs sm:hidden ${statusColor() || "text-zinc-500"}`}>
-                              {p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}
-                            </span>
+                            <span class="text-xs sm:hidden">{statusText()}</span>
                           </div>
                           <Show when={rep()}>
                             {(r) => <div class="mt-0.5 text-[11px] text-zinc-400 sm:hidden">{fmtContainerStatus(r().State, r().Status)}{" · 创建 "}{fmtRelTime(r().Created)}</div>}
@@ -220,7 +299,7 @@ export const ComposeListPage: Component = () => {
                       </div>
                     </div>
                     <div class="hidden w-32 shrink-0 px-3 py-2 text-xs sm:block">
-                      <div class={statusColor() || "text-zinc-500"}>{p.total ? `${p.running ?? 0}/${p.total} 运行中` : "未部署"}</div>
+                      <div>{statusText()}</div>
                       <Show when={rep()}>
                         {(r) => <div class="mt-0.5 truncate text-[11px] text-zinc-400">{fmtContainerStatus(r().State, r().Status)}</div>}
                       </Show>

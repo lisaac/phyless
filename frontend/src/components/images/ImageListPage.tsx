@@ -9,7 +9,7 @@ import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, bro
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
-import { createListView, SearchBox, LoadMore } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, SortHead, by } from "../shared/ListView";
 import { SourceFileBrowser } from "../shared/SourceFileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
@@ -102,7 +102,15 @@ const TagChip: Component<{
 
 export const ImageListPage: Component = () => {
   const store = createResourceStore<ImageSummary>("/api/images");
-  const view = createListView(store.items, (img) => `${(img.RepoTags ?? []).join(" ")} ${img.Id} ${img.Platform ?? ""}`);
+  const view = createListView(store.items, (img) => `${(img.RepoTags ?? []).join(" ")} ${img.Id} ${img.Platform ?? ""}`, {
+    sort: {
+      tag: by((img) => img.RepoTags?.[0]),
+      size: by((img) => img.Size),
+      platform: by((img) => img.Platform),
+      used: by((img) => img.UsedBy?.length ?? 0),
+      created: by((img) => img.Created),
+    },
+  });
   const [pullRef, setPullRef] = createSignal("");
   const [showPullInput, setShowPullInput] = createSignal(false);
   const [showRemoteSearch, setShowRemoteSearch] = createSignal(false);
@@ -311,11 +319,11 @@ export const ImageListPage: Component = () => {
 
       <div class="overflow-x-auto border border-zinc-800">
         <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-          <div class="min-w-0 flex-1 px-3 py-2">标签</div>
-          <div class="w-24 shrink-0 px-3 py-2 text-center">大小</div>
-          <div class="w-28 shrink-0 px-3 py-2 text-center">平台</div>
-          <div class="w-48 shrink-0 px-3 py-2 text-center">使用容器</div>
-          <div class="w-40 shrink-0 px-3 py-2 text-center">创建时间</div>
+          <SortHead view={view} k="tag" class="min-w-0 flex-1 px-3 py-2">标签</SortHead>
+          <SortHead view={view} k="size" class="w-24 shrink-0 px-3 py-2 text-center">大小</SortHead>
+          <SortHead view={view} k="platform" class="w-28 shrink-0 px-3 py-2 text-center">平台</SortHead>
+          <SortHead view={view} k="used" class="w-48 shrink-0 px-3 py-2 text-center">使用容器</SortHead>
+          <SortHead view={view} k="created" class="w-40 shrink-0 px-3 py-2 text-center">创建时间</SortHead>
         </div>
         <div class="divide-y divide-zinc-800">
           <For each={view.visible()}>

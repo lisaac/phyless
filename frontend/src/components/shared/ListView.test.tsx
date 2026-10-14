@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createRoot } from "solid-js";
-import { createListView } from "./ListView";
+import { createListView, by } from "./ListView";
 
 const items = Array.from({ length: 500 }, (_, i) => ({ name: `item-${i}` }));
 
@@ -30,5 +30,34 @@ describe("createListView", () => {
 
     v.setQuery("item-1");
     expect(v.visible().length).toBe(page);
+  });
+
+  it("filters by chip and cycles header sort asc → desc → off", () => {
+    const rows = [{ n: "b10", v: 2 }, { n: "a2", v: 1 }, { n: "b9", v: 3 }];
+    const v = createRoot((d) => {
+      dispose = d;
+      return createListView(() => rows, (r) => r.n, {
+        sort: { n: by((r) => r.n), v: by((r) => r.v) },
+        filters: [
+          { key: "b", label: "b", tone: "zinc", match: (r) => r.n.startsWith("b") },
+          { key: "a", label: "a", tone: "zinc", match: (r) => r.n.startsWith("a") },
+          { key: "big", label: "big", tone: "zinc", group: "v", match: (r) => r.v > 1 },
+        ],
+      });
+    });
+    v.toggleSort("n");
+    expect(v.filtered().map((r) => r.n)).toEqual(["a2", "b9", "b10"]); // natural order
+    v.toggleSort("n");
+    expect(v.filtered().map((r) => r.n)).toEqual(["b10", "b9", "a2"]);
+    v.toggleSort("n");
+    expect(v.filtered()).toBe(rows);
+    v.toggleSort("v");
+    v.setFilter(["b"]);
+    expect(v.count("b")).toBe(2);
+    expect(v.filtered().map((r) => r.v)).toEqual([2, 3]);
+    v.setFilter(["b", "a"]); // same group → OR
+    expect(v.filtered().map((r) => r.v)).toEqual([1, 2, 3]);
+    v.setFilter(["a", "big"]); // different groups → AND
+    expect(v.filtered()).toEqual([]);
   });
 });

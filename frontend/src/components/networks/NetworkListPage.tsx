@@ -5,7 +5,7 @@ import { Button, PageHeader, fieldCls } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { confirmAction } from "../shared/ConfirmModal";
 import { IBtn, Ico } from "../shared/ActionButton";
-import { createListView, SearchBox, LoadMore } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, SortHead, by } from "../shared/ListView";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
@@ -30,7 +30,15 @@ export const NetworkListPage: Component = () => {
   const navigate = useNavigate();
   const store = createResourceStore<NetworkSummary>("/api/networks");
   const view = createListView(store.items, (n) =>
-    `${n.Name} ${n.Id} ${n.Driver} ${n.Scope} ${ipamRanges(n).map((c) => `${c.Subnet} ${c.Gateway}`).join(" ")} ${n.UsedBy?.map((c) => c.Name).join(" ") ?? ""}`);
+    `${n.Name} ${n.Id} ${n.Driver} ${n.Scope} ${ipamRanges(n).map((c) => `${c.Subnet} ${c.Gateway}`).join(" ")} ${n.UsedBy?.map((c) => c.Name).join(" ") ?? ""}`, {
+    sort: {
+      name: by((n) => n.Name),
+      driver: by((n) => n.Driver),
+      subnet: by((n) => ipamRanges(n)[0]?.Subnet),
+      used: by((n) => n.UsedBy?.length ?? 0),
+      created: by((n) => (n.Created ? Date.parse(n.Created) || 0 : 0)),
+    },
+  });
   const [show, setShow] = createSignal(false);
   const [form, setForm] = createSignal({ name: "", driver: "bridge", subnet: "", gateway: "", parent: "" });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -75,11 +83,11 @@ export const NetworkListPage: Component = () => {
 
       <div class="overflow-x-auto border border-zinc-800">
         <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-          <div class="min-w-0 flex-1 px-3 py-2">名称</div>
-          <div class="w-28 shrink-0 px-3 py-2">驱动 / 范围</div>
-          <div class="w-48 shrink-0 px-3 py-2">子网 / 网关</div>
-          <div class="w-44 shrink-0 px-3 py-2">使用容器</div>
-          <div class="w-40 shrink-0 px-3 py-2 text-center">创建时间</div>
+          <SortHead view={view} k="name" class="min-w-0 flex-1 px-3 py-2">名称</SortHead>
+          <SortHead view={view} k="driver" class="w-28 shrink-0 px-3 py-2">驱动 / 范围</SortHead>
+          <SortHead view={view} k="subnet" class="w-48 shrink-0 px-3 py-2">子网 / 网关</SortHead>
+          <SortHead view={view} k="used" class="w-44 shrink-0 px-3 py-2">使用容器</SortHead>
+          <SortHead view={view} k="created" class="w-40 shrink-0 px-3 py-2 text-center">创建时间</SortHead>
         </div>
         <div class="divide-y divide-zinc-800">
           <For each={view.visible()}>

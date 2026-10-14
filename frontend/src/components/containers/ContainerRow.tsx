@@ -17,6 +17,7 @@ import { containerName, findContainer, STATE_DOT, fmtContainerStatus, fmtRelTime
 import type { ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 import { ContainerInfo, ImageLink } from "../shared/Inspect";
+import { SortHead, by, type SortState } from "../shared/ListView";
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
 // be dropped anywhere — including inside ComposeListPage's expanded project
@@ -340,11 +341,20 @@ export const ContainerRow: Component<{
 // Hidden below sm: the column labels only mean something once the row is
 // actually laid out as columns; ContainerRow itself stacks into a single
 // full-width block below that breakpoint, where the labels add nothing.
-export const ContainerRowHeader: Component = () => (
+// Sort keys for ContainerRowHeader's columns (pass as createListView's `sort`).
+type NetC = ContainerSummary & { HostConfig?: { NetworkMode?: string }; NetworkSettings?: { Networks: Record<string, unknown> } };
+export const containerSorts = {
+  name: by<ContainerSummary>((c) => containerName(c)),
+  network: by<ContainerSummary>((c) => Object.keys((c as NetC).NetworkSettings?.Networks ?? {})[0] ?? (c as NetC).HostConfig?.NetworkMode),
+  mounts: by<ContainerSummary>((c) => c.Mounts[0]?.Source || c.Mounts[0]?.Name),
+  command: by<ContainerSummary>((c) => c.Command),
+};
+
+export const ContainerRowHeader: Component<{ view: { sort: () => SortState | null; toggleSort: (k: string) => void } }> = (p) => (
   <div class="hidden border-b border-zinc-800 text-xs text-zinc-500 sm:flex">
-    <div class="w-52 shrink-0 px-3 py-2">容器</div>
-    <div class="w-36 shrink-0 px-3 py-2 text-center">网络 / 端口</div>
-    <div class="min-w-0 flex-1 px-3 py-2">挂载</div>
-    <div class="w-48 shrink-0 px-3 py-2">命令</div>
+    <SortHead view={p.view} k="name" class="w-52 shrink-0 px-3 py-2">容器</SortHead>
+    <SortHead view={p.view} k="network" class="w-36 shrink-0 px-3 py-2 text-center">网络 / 端口</SortHead>
+    <SortHead view={p.view} k="mounts" class="min-w-0 flex-1 px-3 py-2">挂载</SortHead>
+    <SortHead view={p.view} k="command" class="w-48 shrink-0 px-3 py-2">命令</SortHead>
   </div>
 );
