@@ -1,7 +1,7 @@
-import { Component, createSignal, createResource, onMount, onCleanup, Show, For } from "solid-js";
+import { Component, createSignal, onMount, onCleanup, Show, For } from "solid-js";
 import { enqueue, queued, isPending, SETTLED_EVENT, type Task } from "../../stores/taskQueue";
 import { A } from "@solidjs/router";
-import { createResourceStore, settled } from "../../stores/resource";
+import { createResourceStore } from "../../stores/resource";
 import { Modal } from "../shared/Modal";
 import { Button, PageHeader, buttonCls, fieldCls } from "../shared/Button";
 import { confirmAction } from "../shared/ConfirmModal";
@@ -13,11 +13,11 @@ import { createListView, SearchBox, LoadMore } from "../shared/ListView";
 import { SourceFileBrowser } from "../shared/SourceFileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
-import { get, getToken } from "../../api/client";
+import { getToken } from "../../api/client";
 import { toast } from "../shared/Toast";
 import { hasRole } from "../../stores/auth";
 import type { ImageSummary } from "../../types";
-import { JsonView } from "../shared/JsonView";
+import { openImageInspect, fmtBytes, fmtWhen, ImageInfo } from "../shared/Inspect";
 
 // "<none> | repo@1234567890ab" — the digest names where an untagged image came from.
 const digestHint = (img: ImageSummary) => {
@@ -33,13 +33,6 @@ function suggestName(ref: string): string {
   const last = ref.split("/").pop() ?? ref;
   const base = last.split(":")[0];
   return base.replace(/[^a-zA-Z0-9_.-]/g, "-") || "container";
-}
-
-function fmtDate(unix: number): string {
-  if (!unix) return "—";
-  return new Date(unix * 1000).toLocaleString("zh-CN", {
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-  });
 }
 
 // Editable + deletable tag chip — click to rename inline (like the container
@@ -120,18 +113,10 @@ export const ImageListPage: Component = () => {
   const [remoteImportFile, setRemoteImportFile] = createSignal<File | undefined>(undefined);
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
-  const [inspectFor, setInspectFor] = createSignal<ImageSummary | null>(null);
   const [filesFor, setFilesFor] = createSignal<ImageSummary | null>(null);
   const download = createDownloadTask();
   const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [inspectResult] = createResource(inspectFor, async (img) => {
-    try { return { data: await get<any>(`/api/images/inspect?id=${encodeURIComponent(img.Id)}`) }; }
-    catch (error) { return { error }; }
-  });
-  const inspectData = () => settled(inspectResult)?.data;
-  const inspectError = () => settled(inspectResult)?.error;
 
   onMount(() => store.startPolling());
   onCleanup(() => store.stopPolling());
@@ -267,10 +252,6 @@ export const ImageListPage: Component = () => {
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  const fmtSize = (b: number) => b >= 1e9
-    ? `${(b / 1e9).toFixed(1)} GB`
-    : `${(b / 1e6).toFixed(1)} MB`;
-
   return (
     <div>
       <PageHeader title="镜像">
@@ -363,13 +344,13 @@ export const ImageListPage: Component = () => {
                     <button
                       class="mt-0.5 block font-mono text-[11px] text-zinc-400 transition-colors hover:text-indigo-400"
                       title="查看 inspect"
-                      onClick={(e) => { e.stopPropagation(); setInspectFor(img); }}
+                      onClick={(e) => { e.stopPropagation(); openImageInspect(img.Id); }}
                     >
                       {img.Id.replace("sha256:", "").slice(0, 12)}
                     </button>
                     {/* Inline actions */}
                     <div class="mt-1 flex items-center gap-0.5">
-                      <IBtn title="inspect" onClick={() => setInspectFor(img)}>
+                      <IBtn title="inspect" onClick={() => openImageInspect(img.Id)}>
                         <Ico path="M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35" />
                       </IBtn>
                       <Show when={hasRole("operator")}>
@@ -414,7 +395,7 @@ export const ImageListPage: Component = () => {
                     </div>
                   </div>
                 </div>
-                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-24 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtSize(img.Size)}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-24 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtBytes(img.Size)}</div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs sm:w-48 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">
                   <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
                     <div class="flex flex-col items-start gap-0.5 sm:items-center">
@@ -428,7 +409,7 @@ export const ImageListPage: Component = () => {
                     </div>
                   </Show>
                 </div>
-                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-40 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtDate(img.Created)}</div>
+                <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-40 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtWhen(img.Created)}</div>
               </div>
             )}
           </For>
@@ -571,22 +552,13 @@ export const ImageListPage: Component = () => {
         </div>
       </Modal>
 
-      {/* Inspect modal */}
-      <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor() ? imgLabel(inspectFor()!) : ""}`} wide>
-        <Show
-          when={!inspectResult.loading && !inspectError()}
-          fallback={<p class={inspectError() ? "text-xs text-red-400" : "text-xs text-zinc-500"}>{inspectError() ? `加载失败：${(inspectError() as Error).message}` : "加载中…"}</p>}
-        >
-          <JsonView data={inspectData()} />
-        </Show>
-      </Modal>
-
       {/* File browser — inspect the image's rootfs, download files as a tar */}
-      <Modal open={!!filesFor()} onClose={() => setFilesFor(null)} title={`文件 · ${filesFor() ? imgLabel(filesFor()!) : ""}`} wide>
+      <Modal open={!!filesFor()} onClose={() => setFilesFor(null)} title={`镜像文件 · ${filesFor() ? imgLabel(filesFor()!) : ""}`} wide>
         <Show when={filesFor()}>
-          {(img) => (
+          {(img) => (<>
+            <ImageInfo img={img()} />
             <SourceFileBrowser src={{ kind: "image", id: img().Id, name: imgLabel(img()) }} download={download} />
-          )}
+          </>)}
         </Show>
       </Modal>
       <DownloadStatusWidget task={download} />

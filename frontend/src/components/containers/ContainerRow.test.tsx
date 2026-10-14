@@ -26,7 +26,7 @@ describe("ContainerRow volume links", () => {
 
     fireEvent.click(screen.getByTitle(title));
 
-    expect(screen.getByRole("heading", { name: "文件 · web" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "容器文件 · web" })).toBeTruthy();
     await waitFor(() => expect(get).toHaveBeenCalledWith(`/api/containers/abc/files?path=${path}`));
   });
 

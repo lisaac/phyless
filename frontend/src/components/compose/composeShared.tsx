@@ -1,5 +1,6 @@
-import { Component, JSX } from "solid-js";
+import { Component, JSX, Show } from "solid-js";
 import { Btn } from "../shared/ActionButton";
+import { InfoBar, Info, ContainerLinks, cname, fmtWhen } from "../shared/Inspect";
 import type { ComposeProject, ContainerSummary } from "../../types";
 
 export const LABEL_PROJECT = "com.docker.compose.project";
@@ -81,3 +82,25 @@ export const ComposeIcon: Component<{ size?: number; class?: string }> = (p) => 
 export const ActBtn: Component<{ title: string; onClick: () => void; danger?: boolean; loading?: boolean; children: JSX.Element }> = (p) => (
   <Btn title={p.title} danger={p.danger} loading={p.loading} onClick={(e) => { e.stopPropagation(); p.onClick(); }}>{p.children}</Btn>
 );
+
+/** Compose info strip — the compose list's Inspect modal.
+ *  `data` is /api/compose/detail; `containers` are the project's containers. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const ComposeInfo: Component<{ data: any; containers: ContainerSummary[] }> = (p) => {
+  const d = () => p.data ?? {};
+  const running = () => p.containers.filter((c) => c.State === "running").length;
+  const created = () => p.containers.reduce((min, c) => (min && min < c.Created ? min : c.Created), 0);
+  const services = () => Object.keys(d().services ?? {}).join(", ") || "—";
+  return (
+    <InfoBar kind="Compose">
+      <Info k="名称">{d().project_name || d().name || "—"}</Info>
+      <Info k="文件" title={d().compose_file}>{d().compose_file || "—"}</Info>
+      <Info k="服务" title={services()}>{services()}</Info>
+      <Info k={`容器 ${running()}/${p.containers.length}`}>
+        <ContainerLinks items={p.containers.map((c) => ({ Id: c.Id, Name: cname(c) }))} />
+      </Info>
+      <Show when={created()}><Info k="创建">{fmtWhen(created())}</Info></Show>
+      <Show when={d().load_error}><Info k="错误" title={d().load_error}><span class="text-red-400">{d().load_error}</span></Info></Show>
+    </InfoBar>
+  );
+};

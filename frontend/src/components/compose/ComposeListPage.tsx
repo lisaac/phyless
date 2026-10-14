@@ -18,7 +18,7 @@ import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { ComposeSettingsModal } from "./ComposeSettingsModal";
 import { createListView, SearchBox, LoadMore } from "../shared/ListView";
-import { composeActionAvailability, composeProjectState, containersOf, representative, ComposeIcon } from "./composeShared";
+import { composeActionAvailability, composeProjectState, containersOf, representative, ComposeIcon, ComposeInfo } from "./composeShared";
 import { IBtn, Ico } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
@@ -318,6 +318,7 @@ export const ComposeListPage: Component = () => {
 
       <Modal open={!!inspectFor()} onClose={() => setInspectFor(null)} title={`Inspect · ${inspectFor()?.name ?? ""}`} wide>
         <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+          <ComposeInfo data={inspectData()} containers={inspectFor() ? containersOf(inspectFor()!, containers.items()) : []} />
           <JsonView data={inspectData()} />
         </Show>
       </Modal>

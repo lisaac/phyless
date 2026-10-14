@@ -7,6 +7,7 @@ import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, tabS
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { TaskQueueWidget } from "./TaskQueueWidget";
+import { ImageInspectModal } from "./Inspect";
 import { panelHidden, setPanelHidden, ENQUEUED_EVENT, runningCount, showTaskPanel, unseenFailureCount } from "../../stores/taskQueue";
 import { autoRefresh, refreshSeconds, setAutoRefresh, setRefreshSeconds, refreshAll } from "../../stores/refresh";
 
@@ -310,6 +311,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
       {/* Global task queue panel — mounted once here (inside the Router, so
           it can navigate) and never remounted by route changes. */}
       <TaskQueueWidget />
+      <ImageInspectModal />
       <For each={taskFlights()}>
         {(flight) => (
           <span

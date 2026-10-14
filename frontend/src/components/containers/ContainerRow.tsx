@@ -16,6 +16,7 @@ import { toUpgradeTarget, type UpgradeTarget } from "./UpgradeContainerModal";
 import { containerName, findContainer, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
+import { ContainerInfo, ImageLink } from "../shared/Inspect";
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
 // be dropped anywhere — including inside ComposeListPage's expanded project
@@ -146,7 +147,7 @@ export const ContainerRow: Component<{
         </div>
         <div class="select-all font-mono text-[11px] text-zinc-500" title={c().Id} onClick={(e) => e.stopPropagation()}>{c().Id.slice(0, 12)}</div>
         <div class="flex max-w-[12rem] items-center gap-1">
-          <span class="min-w-0 truncate text-[11px] text-zinc-400" title={c().Image}>{displayImage(c().Image, c().Labels)}</span>
+          <ImageLink class="text-[11px] text-zinc-400" id={c().ImageID} label={displayImage(c().Image, c().Labels)} />
           <UpdateBadge check={update()} />
         </div>
         <div class="mt-0.5 text-[11px] text-zinc-400">
@@ -316,11 +317,13 @@ export const ContainerRow: Component<{
 
       <Modal open={showInspect()} onClose={() => setShowInspect(false)} title={`Inspect · ${name() || c().Id.slice(0, 12)}`} wide>
         <Show when={!inspectData.loading} fallback={<p class="text-xs text-zinc-500">加载中…</p>}>
+          <ContainerInfo c={c()} />
           <JsonView data={inspectData()} />
         </Show>
       </Modal>
 
-      <Modal open={browsePath() !== null} onClose={() => setBrowsePath(null)} title={`文件 · ${name() || c().Id.slice(0, 12)}`} wide>
+      <Modal open={browsePath() !== null} onClose={() => setBrowsePath(null)} title={`容器文件 · ${name() || c().Id.slice(0, 12)}`} wide>
+        <ContainerInfo c={c()} />
         <SourceFileBrowser
           src={{ kind: "container", id: c().Id, name: name() || c().Id.slice(0, 12) }}
           download={download}

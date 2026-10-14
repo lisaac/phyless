@@ -33,6 +33,7 @@ import { ContainerIcon } from "./ContainerIcon";
 import { ComposeIcon } from "../compose/composeShared";
 import type { NetworkSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
+import { ImageLink } from "../shared/Inspect";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { settled } from "../../stores/resource";
@@ -344,7 +345,7 @@ export const ContainerDetailPage: Component = () => {
             <UpdateBadge check={update()} />
           </div>
           <p class="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-zinc-400">
-            {cfg().Image}
+            <ImageLink id={inspect()?.Image} label={cfg().Image ?? ""} />
             <Show when={hasRole("operator")}>
               <button
                 class="font-sans text-[11px] text-zinc-500 transition-colors hover:text-zinc-200"
@@ -408,10 +409,7 @@ export const ContainerDetailPage: Component = () => {
             <EditableKV k="名称" value={name()} onSave={saveName} />
             <KV k="ID"><span class="select-all truncate block" title={id()}>{id()}</span></KV>
             <KV k="镜像">
-              <span class="break-all" title={inspect()?.Image}>{displayImage(cfg().Image, cfg().Labels)}</span>
-              <Show when={inspect()?.Image}>
-                <span class="ml-2 text-zinc-500">{inspect()!.Image!.replace(/^sha256:/, "").slice(0, 12)}</span>
-              </Show>
+              <ImageLink id={inspect()?.Image} label={displayImage(cfg().Image, cfg().Labels)} />
             </KV>
             <KV k="状态">
               <span class={STATE_COLOR[state()] ?? "text-zinc-300"}>{STATE_ZH[state()] ?? state()}</span>
