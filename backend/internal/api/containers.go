@@ -23,6 +23,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
+	"phyless/backend/internal/docker/debugshell"
 	"phyless/backend/internal/docker/imagefs"
 )
 
@@ -665,14 +666,23 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var entries []dockercontainer.FileEntry
-	running := inspect.ContainerJSONBase != nil && inspect.State != nil && inspect.State.Running && !inspect.State.Paused
-	if s.imagefs == nil || running {
-		entries, err = dockercontainer.ExecListDir(r.Context(), s.docker, id, dirPath)
+	var state *container.State
+	if inspect.ContainerJSONBase != nil {
+		state = inspect.State
 	}
-	// ponytail: no ls (distroless) falls back to the archive snapshot, which is
-	// a full-fs scan cached for minutes; a readdir API would make it live.
-	if s.imagefs != nil && (!running || errors.Is(err, dockercontainer.ErrExecNotFound)) {
+	switch {
+	case state != nil && state.Running && !state.Paused:
+		entries, err = dockercontainer.ExecListDir(r.Context(), s.docker, id, dirPath)
+		if errors.Is(err, dockercontainer.ErrExecNotFound) { // no ls (distroless)
+			entries, err = debugshell.ListDir(r.Context(), s.docker, inspect, dirPath)
+		}
+	case state != nil && state.Running, underMount(inspect.Mounts, dirPath):
+		// Paused (exec refused) or a stopped container's mount: export skips mounts.
+		entries, err = debugshell.ListDir(r.Context(), s.docker, inspect, dirPath)
+	case s.imagefs != nil:
 		entries, err = s.imagefs.ListContainer(r.Context(), id, dirPath)
+	default:
+		err = fmt.Errorf("容器未运行")
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -759,4 +769,16 @@ func (s *Server) handleContainerCopyToContainer(w http.ResponseWriter, r *http.R
 	}
 	s.auditFromCtx(r, "container.file.copy", srcID+" -> "+body.TargetID, "ok")
 	dockercontainer.EmitStream(w, "✓ 复制完成")
+}
+
+// underMount reports whether p is a mount destination or lies beneath one.
+func underMount(mounts []container.MountPoint, p string) bool {
+	p = pathpkg.Clean("/" + p)
+	for _, m := range mounts {
+		d := pathpkg.Clean("/" + m.Destination)
+		if p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }

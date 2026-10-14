@@ -83,17 +83,30 @@ func (m *Manager) List(ctx context.Context, imageID, p string) ([]ctr.FileEntry,
 	return m.list(ctx, s, p)
 }
 
-// ListContainer returns a cached snapshot of a container filesystem. Docker's
-// archive API works for stopped containers and includes their mounted volumes.
-// ponytail: one full archive scan buys CLI-free navigation; replace it if the
-// Engine API gains a native readdir endpoint.
+// ListContainer lists a stopped container's own filesystem (mounts excluded;
+// the caller lists those live) without streaming its bytes: the cached image
+// index merged with the container's changes (/containers/{id}/changes, paths
+// only). Snapshotting via archive/export streamed every byte instead — a 4 GB
+// writable layer took minutes over TCP.
 func (m *Manager) ListContainer(ctx context.Context, containerID, p string) ([]ctr.FileEntry, error) {
-	s, err := m.containerSession(ctx, containerID)
+	info, err := m.cli.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return nil, err
 	}
-	defer m.done(s)
-	return m.list(ctx, s, p)
+	if info.ContainerJSONBase == nil {
+		return nil, fmt.Errorf("容器信息不完整: %s", containerID)
+	}
+	img, err := m.session(ctx, info.Image)
+	if err != nil {
+		return nil, err
+	}
+	defer m.done(img)
+	cs, err := m.containerSession(ctx, info.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer m.done(cs)
+	return listMerged(ctx, m.cli, info.ID, img.index, cs.index, normPath(p))
 }
 
 func (m *Manager) list(ctx context.Context, s *session, p string) ([]ctr.FileEntry, error) {
@@ -261,12 +274,11 @@ func (m *Manager) session(ctx context.Context, imageID string) (*session, error)
 
 func (m *Manager) containerSession(ctx context.Context, containerID string) (*session, error) {
 	return m.cached(ctx, "container:"+containerID, false, func() (string, *os.File, error) {
-		rc, _, err := m.cli.CopyFromContainer(ctx, containerID, "/")
+		changes, err := m.cli.ContainerDiff(ctx, containerID)
 		if err != nil {
 			return "", nil, err
 		}
-		defer rc.Close()
-		index, err := buildIndex(rc)
+		index, err := changesIndex(changes)
 		return containerID, index, err
 	})
 }

@@ -2,7 +2,9 @@ package debugshell
 
 import (
 	"archive/tar"
+	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -12,7 +14,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -34,8 +35,8 @@ func (f *fakeClient) ContainerInspect(context.Context, string) (container.Inspec
 	}}, nil
 }
 
-func (f *fakeClient) Info(context.Context) (system.Info, error) {
-	return system.Info{Architecture: "aarch64"}, nil
+func (f *fakeClient) ServerVersion(context.Context) (types.Version, error) {
+	return types.Version{Arch: "arm64"}, nil
 }
 
 func (f *fakeClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
@@ -60,13 +61,28 @@ func (f *fakeClient) ImageImport(_ context.Context, src image.ImportSource, _ st
 }
 
 func (f *fakeClient) ContainerCreate(_ context.Context, c *container.Config, h *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, _ string) (container.CreateResponse, error) {
+	if !f.imported {
+		return container.CreateResponse{}, errdefs.NotFound(errors.New("No such image"))
+	}
 	f.cfg, f.host = c, h
 	return container.CreateResponse{ID: "debug"}, nil
 }
 
 func (f *fakeClient) ContainerAttach(context.Context, string, container.AttachOptions) (types.HijackedResponse, error) {
-	a, _ := net.Pipe()
-	return types.HijackedResponse{Conn: a}, nil
+	a, b := net.Pipe()
+	go func() { // stdout frame for one-shot runs, then EOF
+		payload := []byte("drwxr-xr-x    2 root     root          4096 Oct 14 03:15 sub\n")
+		hdr := []byte{1, 0, 0, 0, 0, 0, 0, byte(len(payload))}
+		_, _ = b.Write(append(hdr, payload...))
+		_ = b.Close()
+	}()
+	return types.HijackedResponse{Conn: a, Reader: bufio.NewReader(a)}, nil
+}
+
+func (f *fakeClient) ContainerWait(context.Context, string, container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+	c := make(chan container.WaitResponse, 1)
+	c <- container.WaitResponse{}
+	return c, make(chan error)
 }
 
 func (f *fakeClient) ContainerStart(context.Context, string, container.StartOptions) error {
@@ -92,5 +108,20 @@ func TestStartImportsBusyboxAndJoinsTargetNamespaces(t *testing.T) {
 	}
 	if !f.cfg.StdinOnce || !f.cfg.Tty || f.cfg.Labels["phyless.role"] != Role || f.cfg.Env[0] != "ROOT=/proc/1/root" {
 		t.Fatalf("config %+v", f.cfg)
+	}
+}
+
+func TestListDirStoppedMountsVolumesReadOnly(t *testing.T) {
+	f := &fakeClient{imported: true}
+	stopped := container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: "target", State: &container.State{}}}
+	entries, err := ListDir(context.Background(), f, stopped, "/data/../data/")
+	if err != nil || len(entries) != 1 || entries[0].Name != "sub" || !entries[0].IsDir {
+		t.Fatalf("entries=%+v err=%v", entries, err)
+	}
+	if got := f.host.VolumesFrom; len(got) != 1 || got[0] != "target:ro" || !f.host.AutoRemove || f.host.PidMode != "" {
+		t.Fatalf("host config %+v", f.host)
+	}
+	if got := strings.Join(f.cfg.Cmd, " "); got != "/bin/busybox ls -la -- /data" {
+		t.Fatalf("cmd %q", got)
 	}
 }

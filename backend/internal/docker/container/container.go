@@ -124,7 +124,7 @@ func execLs(ctx context.Context, cli client.APIClient, containerID, path string)
 	stopClose := context.AfterFunc(ctx, resp.Close)
 	defer stopClose()
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr LsBuffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -143,8 +143,27 @@ func execLs(ctx context.Context, cli client.APIClient, containerID, path string)
 		return nil, fmt.Errorf("%s", msg)
 	}
 
+	return ParseLs(&stdout)
+}
+
+// maxLsOutput bounds ls output held in memory (~150k entries); a huge
+// directory must not exhaust a small host.
+const maxLsOutput = 16 << 20
+
+// LsBuffer collects ls output and fails once it exceeds maxLsOutput.
+type LsBuffer struct{ bytes.Buffer }
+
+func (b *LsBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > maxLsOutput {
+		return 0, fmt.Errorf("目录条目过多（ls 输出超过 %d MB）", maxLsOutput>>20)
+	}
+	return b.Buffer.Write(p)
+}
+
+// ParseLs parses `ls -la` output (GNU or busybox, C locale).
+func ParseLs(r io.Reader) ([]FileEntry, error) {
 	var out []FileEntry
-	scanner := bufio.NewScanner(&stdout)
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		if e, ok := parseLsLine(scanner.Text()); ok {
 			out = append(out, e)

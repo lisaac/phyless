@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	ctr "phyless/backend/internal/docker/container"
 )
 
 const imgID = "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
@@ -199,20 +202,59 @@ func TestListReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestListContainerUsesArchiveWithoutCreatingAHelper(t *testing.T) {
+func (c *fakeClient) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: id, Image: imgID}}, nil
+}
+
+func (c *fakeClient) ContainerDiff(context.Context, string) ([]container.FilesystemChange, error) {
+	return []container.FilesystemChange{
+		{Kind: container.ChangeDelete, Path: "/bin"},
+		{Kind: container.ChangeAdd, Path: "/app"},
+		{Kind: container.ChangeAdd, Path: "/app/run"},
+		{Kind: container.ChangeModify, Path: "/etc"},
+		{Kind: container.ChangeModify, Path: "/etc/hosts"},
+		{Kind: container.ChangeAdd, Path: "/etc/new.conf"},
+	}, nil
+}
+
+func (c *fakeClient) ContainerStatPath(_ context.Context, _ string, p string) (container.PathStat, error) {
+	if p == "/app" {
+		return container.PathStat{Name: "app", Mode: os.ModeDir | 0o755}, nil
+	}
+	return container.PathStat{Name: p, Size: int64(len(p)), Mode: 0o600}, nil
+}
+
+func TestListContainerMergesImageIndexWithChanges(t *testing.T) {
 	c := sampleClient(t)
 	m := New(c)
 	root, err := m.ListContainer(context.Background(), "stopped", "/")
-	if err != nil || len(root) != 3 {
+	names := map[string]ctr.FileEntry{}
+	for _, e := range root {
+		names[e.Name] = e
+	}
+	if err != nil || len(root) != 3 || !names["app"].IsDir || !names["etc"].IsDir || names["usr"].Name == "" {
 		t.Fatalf("root=%+v err=%v", root, err)
 	}
-	if c.copyID != "stopped" || c.copyPath != "/" || c.creates != 0 || c.exports != 0 {
-		t.Fatalf("copy=%s:%s creates=%d exports=%d", c.copyID, c.copyPath, c.creates, c.exports)
+	etc, err := m.ListContainer(context.Background(), "stopped", "/etc")
+	if err != nil || len(etc) != 2 {
+		t.Fatalf("etc=%+v err=%v", etc, err)
+	}
+	for _, e := range etc {
+		if e.Size != int64(len("/etc/"+e.Name)) || e.Mode != "-rw-------" { // stat'ed, not the stale image entry
+			t.Fatalf("etc entry not stat'ed: %+v", e)
+		}
+	}
+	if _, err := m.ListContainer(context.Background(), "stopped", "/bin"); err == nil {
+		t.Fatal("deleted directory still listed")
+	}
+	// Never streams the container's bytes: only the image is exported.
+	if c.copyID != "" || c.exports != 1 {
+		t.Fatalf("copy=%s exports=%d", c.copyID, c.exports)
 	}
 	now := time.Now()
 	m.now = func() time.Time { return now.Add(time.Hour) }
 	m.gc(context.Background())
-	if len(c.removed) != 0 {
+	if slices.Contains(c.removed, "stopped") {
 		t.Fatalf("stopped container was removed: %v", c.removed)
 	}
 }
@@ -373,7 +415,7 @@ func TestRelease(t *testing.T) {
 func TestEvictsLeastRecentlyUsedAtCap(t *testing.T) {
 	c := sampleClient(t)
 	m := New(c)
-	m.max = 2
+	m.max = 3 // the shared image session + two containers
 	now := time.Unix(0, 0)
 	m.now = func() time.Time { return now }
 	for _, id := range []string{"c1", "c2"} {
@@ -392,7 +434,7 @@ func TestEvictsLeastRecentlyUsedAtCap(t *testing.T) {
 	_, hasC3 := m.sessions["container:c3"]
 	n := len(m.sessions)
 	m.mu.Unlock()
-	if hasC1 || !hasC2 || !hasC3 || n != 2 {
+	if hasC1 || !hasC2 || !hasC3 || n != 3 {
 		t.Fatalf("sessions after eviction: c1=%v c2=%v c3=%v n=%d", hasC1, hasC2, hasC3, n)
 	}
 }
@@ -406,7 +448,8 @@ func TestCapacityIncludesBuildingAndPinnedSessions(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := m.List(context.Background(), imgID, "/"); done <- err }()
 	<-started
-	_, err := m.ListContainer(context.Background(), "other", "/")
+	// containerSession, not ListContainer: that would join the image build above.
+	_, err := m.containerSession(context.Background(), "other")
 	if err == nil {
 		t.Error("building index must count toward the cap")
 	}
@@ -419,7 +462,7 @@ func TestCapacityIncludesBuildingAndPinnedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rc.Close()
-	if _, err := m.ListContainer(context.Background(), "other", "/"); err == nil {
+	if _, err := m.containerSession(context.Background(), "other"); err == nil {
 		t.Error("open download must not be evicted")
 	}
 	if err := m.Release(context.Background(), imgID); err == nil {
@@ -493,7 +536,7 @@ func TestMissingHelperDoesNotPoisonCacheEviction(t *testing.T) {
 	if _, err := m.List(context.Background(), imgID, "/"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ListContainer(context.Background(), "other", "/"); err != nil {
+	if _, err := m.containerSession(context.Background(), "other"); err != nil {
 		t.Fatalf("missing helper blocked eviction: %v", err)
 	}
 	if _, found := m.sessions["image:"+imgID]; found {

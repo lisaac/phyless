@@ -16,16 +16,16 @@ COPY --from=frontend /frontend/dist ./backend/web/dist
 ARG TARGETOS TARGETARCH TARGETVARIANT
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} CGO_ENABLED=0 \
     ./scripts/go-build.sh -o phyless ./backend/cmd/server/ \
- && mkdir -m 1777 /rootfs-tmp
+ && mkdir -p /rootfs/app /rootfs/tmp && chmod 1777 /rootfs/tmp && mv phyless /rootfs/app/
 
 # No shell, no package manager: the static binary is the whole runtime.
 # Compose is embedded through the Go API (no docker/compose CLI or buildx);
 # root CAs are compiled in (x509roots/fallback). /tmp is needed by
-# os.CreateTemp (imagefs indexes, uploads).
+# os.CreateTemp (imagefs indexes, uploads); it is copied as a child of
+# /rootfs so its 1777 mode survives (COPY into a new dir would not keep it).
 FROM scratch
-COPY --from=builder /rootfs-tmp /tmp
+COPY --from=builder /rootfs/ /
 WORKDIR /app
-COPY --from=builder /app/phyless .
 VOLUME /data
 EXPOSE 8080
 ENV COMPOSE_BAKE=false

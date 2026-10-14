@@ -142,8 +142,8 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 		defer cancel()
 		cmdStr := r.URL.Query().Get("cmd")
 		cmd := []string{"/bin/sh"}
-		if cmdStr != "" {
-			cmd = strings.Fields(cmdStr)
+		if f := strings.Fields(cmdStr); len(f) > 0 {
+			cmd = f
 		}
 		var resp types.HijackedResponse
 		var resize func(container.ResizeOptions) error
