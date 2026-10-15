@@ -144,8 +144,40 @@ func running(noLs bool) *fakeDocker {
 func TestListRunningContainerUsesItsOwnLs(t *testing.T) {
 	f := running(false)
 	got, err := New(f).ListContainer(context.Background(), "target", "/etc")
-	if err != nil || names(got) != "hosts" || len(f.creates) != 0 || f.execs[0] != "target:/etc/" {
+	// Its own ls lists; the only box is the PID-sharing one reading processes.
+	if err != nil || names(got) != "hosts" || len(f.creates) != 1 || f.creates[0].PidMode != "container:target" || f.execs[0] != "target:/etc/" {
 		t.Fatalf("got=%v err=%v creates=%d execs=%v", names(got), err, len(f.creates), f.execs)
+	}
+	// That box must not be mistaken for "the target has no ls".
+	if _, err := New(f).ListContainer(context.Background(), "target", "/etc"); err != nil || f.execs[2] != "target:/etc/" {
+		t.Fatalf("execs=%v err=%v", f.execs, err)
+	}
+}
+
+func TestRunningExecutablesAndTheirDirectoriesAreTagged(t *testing.T) {
+	f := running(false)
+	f.ls["/usr/sbin"] = lsLines("nginx", "other")
+	f.ls["/usr"] = lsLines("sbin/", "lib/")
+	f.ls[exeScript] = "/usr/sbin/nginx\n/usr/sbin/nginx\n/.phyless/busybox\n"
+	fs := New(f)
+	sbin, err := fs.ListContainer(context.Background(), "target", "/usr/sbin")
+	if err != nil || !sbin[0].Run || sbin[1].Run {
+		t.Fatalf("sbin=%+v err=%v", sbin, err)
+	}
+	usr, _ := fs.ListContainer(context.Background(), "target", "/usr")
+	for _, e := range usr {
+		if e.Run || e.RunBelow != (e.Name == "sbin") {
+			t.Fatalf("usr=%+v", usr)
+		}
+	}
+	scripts := 0
+	for _, e := range f.execs {
+		if strings.HasSuffix(e, exeScript) {
+			scripts++
+		}
+	}
+	if scripts != 1 {
+		t.Fatalf("processes read %d times within runsTTL", scripts)
 	}
 }
 
@@ -160,7 +192,8 @@ func TestListRunningContainerWithoutLsJoinsItsPidNamespace(t *testing.T) {
 	}
 	// One failed exec in the target, then the pid box is reused directly.
 	want := []string{"target:/etc/", "box1:/proc/1/root/etc/", "box1:/proc/1/root/etc/"}
-	if !slices.Equal(f.execs, want) || len(f.creates) != 1 || f.creates[0].PidMode != "container:target" {
+	lists := slices.DeleteFunc(slices.Clone(f.execs), func(e string) bool { return strings.HasSuffix(e, exeScript) })
+	if !slices.Equal(lists, want) || len(f.creates) != 1 || f.creates[0].PidMode != "container:target" {
 		t.Fatalf("execs=%v creates=%+v", f.execs, f.creates)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,25 +85,54 @@ func (p *Pool) Has(key string) bool {
 // early (removed by someone, its target stopped) and a busybox volume that
 // came up empty (deleted between inspect and create, Docker then creates a
 // blank one): that volume is dropped so the retry refills it.
-func (p *Pool) Ls(ctx context.Context, key string, spec Spec, path string) ([]ctr.FileEntry, error) {
+func (p *Pool) Ls(ctx context.Context, key string, spec Spec, path string) (entries []ctr.FileEntry, err error) {
+	err = p.do(ctx, key, spec, func(ctx context.Context, id string) error {
+		entries, err = ctr.ExecLs(ctx, p.cli, id, path, Busybox, "ls")
+		return err
+	})
+	return entries, err
+}
+
+// Run runs busybox with args in key's browse container and returns stdout;
+// a non-zero exit is an error carrying stderr.
+func (p *Pool) Run(ctx context.Context, key string, spec Spec, args ...string) (out string, err error) {
+	err = p.do(ctx, key, spec, func(ctx context.Context, id string) error {
+		stdout, stderr, code, err := ctr.ExecCapture(ctx, p.cli, id, append([]string{Busybox}, args...))
+		if err == nil && code != 0 {
+			err = fmt.Errorf("busybox %s: status %d: %s", args[0], code, strings.TrimSpace(stderr.String()))
+			if code == 126 || code == 127 {
+				err = fmt.Errorf("%w (status %d)", ctr.ErrExecNotFound, code)
+			}
+		}
+		if err == nil {
+			out = stdout.String()
+		}
+		return err
+	})
+	return out, err
+}
+
+// do runs op against key's browse container, creating it when missing or
+// about to expire.
+func (p *Pool) do(ctx context.Context, key string, spec Spec, op func(ctx context.Context, id string) error) error {
 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
 	for retried := false; ; retried = true {
 		b, err := p.get(ctx, key, spec)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		entries, err := ctr.ExecLs(ctx, p.cli, b.id, path, Busybox, "ls")
+		err = op(ctx, b.id)
 		broken := errors.Is(err, ctr.ErrExecNotFound)
 		if err == nil || retried || !(broken || errdefs.IsNotFound(err) || errdefs.IsConflict(err)) {
-			return entries, err
+			return err
 		}
 		if !broken {
 			p.forget(key, b)
 			continue
 		}
 		if err := p.Remove(ctx, key); err != nil {
-			return nil, err
+			return err
 		}
 		if a, err := assetFor(ctx, p.cli); err == nil {
 			_ = p.cli.VolumeRemove(ctx, a.volume(), false) // in use elsewhere: leave it

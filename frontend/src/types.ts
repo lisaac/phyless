@@ -143,6 +143,8 @@ export interface FileEntry {
   kinds?: string; // diff listings: change kinds beneath a dir, e.g. "AC"
   mount?: { type: string; source: string; destination: string }; // is or lies in a mount
   mount_below?: boolean; // a dir with a mount point somewhere beneath
+  run?: boolean; // executable of a running process
+  run_below?: boolean; // a dir holding one somewhere beneath
 }
 
 export interface Template {

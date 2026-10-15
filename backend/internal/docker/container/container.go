@@ -105,6 +105,10 @@ type FileEntry struct {
 	Mount *MountRef `json:"mount,omitempty"`
 	// MountBelow marks a directory with a mount point somewhere beneath it.
 	MountBelow bool `json:"mount_below,omitempty"`
+	// Run marks the executable of a running process; RunBelow a directory
+	// holding one somewhere beneath.
+	Run      bool `json:"run,omitempty"`
+	RunBelow bool `json:"run_below,omitempty"`
 }
 
 type MountRef struct {
@@ -125,40 +129,12 @@ func ExecLs(ctx context.Context, cli client.APIClient, containerID, path string,
 	if !strings.HasSuffix(path, "/") {
 		path += "/"
 	}
-	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-		Cmd:          append(slices.Clip(ls), "-la", "--", path),
-		AttachStdout: true,
-		AttachStderr: true,
-		// C.UTF-8: English dates for ParseLs, but non-ASCII names intact —
-		// busybox (musl) in plain C swaps every byte >= 0x80 for '?'. glibc
-		// without C.UTF-8 falls back to C, where GNU ls prints raw bytes anyway.
-		Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"},
-	})
+	stdout, stderr, code, err := ExecCapture(ctx, cli, containerID, append(slices.Clip(ls), "-la", "--", path))
 	if err != nil {
 		return nil, err
-	}
-	if strings.TrimSpace(exec.ID) == "" {
-		return nil, fmt.Errorf("Docker returned an empty exec ID")
-	}
-	resp, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Close()
-	stopClose := context.AfterFunc(ctx, resp.Close)
-	defer stopClose()
-
-	var stdout, stderr LsBuffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, fmt.Errorf("读取 ls 输出失败: %w", err)
 	}
 	// ls exits 1 when some entries are unreadable but still lists the rest.
-	if code, err := execExitCode(ctx, cli, exec.ID); err != nil {
-		return nil, err
-	} else if err := exitError(code); err != nil && (code != 1 || stdout.Len() == 0) {
+	if err := exitError(code); err != nil && (code != 1 || stdout.Len() == 0) {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return nil, fmt.Errorf("%w: %s", err, msg) // ls says why ("No such file…")
 		}
@@ -173,7 +149,44 @@ func ExecLs(ctx context.Context, cli client.APIClient, containerID, path string,
 		return nil, fmt.Errorf("%s", msg)
 	}
 
-	return ParseLs(&stdout)
+	return ParseLs(stdout)
+}
+
+// ExecCapture runs cmd in a running container and returns its output (each
+// stream bounded by maxLsOutput) and exit code.
+func ExecCapture(ctx context.Context, cli client.APIClient, containerID string, cmd []string) (stdout, stderr *LsBuffer, code int, err error) {
+	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+		// C.UTF-8: English dates for ParseLs, but non-ASCII names intact —
+		// busybox (musl) in plain C swaps every byte >= 0x80 for '?'. glibc
+		// without C.UTF-8 falls back to C, where GNU ls prints raw bytes anyway.
+		Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"},
+	})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if strings.TrimSpace(exec.ID) == "" {
+		return nil, nil, 0, fmt.Errorf("Docker returned an empty exec ID")
+	}
+	resp, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	defer resp.Close()
+	stopClose := context.AfterFunc(ctx, resp.Close)
+	defer stopClose()
+
+	stdout, stderr = &LsBuffer{}, &LsBuffer{}
+	if _, err := stdcopy.StdCopy(stdout, stderr, resp.Reader); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, 0, ctxErr
+		}
+		return nil, nil, 0, fmt.Errorf("读取 exec 输出失败: %w", err)
+	}
+	code, err = execExitCode(ctx, cli, exec.ID)
+	return stdout, stderr, code, err
 }
 
 // maxLsOutput bounds ls output held in memory (~150k entries); a huge

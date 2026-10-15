@@ -35,6 +35,13 @@ const CHANGE_COLOR: Record<Change, string> = {
 // Same look as the compose list's「运行中发现」tag.
 const tagClass = "border px-1.5 py-0.5 text-[10px] leading-none";
 
+// Solid: the entry itself; dashed (like「目录中发现」): something beneath it.
+// Literal class strings: Tailwind only emits classes it can see whole.
+const TAG_OWN = { violet: "border-violet-500/40 bg-violet-500/15 text-violet-300", teal: "border-teal-500/40 bg-teal-500/15 text-teal-400" };
+const TAG_BELOW = { violet: "border-dashed border-violet-500/50 text-violet-400", teal: "border-dashed border-teal-500/50 text-teal-400" };
+const ownTag = (color: keyof typeof TAG_OWN) => `${tagClass} ml-2 ${TAG_OWN[color]}`;
+const belowTag = (color: keyof typeof TAG_BELOW) => `${tagClass} ml-2 ${TAG_BELOW[color]}`;
+
 const isMount = (e: FileEntry) => !!e.mount || !!e.mount_below;
 
 function pathSegments(p: string) {
@@ -408,14 +415,16 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                         <Show when={e.mount}>
                           {(m) => (
                             <span
-                              class={`${tagClass} ml-2 border-violet-500/40 bg-violet-500/15 text-violet-300`}
+                              class={ownTag("violet")}
                               title={`${m().type === "volume" ? "卷" : "挂载"}：${m().source || "—"} → ${m().destination}`}
                             >{m().type === "volume" ? "volume" : "mount"}</span>
                           )}
                         </Show>
-                        {/* Dashed (like「目录中发现」): not a mount itself, one lies beneath. */}
                         <Show when={!e.mount && e.mount_below}>
-                          <span class={`${tagClass} ml-2 border-dashed border-violet-500/50 text-violet-400`} title="此目录下有挂载点">mount</span>
+                          <span class={belowTag("violet")} title="此目录下有挂载点">mount</span>
+                        </Show>
+                        <Show when={e.run || e.run_below}>
+                          <span class={e.run ? ownTag("teal") : belowTag("teal")} title={e.run ? "运行中进程的可执行文件" : "此目录下有运行中进程的可执行文件"}>run</span>
                         </Show>
                       </>}>
                         <input

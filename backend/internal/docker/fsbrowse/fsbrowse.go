@@ -12,6 +12,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -53,6 +54,8 @@ type FS struct {
 	cli     client.APIClient
 	pool    *debugshell.Pool
 	changes changeCache
+	noLs    sync.Map // container ID → struct{}: its own ls is missing
+	runs    runCache
 }
 
 func New(cli client.APIClient) *FS {
@@ -126,6 +129,7 @@ func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry,
 	}
 	p = path.Clean("/" + p)
 	entries, err := f.listContainer(ctx, t, p)
+	exes := f.runs.get(ctx, f, t)
 	for i := range entries {
 		full := path.Join(p, entries[i].Name)
 		if m, ok := mountOf(t.Mounts, full); ok {
@@ -136,24 +140,26 @@ func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry,
 				entries[i].MountBelow = true
 			}
 		}
+		for _, x := range exes {
+			entries[i].Run = entries[i].Run || x == full
+			entries[i].RunBelow = entries[i].RunBelow || strings.HasPrefix(x, full+"/")
+		}
 	}
 	return entries, err
 }
 
 func (f *FS) listContainer(ctx context.Context, t container.InspectResponse, p string) ([]ctr.FileEntry, error) {
 	switch {
-	case t.State.Running && !t.State.Paused && !f.pool.Has(pidKey(t.ID)):
-		// Its own ls is live and free; a pid box for it means it has none.
+	case t.State.Running && !t.State.Paused && !f.lacksLs(t.ID):
+		// Its own ls is live, free, and names owners from its own passwd.
 		entries, err := ctr.ExecLs(ctx, f.cli, t.ID, p)
 		if !errors.Is(err, ctr.ErrExecNotFound) {
 			return entries, err
 		}
+		f.noLs.Store(t.ID, struct{}{}) // ponytail: never pruned; IDs are tiny
 		fallthrough
 	case t.State.Running: // no ls (distroless), or paused (exec refused)
-		return f.pool.Ls(ctx, pidKey(t.ID), debugshell.Spec{Name: t.Name, Host: container.HostConfig{
-			PidMode: container.PidMode("container:" + t.ID),
-			CapAdd:  []string{"SYS_PTRACE"}, // /proc/<pid>/root of another uid
-		}}, debugshell.TargetRoot(t)+p)
+		return f.pool.Ls(ctx, pidKey(t.ID), pidSpec(t), debugshell.TargetRoot(t)+p)
 	default:
 		return f.listStopped(ctx, t, p)
 	}
@@ -195,6 +201,16 @@ func (f *FS) ListContainerDiff(ctx context.Context, ref, p string, stat bool) ([
 	}
 	slices.SortFunc(out, func(a, b ctr.FileEntry) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
+}
+
+func (f *FS) lacksLs(id string) bool { _, ok := f.noLs.Load(id); return ok }
+
+// pidSpec is a browse container sharing t's PID namespace.
+func pidSpec(t container.InspectResponse) debugshell.Spec {
+	return debugshell.Spec{Name: t.Name, Host: container.HostConfig{
+		PidMode: container.PidMode("container:" + t.ID),
+		CapAdd:  []string{"SYS_PTRACE"}, // /proc/<pid>/root of another uid
+	}}
 }
 
 // listStopped lists a stopped container's filesystem without streaming its
