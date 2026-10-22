@@ -30,9 +30,10 @@ export function labelFor(path: string): string {
 
 // Opens a tab for `path` if one isn't already open; otherwise a no-op —
 // activation itself is just "the current route equals this tab's path",
-// so navigating there is all a caller needs to do.
+// so navigating there is all a caller needs to do. Sidebar pages never get
+// a tab — the sidebar already is their switcher; only detail pages do.
 export function openOrActivate(path: string, label: string) {
-  if (tabs().some((t) => t.path === path)) return;
+  if (STATIC_LABELS[path] || tabs().some((t) => t.path === path)) return;
   setTabs((t) => [...t, { path, label }]);
 }
 
@@ -48,6 +49,17 @@ export function setTabLabel(path: string, label: string) {
     if (idx === -1 || t[idx].label === label) return t;
     const next = [...t];
     next[idx] = { ...next[idx], label };
+    return next;
+  });
+}
+
+// Drag-reorder: put `path` at index `to` (counted without it).
+export function moveTab(path: string, to: number) {
+  setTabs((t) => {
+    const from = t.findIndex((x) => x.path === path);
+    if (from === -1 || from === to) return t;
+    const next = [...t];
+    next.splice(to, 0, ...next.splice(from, 1));
     return next;
   });
 }

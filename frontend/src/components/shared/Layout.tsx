@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
 import { cycleTheme, themeLabel } from "../../stores/theme";
 import { ThemeIcon } from "./ThemeIcon";
-import { tabs, openOrActivate, leftNeighbor, removeTab, labelFor, markSeen, tabSearch, setTabSearch, type PageTab } from "../../stores/tabs";
+import { tabs, openOrActivate, leftNeighbor, removeTab, moveTab, labelFor, markSeen, tabSearch, setTabSearch, type PageTab } from "../../stores/tabs";
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { TaskQueueWidget } from "./TaskQueueWidget";
@@ -12,6 +12,8 @@ import { panelHidden, setPanelHidden, ENQUEUED_EVENT, runningCount, showTaskPane
 import { autoRefresh, refreshSeconds, setAutoRefresh, setRefreshSeconds, refreshAll } from "../../stores/refresh";
 
 const CLOSE_ANIM_MS = 200;
+// Pinned first chip: sidebar pages get no tab, except 总览 as the home tab.
+const OVERVIEW_TAB: PageTab = { path: "/overview", label: "总览" };
 const TASK_FLIGHT_ORIGIN_MAX_AGE_MS = 1_000;
 
 interface TaskFlight {
@@ -28,7 +30,8 @@ interface TaskFlight {
 // something remounts this component for an already-seen path (e.g. a <For>
 // reconciliation quirk): a previously-seen path starts already "entered",
 // skipping the grow-in outright instead of just racing to finish it fast.
-const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void; onClose: () => void }> = (p) => {
+// No onClose = pinned (总览): never closes. onDragStart = draggable.
+const TabChip: Component<{ tab: PageTab; active: boolean; dragging?: boolean; onActivate: () => void; onClose?: () => void; onDragStart?: (e: PointerEvent) => void }> = (p) => {
   const alreadySeen = markSeen(p.tab.path);
   const [entered, setEntered] = createSignal(alreadySeen);
   const [closing, setClosing] = createSignal(false);
@@ -45,12 +48,13 @@ const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void
   const startClose = (e: MouseEvent) => {
     e.stopPropagation();
     setClosing(true);
-    setTimeout(p.onClose, CLOSE_ANIM_MS);
+    setTimeout(p.onClose!, CLOSE_ANIM_MS);
   };
 
   return (
     <div
-      class={`group flex shrink-0 cursor-pointer items-center overflow-hidden whitespace-nowrap rounded-md border text-xs text-zinc-200 ease-out ${
+      data-tab-path={p.onDragStart ? p.tab.path : undefined}
+      class={`group flex shrink-0 cursor-pointer select-none items-center overflow-hidden whitespace-nowrap rounded-md border text-xs text-zinc-200 ease-out [-webkit-touch-callout:none] ${p.dragging ? "opacity-60" : ""} ${
         p.active ? "border-indigo-500/30 bg-indigo-500/15" : "border-transparent hover:bg-zinc-800/60"
       } ${
         entered() && !closing()
@@ -64,6 +68,8 @@ const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void
         "transition-property": "max-width, opacity, transform, padding, gap",
       }}
       onClick={p.onActivate}
+      onPointerDown={(e) => p.onDragStart?.(e)}
+      onContextMenu={(e) => p.onDragStart && e.pointerType !== "mouse" && e.preventDefault()}
     >
       <Show when={p.tab.path.startsWith("/compose/")}>
         <ComposeIcon size={12} class="shrink-0 opacity-70" />
@@ -72,11 +78,13 @@ const TabChip: Component<{ tab: PageTab; active: boolean; onActivate: () => void
         <ContainerIcon size={12} class="shrink-0 opacity-70" />
       </Show>
       <span class="max-w-[9rem] truncate text-left">{p.tab.label}</span>
-      <button
-        class="shrink-0 text-zinc-500 transition-colors hover:text-zinc-200"
-        onClick={startClose}
-        aria-label={`关闭标签 ${p.tab.label}`}
-      >✕</button>
+      <Show when={p.onClose}>
+        <button
+          class="shrink-0 text-zinc-500 transition-colors hover:text-zinc-200"
+          onClick={startClose}
+          aria-label={`关闭标签 ${p.tab.label}`}
+        >✕</button>
+      </Show>
     </div>
   );
 };
@@ -155,17 +163,8 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     // Closing the tab you're currently looking at: swap the displayed page
     // to its left neighbor FIRST, then drop the old tab — not the other way
     // around.
-    const dest = leftNeighbor(path)?.path ?? "/overview";
-    if (dest === path) {
-      // Closing your only remaining tab, which is already the "/overview"
-      // fallback itself — there's nowhere left to switch to. navigate() to
-      // the same path is a no-op in solid-router (location.pathname never
-      // actually changes), so nothing would ever re-fire the tab-sync effect
-      // to recreate it — removeTab would leave a genuinely empty strip with
-      // no way back. Leave this last tab in place instead of closing it.
-      return;
-    }
-    openOrActivate(dest, labelFor(dest)); // no-op if dest's tab (the left neighbor) already exists
+    // No neighbor left → back to the detail page's own list (/containers/x → /containers).
+    const dest = leftNeighbor(path)?.path ?? path.replace(/\/[^/]+$/, "");
     // replace, not push: switching/closing tabs is tab management, not
     // "forward" navigation. Pushing here left a history entry for the tab
     // that's closing — hitting the browser Back button would then land back
@@ -181,6 +180,50 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
     // own navigate() in startTransition and awaiting it guarantees
     // location.pathname has actually become `dest` before we remove `path`'s tab.
     void startTransition(() => navigate(dest, { replace: true })).then(() => removeTab(path));
+  };
+
+  // Drag-to-reorder over pointer events (HTML5 DnD has no touch support).
+  // Mouse drags after 5px; touch needs a 300ms hold first so a plain swipe
+  // still scrolls the strip. Reorders live: the target slot is how many
+  // other chips' midpoints lie left of the pointer.
+  let strip!: HTMLDivElement;
+  let dragged = false;
+  const [dragging, setDragging] = createSignal<string | null>(null);
+  const startDrag = (path: string, e: PointerEvent) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+    const mouse = e.pointerType === "mouse", x0 = e.clientX;
+    let active = false;
+    const activate = () => { active = true; setDragging(path); };
+    const hold = mouse ? undefined : setTimeout(activate, 300);
+    const move = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.abs(ev.clientX - x0) < 5) return;
+        if (!mouse) return end(); // swipe before the hold: let it scroll
+        activate();
+      }
+      const to = [...strip.querySelectorAll<HTMLElement>("[data-tab-path]")].filter((c) => {
+        if (c.dataset.tabPath === path) return false;
+        const r = c.getBoundingClientRect();
+        return ev.clientX > r.left + r.width / 2;
+      }).length;
+      moveTab(path, to);
+    };
+    const noScroll = (ev: TouchEvent) => { if (active) ev.preventDefault(); };
+    const end = () => {
+      clearTimeout(hold);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("touchmove", noScroll);
+      if (!active) return;
+      setDragging(null);
+      dragged = true; // swallow the click that follows the drop
+      setTimeout(() => (dragged = false));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("touchmove", noScroll, { passive: false });
   };
 
   const taskBadgeCount = () => unseenFailureCount() || runningCount();
@@ -228,14 +271,21 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           <span class="font-bold text-zinc-100 lg:hidden">phyless</span>
 
           {/* Tab strip */}
-          <div class="flex min-w-0 items-center gap-1 overflow-x-auto">
+          <div ref={strip} class="flex min-w-0 items-center gap-1 overflow-x-auto">
+            <TabChip
+              tab={OVERVIEW_TAB}
+              active={location.pathname === OVERVIEW_TAB.path}
+              onActivate={() => navigate(OVERVIEW_TAB.path)}
+            />
             <For each={tabs()}>
               {(t) => (
                 <TabChip
                   tab={t}
                   active={location.pathname === t.path}
-                  onActivate={() => navigate(t.path, { replace: true })}
+                  dragging={dragging() === t.path}
+                  onActivate={() => !dragged && navigate(t.path, { replace: true })}
                   onClose={() => closeAndNavigate(t.path)}
+                  onDragStart={(e) => startDrag(t.path, e)}
                 />
               )}
             </For>
