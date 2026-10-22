@@ -30,7 +30,7 @@ interface TaskFlight {
 // reconciliation quirk): a previously-seen path starts already "entered",
 // skipping the grow-in outright instead of just racing to finish it fast.
 // No onClose = pinned (总览): never closes. onDragStart = draggable.
-const TabChip: Component<{ tab: PageTab; active: boolean; dragging?: boolean; onActivate: () => void; onClose?: () => void; onDragStart?: (e: PointerEvent) => void }> = (p) => {
+const TabChip: Component<{ tab: PageTab; active: boolean; dragX?: number | null; onActivate: () => void; onClose?: () => void; onDragStart?: (e: PointerEvent) => void }> = (p) => {
   const alreadySeen = markSeen(p.tab.path);
   const [entered, setEntered] = createSignal(alreadySeen);
   const [closing, setClosing] = createSignal(false);
@@ -53,7 +53,7 @@ const TabChip: Component<{ tab: PageTab; active: boolean; dragging?: boolean; on
   return (
     <div
       data-tab-path={p.onDragStart ? p.tab.path : undefined}
-      class={`group flex shrink-0 cursor-pointer select-none items-center overflow-hidden whitespace-nowrap rounded-md border text-xs text-zinc-200 ease-out [-webkit-touch-callout:none] ${p.dragging ? "opacity-60" : ""} ${
+      class={`group flex shrink-0 cursor-pointer select-none items-center overflow-hidden whitespace-nowrap rounded-md border text-xs text-zinc-200 ease-out [-webkit-touch-callout:none] ${p.dragX != null ? "relative z-10 cursor-grabbing shadow-lg shadow-black/40" : ""} ${
         p.active ? "border-indigo-500/30 bg-indigo-500/15" : "border-transparent hover:bg-zinc-800/60"
       } ${
         entered() && !closing()
@@ -64,7 +64,10 @@ const TabChip: Component<{ tab: PageTab; active: boolean; dragging?: boolean; on
         "transition-duration": `${CLOSE_ANIM_MS}ms`,
         // Only animate the open/close (shape) properties — not border/background
         // color, so switching the active tab snaps instantly instead of fading.
-        "transition-property": "max-width, opacity, transform, padding, gap",
+        // While dragged, transform tracks the pointer 1:1 (no transition); on
+        // drop it's cleared and transitions back into its slot.
+        "transition-property": p.dragX != null ? "max-width, opacity, padding, gap" : "max-width, opacity, transform, padding, gap",
+        transform: p.dragX != null ? `translateX(${p.dragX}px) scale(1.06)` : undefined,
       }}
       onClick={p.onActivate}
       onPointerDown={(e) => p.onDragStart?.(e)}
@@ -184,15 +187,21 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   // Drag-to-reorder over pointer events (HTML5 DnD has no touch support).
   // Mouse drags after 5px; touch needs a 300ms hold first so a plain swipe
   // still scrolls the strip. Reorders live: the target slot is how many
-  // other chips' midpoints lie left of the pointer.
+  // other chips' midpoints lie left of the pointer. The dragged chip follows
+  // the pointer; the others FLIP-slide into their new slots. All geometry is
+  // layout-based (offsetLeft within the `relative` strip), so in-flight
+  // slide animations never feed back into the slot calculation.
   let strip!: HTMLDivElement;
   let dragged = false;
-  const [dragging, setDragging] = createSignal<string | null>(null);
+  const [drag, setDrag] = createSignal<{ path: string; x: number } | null>(null);
   const startDrag = (path: string, e: PointerEvent) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
     const mouse = e.pointerType === "mouse", x0 = e.clientX;
+    const chips = () => [...strip.querySelectorAll<HTMLElement>("[data-tab-path]")];
+    const self = (e.target as HTMLElement).closest<HTMLElement>("[data-tab-path]")!;
+    const pos0 = self.offsetLeft - strip.scrollLeft;
     let active = false;
-    const activate = () => { active = true; setDragging(path); };
+    const activate = () => { active = true; setDrag({ path, x: 0 }); };
     const hold = mouse ? undefined : setTimeout(activate, 300);
     const move = (ev: PointerEvent) => {
       if (!active) {
@@ -200,12 +209,18 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
         if (!mouse) return end(); // swipe before the hold: let it scroll
         activate();
       }
-      const to = [...strip.querySelectorAll<HTMLElement>("[data-tab-path]")].filter((c) => {
-        if (c.dataset.tabPath === path) return false;
-        const r = c.getBoundingClientRect();
-        return ev.clientX > r.left + r.width / 2;
-      }).length;
-      moveTab(path, to);
+      const px = ev.clientX - strip.getBoundingClientRect().left + strip.scrollLeft;
+      const others = chips().filter((c) => c !== self);
+      const to = others.filter((c) => px > c.offsetLeft + c.offsetWidth / 2).length;
+      if (tabs().findIndex((t) => t.path === path) !== to) {
+        const before = new Map(others.map((c) => [c, c.offsetLeft]));
+        moveTab(path, to);
+        for (const [c, x] of before) {
+          const dx = x - c.offsetLeft;
+          if (dx) c.animate([{ transform: `translateX(${dx}px)` }, { transform: "none" }], { duration: 180, easing: "ease-out" });
+        }
+      }
+      setDrag({ path, x: ev.clientX - x0 - (self.offsetLeft - strip.scrollLeft - pos0) });
     };
     const noScroll = (ev: TouchEvent) => { if (active) ev.preventDefault(); };
     const end = () => {
@@ -215,7 +230,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
       window.removeEventListener("pointercancel", end);
       window.removeEventListener("touchmove", noScroll);
       if (!active) return;
-      setDragging(null);
+      setDrag(null);
       dragged = true; // swallow the click that follows the drop
       setTimeout(() => (dragged = false));
     };
@@ -271,7 +286,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           <span class="hidden font-bold text-zinc-100 sm:inline lg:hidden">phyless</span>
 
           {/* Tab strip */}
-          <div ref={strip} class="flex min-w-0 items-center gap-1 overflow-x-auto">
+          <div ref={strip} class="relative flex min-w-0 items-center gap-1 overflow-x-auto">
             <TabChip
               tab={OVERVIEW_TAB}
               active={location.pathname === OVERVIEW_TAB.path}
@@ -282,7 +297,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
                 <TabChip
                   tab={t}
                   active={location.pathname === t.path}
-                  dragging={dragging() === t.path}
+                  dragX={drag()?.path === t.path ? drag()!.x : null}
                   onActivate={() => !dragged && navigate(t.path, { replace: true })}
                   onClose={() => closeAndNavigate(t.path)}
                   onDragStart={(e) => startDrag(t.path, e)}
@@ -393,11 +408,13 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             aria-hidden="true"
             class="task-launch-flight"
             style={`left:${flight.fromX}px;top:${flight.fromY}px;--task-flight-x:${flight.toX - flight.fromX}px;--task-flight-y:${flight.toY - flight.fromY}px`}
-            onAnimationEnd={() => setTaskFlights((flights) => flights.filter((item) => item.id !== flight.id))}
+            onAnimationEnd={(e) => e.target === e.currentTarget && setTaskFlights((flights) => flights.filter((item) => item.id !== flight.id))}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 12l4 4L19 6" />
-            </svg>
+            <span><span>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12l4 4L19 6" />
+              </svg>
+            </span></span>
           </span>
         )}
       </For>
