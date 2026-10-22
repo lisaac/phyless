@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createRoot } from "solid-js";
-import { createListView, by } from "./ListView";
+import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { createListView, by, More } from "./ListView";
 
 const items = Array.from({ length: 500 }, (_, i) => ({ name: `item-${i}` }));
 
@@ -59,5 +60,19 @@ describe("createListView", () => {
     expect(v.filtered().map((r) => r.v)).toEqual([1, 2, 3]);
     v.setFilter(["a", "big"]); // different groups → AND
     expect(v.filtered()).toEqual([]);
+  });
+});
+
+describe("More", () => {
+  afterEach(cleanup);
+  it("caps items, expands in place without bubbling to the row, and folds back", () => {
+    let rowClicks = 0;
+    render(() => <div onClick={() => rowClicks++}><More each={[1, 2, 3, 4, 5]} max={2}>{(n) => <span>n{n}</span>}</More></div>);
+    expect(screen.queryByText("n3")).toBeNull();
+    fireEvent.click(screen.getByText("+3 更多"));
+    expect(screen.getByText("n5")).toBeTruthy();
+    expect(rowClicks).toBe(0);
+    fireEvent.click(screen.getByText("收起"));
+    expect(screen.queryByText("n3")).toBeNull();
   });
 });

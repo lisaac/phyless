@@ -1,4 +1,4 @@
-import { Component, Show, For, createSignal, createResource, onCleanup } from "solid-js";
+import { Component, Show, createSignal, createResource, onCleanup } from "solid-js";
 import { displayImage } from "../../api/inspect";
 import { useNavigate } from "@solidjs/router";
 import { hasRole } from "../../stores/auth";
@@ -17,7 +17,7 @@ import { containerName, findContainer, STATE_DOT, fmtContainerStatus, fmtRelTime
 import type { ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 import { ContainerInfo, ImageLink } from "../shared/Inspect";
-import { SortHead, by, type SortState } from "../shared/ListView";
+import { SortHead, More, by, type SortState } from "../shared/ListView";
 
 // One容器 row, laid out with flex/div "cells" (not a real <table>) so it can
 // be dropped anywhere — including inside ComposeListPage's expanded project
@@ -197,50 +197,47 @@ export const ContainerRow: Component<{
       {/* Network + Ports */}
       <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left sm:w-36 sm:shrink-0 sm:border-t-0 sm:text-center">
         <Show when={networkRows().length > 0}>
-          <div class="space-y-px sm:mx-auto sm:max-w-[10rem]">
-            <For each={networkRows()}>
-              {(network) => (
-                <div class="min-w-0 text-xs leading-4" title={`${network.name}${network.ips.length ? `: ${network.ips.join(", ")}` : ""}`}>
-                  <Show
-                    when={network.target}
-                    fallback={<div class="truncate text-zinc-500">{network.name}</div>}
-                  >
-                    {(target) => (
-                      <a
-                        class="block break-all text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
-                        href={`/containers/${encodeURIComponent(target())}`}
-                        title={`查看共享网络容器 ${netName() || target()}`}
-                        onClick={goto(`/containers/${encodeURIComponent(target())}`)}
-                      >
-                        {network.name}
-                      </a>
-                    )}
-                  </Show>
-                  <Show when={network.ips.length > 0}>
-                    <div class="truncate font-mono text-[11px] text-zinc-400">{network.ips.join(", ")}</div>
-                  </Show>
-                </div>
-              )}
-            </For>
-          </div>
+          <More each={networkRows()} max={2} class="space-y-px sm:mx-auto sm:max-w-[10rem]">
+            {(network) => (
+              <div class="min-w-0 text-xs leading-4" title={`${network.name}${network.ips.length ? `: ${network.ips.join(", ")}` : ""}`}>
+                <Show
+                  when={network.target}
+                  fallback={<div class="truncate text-zinc-500">{network.name}</div>}
+                >
+                  {(target) => (
+                    <a
+                      class="block break-all text-zinc-400 hover:text-indigo-400 hover:underline transition-colors"
+                      href={`/containers/${encodeURIComponent(target())}`}
+                      title={`查看共享网络容器 ${netName() || target()}`}
+                      onClick={goto(`/containers/${encodeURIComponent(target())}`)}
+                    >
+                      {network.name}
+                    </a>
+                  )}
+                </Show>
+                <Show when={network.ips.length > 0}>
+                  <div class="truncate font-mono text-[11px] text-zinc-400">{network.ips.join(", ")}</div>
+                </Show>
+              </div>
+            )}
+          </More>
         </Show>
         <Show when={pubPorts().length > 0}>
-          <div class="mt-0.5 flex flex-wrap items-center justify-start gap-x-1.5 gap-y-0.5 sm:justify-center">
-            <For each={pubPorts()}>
-              {(port) => (
-                <a
-                  href={`http://${location.hostname}:${port.PublicPort}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="font-mono text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
-                  title={`打开 ${location.hostname}:${port.PublicPort}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {port.PublicPort}→{port.PrivatePort}
-                </a>
-              )}
-            </For>
-          </div>
+          {/* ponytail: networks + ports share one height budget so the cell never outgrows the name column */}
+          <More each={pubPorts()} max={networkRows().length > 1 ? 1 : 2} class="mt-0.5 flex flex-wrap items-center justify-start gap-x-1.5 gap-y-0.5 sm:justify-center">
+            {(port) => (
+              <a
+                href={`http://${location.hostname}:${port.PublicPort}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="font-mono text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
+                title={`打开 ${location.hostname}:${port.PublicPort}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {port.PublicPort}→{port.PrivatePort}
+              </a>
+            )}
+          </More>
         </Show>
         <Show when={networkRows().length === 0 && pubPorts().length === 0}>
           <span class="text-xs text-zinc-500">—</span>
@@ -267,45 +264,40 @@ export const ContainerRow: Component<{
               align-items:stretch would otherwise stretch each row's
               hit/hover box to the full cell width — the link (and its
               hover highlight) must cover only the path text itself. */}
-          <div class="flex flex-col gap-0.5">
-            <For each={c().Mounts.slice(0, 4)}>
-              {(m) => (
-                <Show
-                  when={browsable()}
-                  fallback={
-                    <span
-                      class="flex w-fit shrink-0 items-center gap-0.5 self-start font-mono text-[11px] text-zinc-500"
-                      title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
-                    >
-                      <span class="shrink-0">{midPath(m.Source || m.Name || "")}</span>
-                      <span class="shrink-0 text-zinc-600">→</span>
-                      <span class="shrink-0">{midPath(m.Destination)}</span>
-                      <Show when={m.Mode?.includes("ro")}>
-                        <span class="text-[9px] text-zinc-500">ro</span>
-                      </Show>
-                    </span>
-                  }
-                >
-                  <a
-                    href="#"
-                    class="flex w-fit shrink-0 items-center gap-0.5 self-start font-mono text-[11px] text-zinc-400 hover:text-emerald-400 hover:underline transition-colors"
+          <More each={c().Mounts} max={4} class="flex flex-col gap-0.5">
+            {(m) => (
+              <Show
+                when={browsable()}
+                fallback={
+                  <span
+                    class="flex w-fit max-w-full items-center gap-0.5 self-start font-mono text-[11px] text-zinc-500"
                     title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
-                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); setBrowsePath(m.Destination || "/"); }}
                   >
-                    <span class="shrink-0">{midPath(m.Source || m.Name || "")}</span>
+                    <span class="min-w-0 truncate">{midPath(m.Source || m.Name || "")}</span>
                     <span class="shrink-0 text-zinc-600">→</span>
-                    <span class="shrink-0">{midPath(m.Destination)}</span>
+                    <span class="min-w-0 truncate">{midPath(m.Destination)}</span>
                     <Show when={m.Mode?.includes("ro")}>
-                      <span class="text-[9px] text-zinc-400">ro</span>
+                      <span class="text-[9px] text-zinc-500">ro</span>
                     </Show>
-                  </a>
-                </Show>
-              )}
-            </For>
-            <Show when={c().Mounts.length > 4}>
-              <span class="text-[11px] text-zinc-400">+{c().Mounts.length - 4} 更多</span>
-            </Show>
-          </div>
+                  </span>
+                }
+              >
+                <a
+                  href="#"
+                  class="flex w-fit max-w-full items-center gap-0.5 self-start font-mono text-[11px] text-zinc-400 hover:text-emerald-400 hover:underline transition-colors"
+                  title={`${m.Source} → ${m.Destination}${m.Mode?.includes("ro") ? " (只读)" : ""}`}
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); setBrowsePath(m.Destination || "/"); }}
+                >
+                  <span class="min-w-0 truncate">{midPath(m.Source || m.Name || "")}</span>
+                  <span class="shrink-0 text-zinc-600">→</span>
+                  <span class="min-w-0 truncate">{midPath(m.Destination)}</span>
+                  <Show when={m.Mode?.includes("ro")}>
+                    <span class="text-[9px] text-zinc-400">ro</span>
+                  </Show>
+                </a>
+              </Show>
+            )}
+          </More>
         </Show>
       </div>
 

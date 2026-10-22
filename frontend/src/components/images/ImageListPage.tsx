@@ -9,7 +9,7 @@ import { PullOptions, createPullOptions, isBrowserDownload, browserPullSpec, bro
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
-import { createListView, SearchBox, LoadMore, SortHead, by } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, SortHead, More, by } from "../shared/ListView";
 import { SourceFileBrowser } from "../shared/SourceFileBrowser";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
@@ -76,7 +76,7 @@ const TagChip: Component<{
     <Show when={editing()} fallback={
       <span class="inline-flex items-baseline gap-1">
         <span
-          class="cursor-text font-mono text-xs text-zinc-100 border-b border-dashed border-zinc-600 hover:border-zinc-400 transition-colors"
+          class="cursor-text break-all font-mono text-xs text-zinc-100 border-b border-dashed border-zinc-600 hover:border-zinc-400 transition-colors"
           title="点击编辑，回车保存"
           onClick={(e) => { e.stopPropagation(); setDraft(p.tag); setEditing(true); }}
         >{p.tag}</span>
@@ -336,7 +336,7 @@ export const ImageListPage: Component = () => {
                   <div class="min-w-0 flex-1">
                     {/* Tags — editable + deletable chips */}
                     <Show when={(img.RepoTags ?? []).length > 0} fallback={<div class="font-mono text-xs text-zinc-500">&lt;none&gt;{digestHint(img)}</div>}>
-                      <For each={img.RepoTags}>
+                      <More each={img.RepoTags} max={3}>
                         {(tag) => (
                           <div>
                             <TagChip
@@ -347,7 +347,7 @@ export const ImageListPage: Component = () => {
                             />
                           </div>
                         )}
-                      </For>
+                      </More>
                     </Show>
                     {/* ID — click to inspect */}
                     <button
@@ -408,15 +408,13 @@ export const ImageListPage: Component = () => {
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left font-mono text-xs text-zinc-400 sm:w-28 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{img.Platform || "—"}</div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs sm:w-48 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">
                   <Show when={img.UsedBy && img.UsedBy.length > 0} fallback={<span class="text-zinc-600">—</span>}>
-                    <div class="flex flex-col items-start gap-0.5 sm:items-center">
-                      <For each={img.UsedBy}>
-                        {(c) => (
-                          <A href={`/containers/${c.Id}`} replace class="text-indigo-400 hover:text-indigo-300 hover:underline" onClick={(e) => e.stopPropagation()}>
-                            {c.Name}
-                          </A>
-                        )}
-                      </For>
-                    </div>
+                    <More each={img.UsedBy} max={3} class="flex flex-col items-start gap-0.5 sm:items-center">
+                      {(c) => (
+                        <A href={`/containers/${c.Id}`} replace class="text-indigo-400 hover:text-indigo-300 hover:underline" onClick={(e) => e.stopPropagation()}>
+                          {c.Name}
+                        </A>
+                      )}
+                    </More>
                   </Show>
                 </div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-40 sm:shrink-0 sm:self-center sm:border-t-0 sm:text-center">{fmtWhen(img.Created)}</div>

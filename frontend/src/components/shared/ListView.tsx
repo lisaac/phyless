@@ -160,3 +160,26 @@ export const LoadMore: Component<{ when: boolean; onMore: () => void }> = (p) =>
     </Show>
   );
 };
+
+/** Multi-value list cell capped at `max` items so one busy row (many mounts/ports/
+ *  users) doesn't stretch the list; "+N" expands it in place, "收起" folds it back. */
+export function More<T>(p: { each: readonly T[] | undefined; max?: number; class?: string; children: (item: T) => JSX.Element }) {
+  const [open, setOpen] = createSignal(false);
+  const max = () => p.max ?? 3;
+  const all = () => p.each ?? [];
+  const hidden = () => all().length - max();
+  return (
+    <div class={p.class}>
+      <For each={open() || hidden() <= 0 ? all() : all().slice(0, max())}>{p.children}</For>
+      <Show when={hidden() > 0}>
+        <button
+          class="w-fit text-left text-[11px] text-zinc-500 transition-colors hover:text-indigo-400 hover:underline"
+          title={open() ? "收起" : `展开其余 ${hidden()} 项`}
+          onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}
+        >
+          {open() ? "收起" : `+${hidden()} 更多`}
+        </button>
+      </Show>
+    </div>
+  );
+}

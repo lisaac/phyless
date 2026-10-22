@@ -17,7 +17,7 @@ import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { RegisterComposeModal } from "./RegisterComposeModal";
 import { ComposeSettingsModal } from "./ComposeSettingsModal";
-import { createListView, SearchBox, LoadMore, SortHead, FilterChips, by, type ListFilter } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, SortHead, FilterChips, More, by, type ListFilter } from "../shared/ListView";
 import { composeActionAvailability, composeProjectState, containersOf, representative, ComposeIcon, ComposeInfo, type ComposeProjectState } from "./composeShared";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
@@ -276,7 +276,7 @@ export const ComposeListPage: Component = () => {
                           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <a
                               href={`/compose/${p.id}`}
-                              class="border-b border-dashed border-indigo-400/60 font-medium text-indigo-400 transition-colors hover:border-indigo-300 hover:text-indigo-300"
+                              class="break-all border-b border-dashed border-indigo-400/60 font-medium text-indigo-400 transition-colors hover:border-indigo-300 hover:text-indigo-300"
                               onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                             >{p.name}</a>
                             <Show when={p.discovered}>
@@ -305,7 +305,7 @@ export const ComposeListPage: Component = () => {
                       </Show>
                     </div>
                     <div class="w-full min-w-0 border-t border-zinc-800/60 px-10 py-2 text-left sm:flex-1 sm:border-t-0 sm:px-3">
-                      <For each={p.compose_file.split(",").filter(Boolean)}>
+                      <More each={p.compose_file.split(",").filter(Boolean)} max={2} class="flex flex-col">
                         {(file) => {
                           const rel = composeFileRel(p.base_dir, file);
                           return (
@@ -315,7 +315,7 @@ export const ComposeListPage: Component = () => {
                             </Show>
                           );
                         }}
-                      </For>
+                      </More>
                       <Show when={p.base_dir}>
                         <div class="mt-0.5 truncate font-mono text-[11px] text-zinc-500">
                           目录：<a href={filesUrl(p.id)} class={fileLinkCls} title={`浏览 ${p.base_dir}`}

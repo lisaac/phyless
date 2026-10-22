@@ -127,7 +127,7 @@ export const EventsPage: Component = () => {
               <span class="shrink-0 text-zinc-500 sm:w-28">{fmtTime(e.time)}</span>
               <span class={`w-10 shrink-0 ${TYPE_COLOR[e.type] ?? "text-zinc-400"}`}>{TYPE_LABEL[e.type] ?? e.type}</span>
               <span class={`w-28 shrink-0 truncate ${actionColor(e.action)}`} title={e.action}>{e.action}</span>
-              <span class="min-w-0 break-all text-zinc-200" title={e.id}>{eventName(e)}</span>
+              <span class="min-w-0 max-w-full truncate text-zinc-200" title={e.id}>{eventName(e)}</span>
               <Show when={eventDetail(e)}>
                 <span class="min-w-0 truncate text-zinc-500" title={eventDetail(e)}>{eventDetail(e)}</span>
               </Show>

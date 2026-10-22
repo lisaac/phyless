@@ -13,7 +13,7 @@ import { toast } from "../shared/Toast";
 import { confirmAction } from "../shared/ConfirmModal";
 import { hasRole } from "../../stores/auth";
 import { midPath } from "../containers/containerActions";
-import { createListView, SearchBox, LoadMore, SortHead, by } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, SortHead, More, by } from "../shared/ListView";
 import type { VolumeSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 
@@ -112,19 +112,17 @@ export const VolumeListPage: Component = () => {
                 <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:flex-1 sm:border-t-0" title={v.Mountpoint}>{midPath(v.Mountpoint)}</div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-48 sm:shrink-0 sm:border-t-0">
                   <Show when={(v.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
-                    <div class="flex flex-wrap gap-x-1.5 gap-y-0.5">
-                      <For each={v.UsedBy}>
-                        {(c) => (
-                          <a
-                            href={`/containers/${c.Id}`}
-                            class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
-                            onClick={(e) => { e.preventDefault(); navigate(`/containers/${c.Id}`, { replace: true }); }}
-                          >
-                            {c.Name || c.Id.slice(0, 8)}
-                          </a>
-                        )}
-                      </For>
-                    </div>
+                    <More each={v.UsedBy} max={6} class="flex flex-wrap gap-x-1.5 gap-y-0.5">
+                      {(c) => (
+                        <a
+                          href={`/containers/${c.Id}`}
+                          class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
+                          onClick={(e) => { e.preventDefault(); navigate(`/containers/${c.Id}`, { replace: true }); }}
+                        >
+                          {c.Name || c.Id.slice(0, 8)}
+                        </a>
+                      )}
+                    </More>
                   </Show>
                 </div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-40 sm:shrink-0 sm:border-t-0 sm:text-center">{fmtDate(v.CreatedAt)}</div>

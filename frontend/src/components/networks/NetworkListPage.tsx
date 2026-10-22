@@ -5,7 +5,7 @@ import { Button, PageHeader, fieldCls } from "../shared/Button";
 import { Modal } from "../shared/Modal";
 import { confirmAction } from "../shared/ConfirmModal";
 import { IBtn, Ico } from "../shared/ActionButton";
-import { createListView, SearchBox, LoadMore, SortHead, by } from "../shared/ListView";
+import { createListView, SearchBox, LoadMore, SortHead, More, by } from "../shared/ListView";
 import { get } from "../../api/client";
 import { queued } from "../../stores/taskQueue";
 import { toast } from "../shared/Toast";
@@ -94,7 +94,7 @@ export const NetworkListPage: Component = () => {
             {(n) => (
               <div class="flex flex-col text-sm transition-colors sm:flex-row sm:items-start hover:bg-white/[0.03]">
                 <div class="min-w-0 w-full px-3 py-2 sm:flex-1">
-                  <div class="font-medium" title={n.Name}>{n.Name}</div>
+                  <div class="truncate font-medium" title={n.Name}>{n.Name}</div>
                   <button
                     class="mt-0.5 block font-mono text-[11px] text-zinc-400 transition-colors hover:text-indigo-400"
                     title="查看 inspect"
@@ -117,33 +117,29 @@ export const NetworkListPage: Component = () => {
                 </div>
                 <div class="w-full min-w-0 border-t border-zinc-800/60 px-3 py-2 text-xs text-zinc-400 sm:w-48 sm:shrink-0 sm:border-t-0">
                   <Show when={ipamRanges(n).length > 0} fallback={<span class="text-zinc-600">—</span>}>
-                    <div class="space-y-px">
-                      <For each={ipamRanges(n)}>
-                        {(c) => (
-                          <div class="min-w-0 text-xs leading-4" title={`${c.Subnet ?? "—"} → ${c.Gateway ?? "—"}`}>
-                            <div class="truncate text-zinc-500">子网：<span class="font-mono text-[11px] text-zinc-400">{c.Subnet ?? "—"}</span></div>
-                            <div class="truncate text-zinc-500">网关：<span class="font-mono text-[11px] text-zinc-400">{c.Gateway ?? "—"}</span></div>
-                          </div>
-                        )}
-                      </For>
-                    </div>
+                    <More each={ipamRanges(n)} max={2} class="space-y-px">
+                      {(c) => (
+                        <div class="min-w-0 text-xs leading-4" title={`${c.Subnet ?? "—"} → ${c.Gateway ?? "—"}`}>
+                          <div class="truncate text-zinc-500">子网：<span class="font-mono text-[11px] text-zinc-400">{c.Subnet ?? "—"}</span></div>
+                          <div class="truncate text-zinc-500">网关：<span class="font-mono text-[11px] text-zinc-400">{c.Gateway ?? "—"}</span></div>
+                        </div>
+                      )}
+                    </More>
                   </Show>
                 </div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 sm:w-44 sm:shrink-0 sm:border-t-0">
                   <Show when={(n.UsedBy?.length ?? 0) > 0} fallback={<span class="text-xs text-zinc-500">—</span>}>
-                    <div class="flex flex-wrap gap-x-1.5 gap-y-0.5">
-                      <For each={n.UsedBy}>
-                        {(c) => (
-                          <a
-                            href={`/containers/${c.Id}`}
-                            class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
-                            onClick={(e) => { e.preventDefault(); navigate(`/containers/${c.Id}`, { replace: true }); }}
-                          >
-                            {c.Name || c.Id.slice(0, 8)}
-                          </a>
-                        )}
-                      </For>
-                    </div>
+                    <More each={n.UsedBy} max={6} class="flex flex-wrap gap-x-1.5 gap-y-0.5">
+                      {(c) => (
+                        <a
+                          href={`/containers/${c.Id}`}
+                          class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
+                          onClick={(e) => { e.preventDefault(); navigate(`/containers/${c.Id}`, { replace: true }); }}
+                        >
+                          {c.Name || c.Id.slice(0, 8)}
+                        </a>
+                      )}
+                    </More>
                   </Show>
                 </div>
                 <div class="w-full border-t border-zinc-800/60 px-3 py-2 text-left text-xs text-zinc-400 sm:w-40 sm:shrink-0 sm:border-t-0 sm:text-center">{fmtDate(n.Created)}</div>
