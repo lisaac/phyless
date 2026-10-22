@@ -1622,6 +1622,7 @@ func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 		Timestamps: true,
 		Since:      r.URL.Query().Get("since"),
 		Until:      r.URL.Query().Get("until"),
+		Tail:       phyWS.LiveTail(r.URL.Query()),
 	})
 	if err != nil && consumer.WriteErr() == nil && ctx.Err() == nil {
 		consumer.send("error: " + err.Error() + "\n")

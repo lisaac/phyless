@@ -16,7 +16,7 @@ import { CreateContainerModal } from "./CreateContainerModal";
 import { ConsoleModal } from "./ConsoleModal";
 import { CopyToContainerModal } from "./CopyToContainerModal";
 import { LogsView } from "../shared/LogsView";
-import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/TimeRangePicker";
+import { TimeRangePicker, appendTimeRange, presetRange, type TimeRange } from "../shared/TimeRangePicker";
 import { ContainerStats } from "./ContainerStats";
 import { FileBrowser } from "../shared/FileBrowser";
 import { TarTextViewer } from "../shared/TarTextViewer";
@@ -220,7 +220,7 @@ export const ContainerDetailPage: Component = () => {
   const [now, setNow] = createSignal(Date.now());
   onMount(() => { const t = setInterval(() => setNow(Date.now()), 1000); onCleanup(() => clearInterval(t)); });
 
-  const [logRange, setLogRange] = createSignal<TimeRange>({});
+  const [logRange, setLogRange] = createSignal<TimeRange>(presetRange("1h"));
 
   // ── Actions ──────────────────────────────────────────────────────────────────
   const actions = createContainerActions();
@@ -723,7 +723,7 @@ export const ContainerDetailPage: Component = () => {
 
       {/* ── Tab: 日志 ──────────────────────────────────────────────────────── */}
       <Show when={tab() === "logs"}>
-        <div class="mb-2"><TimeRangePicker onChange={setLogRange} /></div>
+        <div class="mb-2"><TimeRangePicker initial="1h" onChange={setLogRange} /></div>
         <LogsView wsUrl={appendTimeRange(`/ws/containers/${id()}/logs`, logRange())} />
       </Show>
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -96,9 +97,10 @@ func Logs(cli client.APIClient) http.HandlerFunc {
 			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 			return
 		}
+		q := r.URL.Query()
 		rc, err := cli.ContainerLogs(ctx, id, container.LogsOptions{
 			ShowStdout: true, ShowStderr: true, Follow: true, Timestamps: true,
-			Since: r.URL.Query().Get("since"), Until: r.URL.Query().Get("until"),
+			Since: q.Get("since"), Until: q.Get("until"), Tail: LiveTail(q),
 		})
 		if err != nil {
 			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
@@ -113,6 +115,16 @@ func Logs(cli client.APIClient) http.HandlerFunc {
 		out := wsWriter{conn: conn}
 		_, _ = copyContainerLogs(out, rc, info.Config != nil && info.Config.Tty)
 	}
+}
+
+// LiveTail is the logs Tail for a request: with no since/until ("实时") only
+// lines written from now on, like events; otherwise "" (Docker's default, all
+// lines in the range).
+func LiveTail(q url.Values) string {
+	if q.Get("since") == "" && q.Get("until") == "" {
+		return "0"
+	}
+	return ""
 }
 
 func copyContainerLogs(dst io.Writer, src io.Reader, tty bool) (int64, error) {

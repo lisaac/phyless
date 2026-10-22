@@ -12,7 +12,7 @@ import { Button } from "../shared/Button";
 import { FileBrowser } from "../shared/FileBrowser";
 import { fileSource } from "../../api/fileSources";
 import { LogsView } from "../shared/LogsView";
-import { TimeRangePicker, appendTimeRange, type TimeRange } from "../shared/TimeRangePicker";
+import { TimeRangePicker, appendTimeRange, presetRange, type TimeRange } from "../shared/TimeRangePicker";
 import { KV, Sec } from "../shared/KV";
 import { Tabs } from "../shared/Tabs";
 import { UploadStatusWidget } from "../shared/UploadStatusWidget";
@@ -84,7 +84,7 @@ export const ComposeDetailPage: Component = () => {
   const isRunning = (verb: ComposeVerb) => isComposeRunning(id(), verb);
   const request = (a: ComposeAction) => void requestComposeAction(a, setComposeTarget);
   const down = () => request({ id: id(), name: project()?.name ?? id(), verb: "down", self: project()?.self });
-  const [logRange, setLogRange] = createSignal<TimeRange>({});
+  const [logRange, setLogRange] = createSignal<TimeRange>(presetRange("1h"));
   // Run/Compose reuses the same flow as the container list's own Run/Compose
   // button — feed CreateContainerModal the merged run commands and let its
   // single-vs-multi detection decide "创建容器" vs "注册 Compose", instead of
@@ -404,7 +404,7 @@ export const ComposeDetailPage: Component = () => {
       </Show>
 
       <Show when={tab() === "logs"}>
-        <div class="mb-2"><TimeRangePicker onChange={setLogRange} /></div>
+        <div class="mb-2"><TimeRangePicker initial="1h" onChange={setLogRange} /></div>
         <LogsView wsUrl={appendTimeRange(`/ws/compose/logs?id=${encodeURIComponent(id())}`, logRange())} />
       </Show>
 
