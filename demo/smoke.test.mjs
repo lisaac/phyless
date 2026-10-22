@@ -23,7 +23,11 @@ const source = await readFile(new URL("./bootstrap.js", import.meta.url), "utf8"
 vm.runInNewContext(source, { window, location, document, localStorage, URL, Request, Response, Date, JSON, Promise, setTimeout, clearTimeout, setInterval, clearInterval });
 
 const containers = window.__phylessDemo.request("GET", "/api/containers").data;
-assert.equal(containers.length, 4);
+assert.equal(containers.length, 10);
+assert.ok(containers.every((c) => c.ImageID && c.NetworkSettings.Networks));
+assert.equal(window.__phylessDemo.request("GET", "/api/system/summary").data.containers, 10);
+assert.ok(window.__phylessDemo.request("GET", "/api/containers/a1b2c3d4e5f6/files?path=%2F&diff=1").data.every((e) => e.change || e.kinds));
+assert.equal(window.__phylessDemo.request("POST", "/api/containers/check-updates", JSON.stringify({ ids: ["a1b2c3d4e5f6"] })).data[0].status, "update");
 assert.equal(window.__phylessDemo.request("GET", "/api/config/files/content?path=%2Fhostname").text, "phyless-host\n");
 await window.__phylessDemo.runTask({ url: "/api/containers/a1b2c3d4e5f6/stop", title: "停止 phyless" });
 assert.equal(window.__phylessDemo.request("GET", "/api/containers").data[0].State, "exited");

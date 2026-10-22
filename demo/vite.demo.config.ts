@@ -26,7 +26,8 @@ const demoPlugin = {
       if (!code.includes(taskStart)) throw new Error("Task queue start changed; update the demo mock overlay");
       return code.replace(taskStart, `  persist();
   const demo = (window as any).__phylessDemo;
-  if (demo) {
+  // update-check runs for real: its POST /api/containers/check-updates is answered by the mock.
+  if (demo && t.meta?.type !== "update-check") {
     Promise.resolve(demo.runTask(t)).then(
       () => settle(id, "done"),
       (error) => settle(id, "error", error instanceof Error ? error.message : String(error)),

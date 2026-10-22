@@ -7,6 +7,16 @@
       { Id: "a1b2c3d4e5f6", Names: ["/phyless"], Image: "ghcr.io/lisaac/phyless:0.1.0", ImageId: "sha256:111111111111", State: "running", Status: "Up 2 hours", Created: now - 7200, Command: "./phyless -C /data", Project: "infra", Ports: [{ PrivatePort: 8080, PublicPort: 8080, Type: "tcp", IP: "0.0.0.0" }], Mounts: [{ Source: "/srv/phyless/data", Destination: "/data", Type: "volume", Name: "phyless-data" }] },
       { Id: "b2c3d4e5f6a1", Names: ["/caddy"], Image: "caddy:2.9-alpine", ImageId: "sha256:222222222222", State: "running", Status: "Up 2 hours", Created: now - 7200, Command: "caddy run --config /etc/caddy/Caddyfile", Project: "edge", Ports: [{ PrivatePort: 80, PublicPort: 80, Type: "tcp", IP: "0.0.0.0" }, { PrivatePort: 443, PublicPort: 443, Type: "tcp", IP: "0.0.0.0" }], Mounts: [{ Source: "/srv/compose/edge/Caddyfile", Destination: "/etc/caddy/Caddyfile", Type: "bind" }] },
       { Id: "c3d4e5f6a1b2", Names: ["/uptime-kuma"], Image: "louislam/uptime-kuma:1", ImageId: "sha256:333333333333", State: "running", Status: "Up 5 days", Created: now - 432000, Command: "node server/server.js", Project: "monitoring", Ports: [{ PrivatePort: 3001, PublicPort: 3001, Type: "tcp", IP: "0.0.0.0" }], Mounts: [{ Source: "/srv/compose/monitoring/data", Destination: "/app/data", Type: "bind" }] },
+      // Busy containers: many mounts/ports/networks and long names keep list and detail layouts honest.
+      { Id: "e5f6a1b2c3d4", Names: ["/jellyfin-media-server-with-hardware-transcoding"], Image: "registry.cn-hangzhou.aliyuncs.com/media-mirror/jellyfin-hardware-transcoding:10.10.3-ubuntu-jammy-amd64", ImageId: "sha256:666666666666", State: "running", Status: "Up 3 days (healthy)", Created: now - 259200, Command: "/jellyfin/jellyfin --datadir /config --cachedir /cache --ffmpeg /usr/lib/jellyfin-ffmpeg/ffmpeg --webdir /jellyfin/jellyfin-web --published-server-url=https://media.example.com", Project: "media", Networks: ["media_default", "edge_default", "monitoring_default"],
+        Ports: [8096, 8920, 7359, 1900, 9100, 9101, 9102, 9103].map((p) => ({ PrivatePort: p, PublicPort: p, Type: "tcp", IP: "0.0.0.0" })),
+        Mounts: [
+          { Source: "/srv/compose/media/config", Destination: "/config", Type: "bind" },
+          { Source: "/srv/compose/media/cache", Destination: "/cache", Type: "bind" },
+          ...["movies", "tv-shows", "anime", "documentaries", "music", "audiobooks", "photos", "home-videos", "concerts", "kids"].map((d) => ({ Source: `/mnt/nas-storage-pool-01/media-library/${d}`, Destination: `/media/${d}`, Type: "bind", Mode: "ro" })),
+          { Source: "", Name: "jellyfin-transcodes", Destination: "/transcodes", Type: "volume" },
+        ] },
+      ...["sonarr", "radarr", "prowlarr", "bazarr", "qbittorrent"].map((n, i) => ({ Id: `f${i}a1b2c3d4e5`, Names: [`/${n}`], Image: `lscr.io/linuxserver/${n}:latest`, ImageId: "sha256:777777777777", State: i === 4 ? "paused" : "running", Status: i === 4 ? "Up 3 days (Paused)" : "Up 3 days", Created: now - 259200, Command: "/init", Project: "media", Networks: ["media_default"], Ports: [{ PrivatePort: 8989 + i, PublicPort: 8989 + i, Type: "tcp", IP: "0.0.0.0" }], Mounts: [{ Source: `/srv/compose/media/${n}`, Destination: "/config", Type: "bind" }, { Source: "/mnt/nas-storage-pool-01/media-library", Destination: "/data", Type: "bind" }] })),
       { Id: "d4e5f6a1b2c3", Names: ["/redis-cache"], Image: "redis:7-alpine", ImageId: "sha256:444444444444", State: "exited", Status: "Exited (0) 3 hours ago", Created: now - 86400, Command: "redis-server --appendonly yes", Project: "infra", Ports: [], Mounts: [] },
     ],
     images: [
@@ -14,20 +24,26 @@
       { Id: "sha256:222222222222", RepoTags: ["caddy:2.9-alpine"], RepoDigests: ["docker.io/library/caddy@sha256:222222222222"], Size: 60293120, Created: now - 259200, UsedBy: [{ Id: "b2c3d4e5f6a1", Name: "caddy" }] },
       { Id: "sha256:333333333333", RepoTags: ["louislam/uptime-kuma:1"], RepoDigests: ["docker.io/louislam/uptime-kuma@sha256:333333333333"], Size: 231735296, Created: now - 604800, UsedBy: [{ Id: "c3d4e5f6a1b2", Name: "uptime-kuma" }] },
       { Id: "sha256:444444444444", RepoTags: ["redis:7-alpine"], RepoDigests: ["docker.io/library/redis@sha256:444444444444"], Size: 41877504, Created: now - 1209600, UsedBy: [{ Id: "d4e5f6a1b2c3", Name: "redis-cache" }] },
+      { Id: "sha256:666666666666", RepoTags: ["registry.cn-hangzhou.aliyuncs.com/media-mirror/jellyfin-hardware-transcoding:10.10.3-ubuntu-jammy-amd64", "jellyfin/jellyfin:10.10.3", "jellyfin/jellyfin:10.10", "jellyfin/jellyfin:latest"], RepoDigests: ["docker.io/jellyfin/jellyfin@sha256:666666666666"], Size: 1288490188, Created: now - 604800, UsedBy: [{ Id: "e5f6a1b2c3d4", Name: "jellyfin-media-server-with-hardware-transcoding" }] },
+      { Id: "sha256:777777777777", RepoTags: ["lscr.io/linuxserver/baseimage-ubuntu:jammy"], RepoDigests: [], Size: 312475648, Created: now - 864000, UsedBy: ["sonarr", "radarr", "prowlarr", "bazarr", "qbittorrent"].map((n, i) => ({ Id: `f${i}a1b2c3d4e5`, Name: n })) },
       { Id: "sha256:555555555555", RepoTags: ["alpine:3.21"], RepoDigests: ["docker.io/library/alpine@sha256:555555555555"], Size: 8126464, Created: now - 2592000, UsedBy: [] },
     ],
     projects: [
       { id: "infra", name: "infra", base_dir: "/srv/compose/infra", compose_file: "/srv/compose/infra/compose.yaml", env_file: "/srv/compose/infra/.env", project_name: "infra", discovered: false, running: 1, total: 2, can_build: false },
       { id: "edge", name: "edge", base_dir: "/srv/compose/edge", compose_file: "/srv/compose/edge/compose.yaml", project_name: "edge", discovered: true, running: 1, total: 1, can_build: false },
+      { id: "media", name: "media", base_dir: "/srv/compose/media", compose_file: ["compose.yaml", "compose.gpu.yaml", "compose.vpn.yaml", "compose.override.yaml"].map((f) => `/srv/compose/media/${f}`).join(","), env_file: "/srv/compose/media/.env", project_name: "media", discovered: false, running: 5, total: 6, can_build: false },
       { id: "monitoring", name: "monitoring", base_dir: "/srv/compose/monitoring", compose_file: "/srv/compose/monitoring/compose.yaml", project_name: "monitoring", discovered: false, running: 1, total: 1, can_build: true },
     ],
     networks: [
       { Id: "net-bridge-01", Name: "bridge", Driver: "bridge", Scope: "local", Created: iso(864000), Internal: false, Attachable: false, IPAM: { Config: [{ Subnet: "172.17.0.0/16", Gateway: "172.17.0.1" }] }, UsedBy: [{ Id: "a1b2c3d4e5f6", Name: "phyless" }, { Id: "b2c3d4e5f6a1", Name: "caddy" }] },
       { Id: "net-edge-01", Name: "edge_default", Driver: "bridge", Scope: "local", Created: iso(432000), Internal: false, Attachable: true, IPAM: { Config: [{ Subnet: "172.19.0.0/16", Gateway: "172.19.0.1" }] }, UsedBy: [{ Id: "b2c3d4e5f6a1", Name: "caddy" }] },
+      { Id: "net-media-01", Name: "media_default", Driver: "bridge", Scope: "local", Created: iso(259200), Internal: false, Attachable: true, IPAM: { Config: [{ Subnet: "172.21.0.0/16", Gateway: "172.21.0.1" }, { Subnet: "fd00:21::/64", Gateway: "fd00:21::1" }, { Subnet: "10.21.0.0/24", Gateway: "10.21.0.1" }] }, UsedBy: [] },
       { Id: "net-monitor-1", Name: "monitoring_default", Driver: "bridge", Scope: "local", Created: iso(345600), Internal: false, Attachable: true, IPAM: { Config: [{ Subnet: "172.20.0.0/16", Gateway: "172.20.0.1" }] }, UsedBy: [{ Id: "c3d4e5f6a1b2", Name: "uptime-kuma" }] },
     ],
     volumes: [
       { Name: "phyless-data", Driver: "local", Mountpoint: "/var/lib/docker/volumes/phyless-data/_data", Scope: "local", CreatedAt: iso(2592000), UsedBy: [{ Id: "a1b2c3d4e5f6", Name: "phyless" }] },
+      { Name: "jellyfin-transcodes", Driver: "local", Mountpoint: "/var/lib/docker/volumes/jellyfin-transcodes/_data", Scope: "local", CreatedAt: iso(259200), UsedBy: [{ Id: "e5f6a1b2c3d4", Name: "jellyfin-media-server-with-hardware-transcoding" }] },
+      { Name: "4f9c1e7b2a8d6035e1c9b7a4f2d8e6c03b5a9f1e7d2c8b4a6e0f3d9c1b7a5e2f", Driver: "local", Mountpoint: "/var/lib/docker/volumes/4f9c1e7b2a8d6035e1c9b7a4f2d8e6c03b5a9f1e7d2c8b4a6e0f3d9c1b7a5e2f/_data", Scope: "local", CreatedAt: iso(1209600), UsedBy: [] },
       { Name: "redis-data", Driver: "local", Mountpoint: "/var/lib/docker/volumes/redis-data/_data", Scope: "local", CreatedAt: iso(1209600), UsedBy: [{ Id: "d4e5f6a1b2c3", Name: "redis-cache" }] },
     ],
     users: [{ id: "u-admin", username: "admin", role: "admin" }, { id: "u-ops", username: "operator", role: "operator" }, { id: "u-view", username: "viewer", role: "viewer" }],
@@ -36,6 +52,7 @@
       { time: iso(1200), user: "admin", action: "container.start", target: "phyless", result: "ok" },
       { time: iso(3600), user: "admin", action: "compose.up", target: "edge", result: "ok" },
       { time: iso(7200), user: "operator", action: "image.pull", target: "caddy:2.9-alpine", result: "ok" },
+      { time: iso(9000), user: "operator", action: "compose.up", target: "/srv/compose/media/compose.yaml,/srv/compose/media/compose.gpu.yaml,/srv/compose/media/compose.vpn.yaml", result: "Error response from daemon: driver failed programming external connectivity on endpoint jellyfin-media-server-with-hardware-transcoding: Bind for 0.0.0.0:1900 failed: port is already allocated" },
     ],
     templates: [{ id: "tpl-nginx", name: "Nginx", cmd: "docker run -d --name web -p 8080:80 nginx:alpine", created: iso(86400) }],
     dockerServers: [{ id: "local", name: "本机 Docker", host: "", tls: false, has_ca_pem: false, has_cert_pem: false, has_key_pem: false }],
@@ -43,15 +60,24 @@
     files: {
       "/etc/hostname": "phyless-host\n",
       "/etc/os-release": "NAME=Alpine Linux\nID=alpine\nVERSION_ID=3.21.3\n",
+      "/etc/ssl/certs/ca-certificates-bundle-with-intermediate-and-cross-signed-roots-2026.crt": "-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----\n",
       "/srv/compose/infra/compose.yaml": "services:\n  phyless:\n    image: ghcr.io/lisaac/phyless:0.1.0\n    ports:\n      - 8080:8080\n    volumes:\n      - phyless-data:/data\n  redis:\n    image: redis:7-alpine\n    volumes:\n      - redis-data:/data\nvolumes:\n  phyless-data:\n  redis-data:\n",
       "/srv/compose/infra/.env": "TZ=Asia/Kuala_Lumpur\nADMIN_PASSWORD=••••••••\n",
       "/srv/compose/edge/compose.yaml": "services:\n  caddy:\n    image: caddy:2.9-alpine\n    ports:\n      - 80:80\n      - 443:443\n",
       "/srv/compose/edge/Caddyfile": "example.com {\n  reverse_proxy phyless:8080\n}\n",
       "/srv/compose/monitoring/compose.yaml": "services:\n  uptime-kuma:\n    image: louislam/uptime-kuma:1\n    build: .\n    ports:\n      - 3001:3001\n",
+      "/srv/compose/media/compose.yaml": "services:\n  jellyfin:\n    image: jellyfin/jellyfin:10.10.3\n",
+      "/srv/compose/media/compose.gpu.yaml": "services:\n  jellyfin:\n    devices:\n      - /dev/dri:/dev/dri\n",
+      "/srv/compose/media/compose.vpn.yaml": "services:\n  qbittorrent:\n    network_mode: service:vpn\n",
+      "/srv/compose/media/compose.override.yaml": "services: {}\n",
+      "/srv/compose/media/.env": "TZ=Asia/Kuala_Lumpur\nPUID=1000\nPGID=1000\n",
       "/srv/compose/monitoring/Dockerfile": "FROM louislam/uptime-kuma:1\n",
     },
   };
 
+  state.networks.find((n) => n.Name === "media_default").UsedBy = state.containers.filter((c) => c.Project === "media").map((c) => ({ Id: c.Id, Name: c.Names[0].slice(1) }));
+  const netsOf = (c) => c.Networks ?? ["bridge"];
+  const ipOf = (c, i) => `172.${17 + i}.0.${2 + state.containers.indexOf(c)}`;
   const links = (items) => items.map((c) => ({ Id: c.Id, Name: c.Names[0].replace(/^\//, "") }));
   const labels = (container) => ({
     "com.docker.compose.project": container.Project,
@@ -63,6 +89,7 @@
     Id: c.Id,
     Names: c.Names,
     Image: c.Image,
+    ImageID: c.ImageId,
     State: c.State,
     Status: c.Status,
     Created: c.Created,
@@ -70,16 +97,19 @@
     Mounts: c.Mounts,
     Command: c.Command,
     Labels: labels(c),
-    NetworkSettings: { Networks: { bridge: { IPAddress: c.Id === "a1b2c3d4e5f6" ? "172.17.0.2" : "172.17.0.3" } } },
+    HostConfig: { NetworkMode: netsOf(c)[0] },
+    NetworkSettings: { Networks: Object.fromEntries(netsOf(c).map((n, i) => [n, { IPAddress: ipOf(c, i) }])) },
   });
   const inspectContainer = (c) => ({
-    Id: c.Id.padEnd(64, "0"), Created: iso(now - c.Created), Path: c.Command.split(" ")[0], Args: c.Command.split(" ").slice(1),
+    Id: c.Id, Created: iso(now - c.Created), Path: c.Command.split(" ")[0], Args: c.Command.split(" ").slice(1),
     State: { Status: c.State, Running: c.State === "running", Paused: c.State === "paused", Restarting: false, OOMKilled: false, Dead: false, Pid: c.State === "running" ? 3124 : 0, ExitCode: c.State === "exited" ? 0 : 0, Error: "", StartedAt: iso(7200), FinishedAt: iso(0), Health: c.State === "running" ? { Status: "healthy", FailingStreak: 0 } : undefined },
     Image: c.ImageId, Name: c.Names[0], RestartCount: 0, Driver: "overlay2", Platform: "linux",
-    HostConfig: { Binds: c.Mounts.filter((m) => m.Type === "bind").map((m) => `${m.Source}:${m.Destination}`), Memory: 536870912, MemorySwap: 1073741824, CpuQuota: 0, CpuPeriod: 100000, CpuShares: 0, RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 }, NetworkMode: "bridge", PortBindings: {} },
+    HostConfig: { Binds: c.Mounts.filter((m) => m.Type === "bind").map((m) => `${m.Source}:${m.Destination}`), Memory: 536870912, MemorySwap: 1073741824, CpuQuota: 0, CpuPeriod: 100000, CpuShares: 0, RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 }, NetworkMode: netsOf(c)[0],
+      PortBindings: Object.fromEntries(c.Ports.map((p) => [`${p.PrivatePort}/${p.Type}`, [{ HostIp: "", HostPort: String(p.PublicPort) }]])),
+      ...(c.Project === "media" && c.Mounts.length > 3 ? { CapAdd: ["SYS_ADMIN", "NET_ADMIN", "SYS_NICE", "IPC_LOCK"], Devices: [{ PathOnHost: "/dev/dri/by-path/pci-0000:00:02.0-render", PathInContainer: "/dev/dri/renderD128", CgroupPermissions: "rwm" }], ExtraHosts: ["host.docker.internal:host-gateway", "nas-storage-pool-01.home.arpa:192.168.10.20"], Sysctls: { "net.ipv4.ip_unprivileged_port_start": "0" } } : {}) },
     Mounts: c.Mounts,
     Config: { Hostname: c.Names[0].replace(/^\//, ""), User: "", Image: c.Image, Env: ["TZ=Asia/Kuala_Lumpur", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"], Cmd: c.Command.split(" ").slice(1), Entrypoint: [c.Command.split(" ")[0]], WorkingDir: "/app", Labels: labels(c), ExposedPorts: { "8080/tcp": {} } },
-    NetworkSettings: { Networks: { bridge: { IPAddress: "172.17.0.2", Gateway: "172.17.0.1", MacAddress: "02:42:ac:11:00:02" } } },
+    NetworkSettings: { Networks: Object.fromEntries(netsOf(c).map((n, i) => [n, { IPAddress: ipOf(c, i), Gateway: `172.${17 + i}.0.1`, MacAddress: "02:42:ac:11:00:02" }])) },
   });
   const composeConfig = (project) => ({
     name: project.project_name,
@@ -136,16 +166,32 @@
       return container ? result(inspectContainer(container)) : notFound();
     }
     match = path.match(/^\/api\/containers\/([^/]+)\/top$/);
-    if (match) return result({ Titles: ["PID", "USER", "TIME", "COMMAND"], Processes: [["1", "root", "00:00:12", "./phyless -C /data"], ["18", "app", "00:00:02", "worker"]] });
+    if (match) {
+      const c = state.containers.find((item) => item.Id === match[1]);
+      const cmd = c?.Command ?? "./phyless -C /data";
+      // Same 8 columns as `docker top` (ps -ef), including a long command line.
+      return result({ Titles: ["UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"], Processes: [
+        ["root", "3124", "3101", "0", "08:12", "?", "00:00:12", cmd],
+        ["1000", "3188", "3124", "2", "08:12", "?", "00:03:41", `${cmd.split(" ")[0]} --worker --threads=4`],
+        ["1000", "4410", "3188", "35", "10:47", "?", "00:01:05", "/usr/lib/jellyfin-ffmpeg/ffmpeg -analyzeduration 200M -probesize 1G -i file:/media/movies/Some.Very.Long.Movie.Title.2024.2160p.UHD.BluRay.x265.10bit.HDR.mkv -map_metadata -1 -codec:v:0 h264_vaapi -b:v 8000000 -f hls /transcodes/segment.m3u8"],
+      ] });
+    }
     match = path.match(/^\/api\/containers\/([^/]+)\/files$/);
-    if (match) return result(directoryEntries(query.get("path") || "/"));
+    if (match) {
+      const entries = directoryEntries(query.get("path") || "/");
+      // diff=1 lists only changed paths, diff=marks only names + change kinds.
+      const marked = entries.map((e, i) => (i % 3 === 0 ? { ...e, change: e.is_dir ? undefined : "C", kinds: e.is_dir ? "AC" : undefined } : e));
+      if (query.get("diff") === "1") return result(marked.filter((e) => e.change || e.kinds));
+      if (query.get("diff") === "marks") return result(marked.filter((e) => e.change || e.kinds).map(({ name, path, is_dir, change, kinds }) => ({ name, path, is_dir, size: 0, change, kinds })));
+      return result(marked);
+    }
     match = path.match(/^\/api\/containers\/([^/]+)$/);
     if (match && method === "GET") {
       const c = state.containers.find((item) => item.Id === match[1]);
       return c ? result(containerSummary(c)) : notFound();
     }
 
-    if (path === "/api/images" && method === "GET") return result(clone(state.images));
+    if (path === "/api/images" && method === "GET") return result(state.images.map((i) => ({ Platform: "linux/amd64", ...clone(i) })));
     if (path === "/api/images/inspect" || path === "/api/images/detail") {
       const image = state.images.find((item) => item.Id === query.get("id") || item.RepoTags.includes(query.get("id")));
       return image ? result({ Id: image.Id, RepoTags: image.RepoTags, RepoDigests: image.RepoDigests, Created: iso(now - image.Created), Size: image.Size, Architecture: "amd64", Os: "linux", Config: { Cmd: ["/bin/sh"], Entrypoint: null, WorkingDir: "/" }, RootFS: { Type: "layers", Layers: ["sha256:layer-one", "sha256:layer-two"] } }) : notFound();
@@ -193,6 +239,16 @@
     if (/^\/api\/volumes\/[^/]+\/files$/.test(path)) return result(directoryEntries(query.get("path") || "/"));
 
     if (path === "/api/system/info") return result({ host_name: "phyless-host", server_version: "28.0.1", api_version: "1.48", min_api_version: "1.24", operating_system: "Alpine Linux 3.21", os_type: "linux", architecture: "x86_64", kernel_version: "6.12.8", n_cpu: 8, mem_total: 17179869184, n_goroutines: 42, n_fds: 38, docker_root_dir: "/var/lib/docker", storage_driver: "overlay2", storage_available: "84 GB", cgroup_driver: "cgroupfs", cgroup_version: "2", logging_driver: "json-file", default_runtime: "runc", live_restore: true });
+    if (path === "/api/system/summary") return result({ containers: state.containers.length, running: state.containers.filter((c) => c.State === "running").length, images: state.images.length, compose: state.projects.length, volumes: state.volumes.length, networks: state.networks.length });
+    if (path === "/api/system/self") return result({ id: "a1b2c3d4e5f6".padEnd(64, "0") });
+    if (path === "/api/settings/compose" && method === "GET") return result({ dirs: ["/srv/compose"] });
+    if (path === "/api/containers/check-updates" && method === "POST") {
+      const ids = Array.isArray(body.ids) ? body.ids : [];
+      return result(ids.map((id, i) => {
+        const c = state.containers.find((item) => id.startsWith(item.Id)) ?? {};
+        return { id, ref: c.Image ?? "", status: i % 3 === 0 ? "update" : "latest", local_id: c.ImageId ?? "", remote_id: i % 3 === 0 ? "sha256:999999999999" : c.ImageId };
+      }));
+    }
     if (path === "/api/system/platform") return result({ os: "linux", arch: "amd64" });
     if (path === "/api/settings/docker") return result({ servers: clone(state.dockerServers), active_id: state.activeDockerServer });
     if (path === "/api/users") return result(clone(state.users));
@@ -356,7 +412,16 @@
     stream() {
       const path = new URL(this.url).pathname;
       if (path === "/ws/events") {
-        ["container start","health_status: healthy","image pull caddy:2.9-alpine"].forEach((line, i) => setTimeout(() => this.emit(`${new Date(Date.now() - i * 60000).toISOString()} ${line}\n`), i * 180));
+        const events = [
+          ["container", "start", "a1b2c3d4e5f6", { name: "phyless", image: "ghcr.io/lisaac/phyless:0.1.0" }],
+          ["image", "pull", "caddy:2.9-alpine", { name: "caddy:2.9-alpine" }],
+          ["network", "connect", "net-media-01", { name: "media_default", container: "e5f6a1b2c3d4" }],
+          ["volume", "mount", "jellyfin-transcodes", { driver: "local", container: "e5f6a1b2c3d4" }],
+          ["container", "die", "d4e5f6a1b2c3", { name: "redis-cache", image: "redis:7-alpine", exitCode: "0" }],
+          ["container", "start", "e5f6a1b2c3d4", { name: "jellyfin-media-server-with-hardware-transcoding", image: "registry.cn-hangzhou.aliyuncs.com/media-mirror/jellyfin-hardware-transcoding:10.10.3-ubuntu-jammy-amd64" }],
+          ["image", "tag", "sha256:666666666666", { name: "registry.cn-hangzhou.aliyuncs.com/media-mirror/jellyfin-hardware-transcoding:10.10.3-ubuntu-jammy-amd64" }],
+        ];
+        events.forEach(([type, action, id, attrs], i) => setTimeout(() => this.emit(JSON.stringify({ time: now - (events.length - i) * 300, type, action, id, attrs })), i * 60));
       } else if (path.includes("/stats")) {
         let tick = 0;
         const sample = () => {
