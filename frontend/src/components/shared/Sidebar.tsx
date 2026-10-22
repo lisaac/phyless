@@ -1,8 +1,7 @@
 import { Component, For, Show } from "solid-js";
 import { A, useNavigate } from "@solidjs/router";
 import { currentUser, doLogout, hasRole } from "../../stores/auth";
-import { cycleTheme, themeLabel } from "../../stores/theme";
-import { ThemeIcon } from "./ThemeIcon";
+import { ThemeButton } from "./ThemeIcon";
 
 // Flat list kept as the single source of truth for path→label lookups
 // (stores/tabs.ts builds its labelFor() map from this + adminLinks) — the
@@ -50,14 +49,7 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
           <span class="text-sm font-semibold text-zinc-100">phyless</span>
         </div>
         <div class="flex items-center gap-1">
-          <button
-            title={themeLabel()}
-            aria-label={themeLabel()}
-            class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
-            onClick={cycleTheme}
-          >
-            <ThemeIcon />
-          </button>
+          <ThemeButton />
           <Show when={props.onClose}>
             <button
               class="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"

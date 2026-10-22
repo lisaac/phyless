@@ -1,8 +1,6 @@
 import { Component, JSX, createSignal, createEffect, onMount, onCleanup, startTransition, For, Show } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { Sidebar } from "./Sidebar";
-import { cycleTheme, themeLabel } from "../../stores/theme";
-import { ThemeIcon } from "./ThemeIcon";
 import { tabs, openOrActivate, leftNeighbor, removeTab, moveTab, labelFor, markSeen, tabSearch, setTabSearch, type PageTab } from "../../stores/tabs";
 import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
@@ -15,6 +13,7 @@ const CLOSE_ANIM_MS = 200;
 // Pinned first chip: sidebar pages get no tab, except 总览 as the home tab.
 const OVERVIEW_TAB: PageTab = { path: "/overview", label: "总览" };
 const TASK_FLIGHT_ORIGIN_MAX_AGE_MS = 1_000;
+const REFRESH_PRESETS = [3, 5, 10, 30, 60];
 
 interface TaskFlight {
   id: string;
@@ -268,7 +267,8 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           >
             <span aria-hidden="true" class="text-xl leading-none">☰</span>
           </button>
-          <span class="font-bold text-zinc-100 lg:hidden">phyless</span>
+          {/* Phones need the room for the tab strip; the drawer shows the name. */}
+          <span class="hidden font-bold text-zinc-100 sm:inline lg:hidden">phyless</span>
 
           {/* Tab strip */}
           <div ref={strip} class="flex min-w-0 items-center gap-1 overflow-x-auto">
@@ -311,47 +311,72 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
               <span aria-hidden="true" class={`rounded-full px-1.5 text-xs ${unseenFailureCount() ? "bg-red-500/20 text-red-300" : "bg-indigo-500/20 text-indigo-300"}`}>{taskBadgeCount()}</span>
             </Show>
           </button>
-          {/* Refresh now — plain icon button, no dropdown arrow beside it. */}
-          <button
-            class={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded p-1 hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
-            onClick={refreshAll}
-            title="立即刷新"
-            aria-label="立即刷新"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" aria-hidden="true">
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
-            </svg>
-          </button>
-          {/* Refresh settings — gear, replaces the old ▾ arrow. */}
-          <details ref={refreshMenu} class="group relative shrink-0">
-            <summary class="flex h-6 w-6 shrink-0 cursor-pointer list-none items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100" title="刷新设置" aria-label="刷新设置">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" aria-hidden="true">
-                <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          {/* Refresh: one split control — left half refreshes now, the arrow opens
+              the settings popover. Indigo = auto-refresh on, grey = off. */}
+          <div class="relative flex h-6 shrink-0 items-stretch rounded border border-zinc-800">
+            <button
+              class={`inline-flex w-6 items-center justify-center rounded-l hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
+              onClick={refreshAll}
+              title="立即刷新"
+              aria-label="立即刷新"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
               </svg>
-            </summary>
-            <div class="absolute right-0 z-50 mt-2 flex w-48 flex-col gap-2 rounded-lg border border-zinc-700/50 bg-zinc-900 p-3 text-sm text-zinc-200 shadow-2xl">
-              <label class="flex items-center gap-2">
-                <input type="checkbox" checked={autoRefresh()} onChange={(e) => setAutoRefresh(e.currentTarget.checked)} />
-                自动刷新
-              </label>
-              <label class="flex items-center justify-between gap-2">
-                刷新间隔（秒）
-                <input
-                  type="number" min="1" step="1" value={refreshSeconds()}
-                  class="w-16 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right"
-                  onChange={(e) => setRefreshSeconds(Number(e.currentTarget.value))}
-                />
-              </label>
-            </div>
-          </details>
-          <button
-            class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            onClick={cycleTheme}
-            title={themeLabel()}
-            aria-label={themeLabel()}
-          >
-            <ThemeIcon />
-          </button>
+            </button>
+            <details ref={refreshMenu} class="group flex">
+              <summary
+                class={`flex cursor-pointer list-none items-center rounded-r border-l border-zinc-800 px-1 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
+                title={autoRefresh() ? `刷新设置（自动刷新：每 ${refreshSeconds()} 秒）` : "刷新设置（自动刷新已关闭）"}
+                aria-label="刷新设置"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="10" height="10" aria-hidden="true" class="transition-transform group-open:rotate-180">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </summary>
+              <div class="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border border-zinc-700/50 bg-zinc-900 p-3 text-sm text-zinc-200 shadow-2xl">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="font-medium text-zinc-100">自动刷新</div>
+                    <div class="text-xs text-zinc-500">{autoRefresh() ? `每 ${refreshSeconds()} 秒更新列表` : "已关闭，仅手动刷新"}</div>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={autoRefresh()}
+                    aria-label="自动刷新"
+                    class={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${autoRefresh() ? "bg-indigo-600" : "bg-zinc-700"}`}
+                    onClick={() => setAutoRefresh(!autoRefresh())}
+                  >
+                    <span class={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${autoRefresh() ? "left-[1.125rem]" : "left-0.5"}`} />
+                  </button>
+                </div>
+                <div class="mt-3 border-t border-zinc-800 pt-3 transition-opacity" classList={{ "pointer-events-none opacity-40": !autoRefresh() }}>
+                  <div class="mb-1.5 text-xs text-zinc-500">刷新间隔</div>
+                  <div class="grid grid-cols-5 gap-1">
+                    <For each={REFRESH_PRESETS}>
+                      {(sec) => (
+                        <button
+                          class={`border py-0.5 font-mono text-xs transition-colors ${refreshSeconds() === sec ? "border-indigo-500 bg-indigo-500/15 text-indigo-300" : "border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"}`}
+                          onClick={() => setRefreshSeconds(sec)}
+                        >{sec}s</button>
+                      )}
+                    </For>
+                  </div>
+                  <label class="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                    自定义
+                    <span class="flex items-center gap-1">
+                      <input
+                        type="number" min="1" step="1" value={refreshSeconds()}
+                        class="w-16 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-zinc-200"
+                        onChange={(e) => setRefreshSeconds(Number(e.currentTarget.value))}
+                      />
+                      秒
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </details>
+          </div>
         </header>
 
         <main class="flex-1 overflow-auto p-4 lg:p-6">

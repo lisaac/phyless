@@ -17,7 +17,7 @@ if (legacy !== null) {
 const stored = localStorage.getItem(STORAGE_KEY);
 export const [mode, setMode] = createSignal<ThemeMode>(stored === "light" || stored === "dark" ? stored : "auto");
 
-const LABELS: Record<ThemeMode, string> = { auto: "自动", light: "日间", dark: "夜间" };
+export const LABELS: Record<ThemeMode, string> = { auto: "自动", light: "日间", dark: "夜间" };
 const NEXT: Record<ThemeMode, ThemeMode> = { auto: "light", light: "dark", dark: "auto" };
 
 export const themeLabel = () => `主题：${LABELS[mode()]}（点击切换为${LABELS[NEXT[mode()]]}）`;
@@ -27,13 +27,14 @@ function apply() {
   document.documentElement.classList.toggle("dark", m === "auto" ? systemDark() : m === "dark");
 }
 
-export function cycleTheme() {
-  const next = NEXT[mode()];
+export function setTheme(next: ThemeMode) {
   if (next === "auto") localStorage.removeItem(STORAGE_KEY);
   else localStorage.setItem(STORAGE_KEY, next);
   setMode(next);
   apply();
 }
+
+export const cycleTheme = () => setTheme(NEXT[mode()]);
 
 media?.addEventListener("change", () => {
   if (mode() === "auto") apply();

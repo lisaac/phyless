@@ -3,6 +3,7 @@ import { useNavigate } from "@solidjs/router";
 import { doLogin, doSetup } from "../../stores/auth";
 import { ApiError, get } from "../../api/client";
 import { buttonCls, fieldCls } from "../shared/Button";
+import { ThemeButton } from "../shared/ThemeIcon";
 
 export const LoginPage: Component = () => {
   const navigate = useNavigate();
@@ -40,7 +41,7 @@ export const LoginPage: Component = () => {
 
 
   return (
-    <div class="flex h-full items-center justify-center bg-zinc-950">
+    <div class="flex h-full items-center justify-center bg-zinc-950 p-4">
       <form onSubmit={submit} class="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-8 shadow-2xl">
         <div class="mb-7">
           <div class="mb-1 flex items-center gap-2">
@@ -48,6 +49,8 @@ export const LoginPage: Component = () => {
               <span class="text-xs font-bold text-white">P</span>
             </div>
             <span class="font-semibold tracking-tight text-zinc-100">phyless</span>
+            {/* Same theme toggle as the sidebar header (default 自动). */}
+            <span class="ml-auto"><ThemeButton /></span>
           </div>
           <p class="mt-4 text-lg font-semibold text-zinc-100">{configured() === false ? "创建管理员密码" : "欢迎回来"}</p>
           <p class="mt-0.5 text-sm text-zinc-500">{configured() === false ? "首次使用：账号为 admin" : "基础设施管理控制台"}</p>
@@ -96,6 +99,7 @@ export const LoginPage: Component = () => {
         >
           {busy() ? "处理中…" : configured() === false ? "创建并登录" : "登录"}
         </button>
+
       </form>
     </div>
   );

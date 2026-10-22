@@ -22,7 +22,7 @@ vi.mock("../../stores/refresh", () => ({
   autoRefresh: () => true, refreshSeconds: () => 5, setAutoRefresh: vi.fn(),
   setRefreshSeconds: vi.fn(), refreshAll: vi.fn(),
 }));
-vi.mock("../../stores/theme", () => ({ mode: () => "auto", themeLabel: () => "主题：自动", cycleTheme: vi.fn() }));
+import { setAutoRefresh, setRefreshSeconds } from "../../stores/refresh";
 
 afterEach(cleanup);
 
@@ -37,6 +37,15 @@ describe("Layout refresh settings", () => {
 
     fireEvent.pointerDown(screen.getByText("页面内容"));
     expect(details.open).toBe(false);
+  });
+
+  it("edits auto-refresh from the split button's popover", () => {
+    render(() => <Layout><button>页面内容</button></Layout>);
+    expect(screen.getByLabelText("刷新设置").getAttribute("title")).toContain("每 5 秒");
+    fireEvent.click(screen.getByRole("switch", { name: "自动刷新" }));
+    expect(setAutoRefresh).toHaveBeenCalledWith(false);
+    fireEvent.click(screen.getByRole("button", { name: "30s" }));
+    expect(setRefreshSeconds).toHaveBeenCalledWith(30);
   });
 
   it("flies a newly queued task from the last pointer position to the task button", () => {
