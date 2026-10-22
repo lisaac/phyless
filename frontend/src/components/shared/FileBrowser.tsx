@@ -27,18 +27,15 @@ const Spinner: Component<{ size?: number }> = (p) => (
 type Change = "A" | "C" | "D";
 const CHANGES: Change[] = ["A", "C", "D"];
 const CHANGE_LABEL: Record<Change, string> = { A: "新增", C: "修改", D: "删除" };
-const CHANGE_COLOR: Record<Change, string> = {
-  A: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400",
-  C: "border-amber-500/40 bg-amber-500/15 text-amber-400",
-  D: "border-red-500/40 bg-red-500/15 text-red-400",
-};
 // Same look as the compose list's「运行中发现」tag.
 const tagClass = "border px-1.5 py-0.5 text-[10px] leading-none";
 
 // Solid: the entry itself; dashed (like「目录中发现」): something beneath it.
 // Literal class strings: Tailwind only emits classes it can see whole.
-const TAG_OWN = { violet: "border-violet-500/40 bg-violet-500/15 text-violet-300", teal: "border-teal-500/40 bg-teal-500/15 text-teal-400" };
-const TAG_BELOW = { violet: "border-dashed border-violet-500/50 text-violet-400", teal: "border-dashed border-teal-500/50 text-teal-400" };
+const TAG_OWN = {
+  A: "border-emerald-500/40 bg-emerald-500/15 text-emerald-400", C: "border-amber-500/40 bg-amber-500/15 text-amber-400", D: "border-red-500/40 bg-red-500/15 text-red-400", violet: "border-violet-500/40 bg-violet-500/15 text-violet-300", teal: "border-teal-500/40 bg-teal-500/15 text-teal-400" };
+const TAG_BELOW = {
+  A: "border-dashed border-emerald-500/50 text-emerald-400", C: "border-dashed border-amber-500/50 text-amber-400", D: "border-dashed border-red-500/50 text-red-400", violet: "border-dashed border-violet-500/50 text-violet-400", teal: "border-dashed border-teal-500/50 text-teal-400" };
 const ownTag = (color: keyof typeof TAG_OWN) => `${tagClass} ml-2 ${TAG_OWN[color]}`;
 const belowTag = (color: keyof typeof TAG_BELOW) => `${tagClass} ml-2 ${TAG_BELOW[color]}`;
 
@@ -162,7 +159,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
     }
     const m = marks.latest;
     const shown = mountOnly() ? es.filter(isMount) : es;
-    return m ? shown.map((e) => (m.get(e.name)?.change ? { ...e, change: m.get(e.name)!.change } : e)) : shown;
+    return m ? shown.map((e) => { const x = m.get(e.name); return x ? { ...e, change: x.change, kinds: x.kinds } : e; }) : shown;
   };
   const sorted = createMemo(() => {
     const es = [...(rows() ?? [])];
@@ -177,6 +174,10 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
       return (typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number)) * dir;
     });
   });
+  // Kinds beneath a dir, narrowed by the diff chips while diffing.
+  const dirKinds = (e: FileEntry) =>
+    e.is_dir && e.change !== "D" && e.change !== "A" ? // new/deleted dirs: beneath is implied
+       CHANGES.filter((k) => e.kinds?.includes(k) && (!diff() || kinds().has(k))) : [];
   const [renamingName, setRenamingName] = createSignal<string | null>(null);
   const [renameVal, setRenameVal] = createSignal("");
   const [editingPath, setEditingPath] = createSignal(false);
@@ -328,7 +329,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
             <For each={CHANGES}>
               {(k) => (
                 <button
-                  class={`${tagClass} shrink-0 font-mono transition-opacity ${CHANGE_COLOR[k]} ${kinds().has(k) ? "" : "opacity-30"}`}
+                  class={`${tagClass} shrink-0 font-mono transition-opacity ${TAG_OWN[k]} ${kinds().has(k) ? "" : "opacity-30"}`}
                   title={`${kinds().has(k) ? "隐藏" : "显示"}${CHANGE_LABEL[k]}`}
                   onClick={() => toggleKind(k)}
                 >{k}</button>
@@ -410,8 +411,12 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                           {e.is_dir ? "▸ " : "  "}{e.name}
                         </span>
                         <Show when={e.change}>
-                          {(c) => <span class={`${tagClass} ml-2 font-mono ${CHANGE_COLOR[c()]}`} title={`相对镜像${CHANGE_LABEL[c()]}`}>{c()}</span>}
+                          {(c) => <span class={`${tagClass} ml-2 font-mono ${TAG_OWN[c()]}`} title={`相对镜像${CHANGE_LABEL[c()]}`}>{c()}</span>}
                         </Show>
+                        {/* Dashed: not changed itself, changes lie beneath (per kind). */}
+                        <For each={dirKinds(e)}>
+                          {(k) => <span class={`${tagClass} ml-2 font-mono ${TAG_BELOW[k]}`} title={`此目录下有${CHANGE_LABEL[k]}`}>{k}</span>}
+                        </For>
                         <Show when={e.mount}>
                           {(m) => (
                             <span
