@@ -88,10 +88,12 @@ export const ContainerStats: Component<{ id: string }> = (props) => {
         </div>
         <Show when={settled(procs)}>
           {(p) => (
+            // Narrow screens scroll the short columns sideways; the command wraps.
+            <div class="overflow-x-auto">
             <table class="w-full text-left">
               <thead>
                 <tr class="text-[11px] text-zinc-400">
-                  <For each={p().Titles}>{(t) => <th class="pb-1 pr-4 font-normal">{t}</th>}</For>
+                  <For each={p().Titles}>{(t) => <th class="whitespace-nowrap pb-1 pr-4 font-normal">{t}</th>}</For>
                 </tr>
               </thead>
               <tbody>
@@ -99,13 +101,16 @@ export const ContainerStats: Component<{ id: string }> = (props) => {
                   {(row) => (
                     <tr class="border-t border-zinc-900">
                       <For each={row}>{(cell, i) => (
-                        <td class={`py-0.5 pr-4 font-mono text-xs ${i() === row.length - 1 ? "text-zinc-400" : "text-zinc-400"}`}>{cell}</td>
+                        <td class={`py-0.5 pr-4 align-top font-mono text-xs text-zinc-400 ${i() === row.length - 1 ? "" : "whitespace-nowrap"}`}>
+                          {i() === row.length - 1 ? <div class="min-w-[16rem] break-all">{cell}</div> : cell}
+                        </td>
                       )}</For>
                     </tr>
                   )}
                 </For>
               </tbody>
             </table>
+            </div>
           )}
         </Show>
         <Show when={!settled(procs) && !procs.loading}>

@@ -109,7 +109,9 @@ export const ComposeDetailPage: Component = () => {
   const composeRelPath = () => {
     const p = project();
     if (!p) return null;
-    const rel = p.compose_file.startsWith(p.base_dir) ? p.compose_file.slice(p.base_dir.length) : p.compose_file;
+    // compose_file may list several files (comma-separated); the first is the base file.
+    const file = p.compose_file.split(",")[0];
+    const rel = file.startsWith(p.base_dir) ? file.slice(p.base_dir.length) : file;
     return rel.startsWith("/") ? rel : "/" + rel;
   };
   // undefined = never chosen on this tab (auto-select the compose file);
@@ -250,8 +252,8 @@ export const ComposeDetailPage: Component = () => {
       fallback={<p class="text-sm text-red-400">加载失败：{(detailError() as Error).message}</p>}
     >
     <div>
-      <h1 class="mb-3 flex items-center gap-2 text-xl font-semibold">
-        <ComposeIcon size={20} />
+      <h1 class="mb-3 flex min-w-0 items-center gap-2 break-all text-xl font-semibold">
+        <ComposeIcon size={20} class="shrink-0" />
         {project()?.name ?? id()}
       </h1>
 
@@ -303,7 +305,9 @@ export const ComposeDetailPage: Component = () => {
               <KV k="ID"><span class="select-all break-all">{id()}</span></KV>
               <KV k="来源">{project()?.discovered ? "自动发现" : "手动注册"}</KV>
               <KV k="目录"><span class="break-all">{project()?.base_dir}</span></KV>
-              <KV k="Compose 文件"><span class="break-all">{project()?.compose_file}</span></KV>
+              <KV k="Compose 文件">
+                <For each={(project()?.compose_file ?? "").split(",").filter(Boolean)}>{(f) => <div class="break-all">{f}</div>}</For>
+              </KV>
               <Show when={project()?.env_file}>
                 <KV k="Env 文件"><span class="break-all">{project()?.env_file}</span></KV>
               </Show>
@@ -323,7 +327,7 @@ export const ComposeDetailPage: Component = () => {
                 <div class="space-y-px pb-1 font-mono text-xs">
                   <For each={Object.entries(detail()!.services as Record<string, { image?: string }>)}>
                     {([name, svc]) => (
-                      <div class="flex gap-2">
+                      <div class="flex flex-wrap gap-x-2 break-all">
                         <span class="text-zinc-200">{name}</span>
                         <Show when={svc?.image}><span class="text-zinc-500">{svc!.image}</span></Show>
                       </div>
@@ -359,7 +363,8 @@ export const ComposeDetailPage: Component = () => {
 
       <Show when={tab() === "files"}>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div class="h-[calc(100vh-19rem)] overflow-auto border border-zinc-800 p-2">
+          {/* Stacked on a phone: a short file list, the editor gets most of the height. */}
+          <div class="h-[35vh] min-h-[10rem] overflow-auto border border-zinc-800 p-2 sm:h-[calc(100vh-19rem)] sm:min-h-[20rem]">
             <FileBrowser
               listPath={(sub) => files().listPath(sub)}
               onOpenFile={openFile}
@@ -372,9 +377,9 @@ export const ComposeDetailPage: Component = () => {
               popout={{ kind: "compose", id: id(), name: project()?.name ?? id() }}
             />
           </div>
-          <div class="sticky top-4 flex h-[calc(100vh-19rem)] flex-col">
-            <div class="mb-1 flex items-center justify-between">
-              <span class="truncate font-mono text-xs text-zinc-400">{selectedFile() ?? "未选择文件"}</span>
+          <div class="flex h-[60vh] min-h-[16rem] flex-col sm:sticky sm:top-4 sm:h-[calc(100vh-19rem)] sm:min-h-[20rem]">
+            <div class="mb-1 flex items-center justify-between gap-2">
+              <span class="min-w-0 truncate font-mono text-xs text-zinc-400" title={selectedFile() ?? undefined}>{selectedFile() ?? "未选择文件"}</span>
               <Show when={hasRole("operator") && selectedFile()}>
                 <Button
                   variant="primary"

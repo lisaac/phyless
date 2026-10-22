@@ -87,7 +87,7 @@ export const OverviewPage: Component = () => {
               {(item) => (
                 <div class="border-b border-zinc-800 px-4 py-3">
                   <dt class="text-xs text-zinc-500">{item.label}</dt>
-                  <dd class="mt-1 truncate text-sm text-zinc-200" title={item.value}>{item.value}</dd>
+                  <dd class="mt-1 break-words text-sm text-zinc-200">{item.value}</dd>
                 </div>
               )}
             </For>

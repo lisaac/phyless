@@ -242,7 +242,9 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
   return (
     <div>
       {/* ── Path bar ──────────────────────────────────────────────────────── */}
-      <div class="mb-2 flex items-center gap-1.5 border-b border-zinc-800 pb-2">
+      {/* Wraps: on a narrow screen the tool buttons drop to a second line
+          instead of squeezing the path into a sliver (path keeps ≥10rem). */}
+      <div class="mb-2 flex flex-wrap items-center gap-1.5 border-b border-zinc-800 pb-2">
         <button
           class="shrink-0 px-1 py-0.5 text-sm text-zinc-500 hover:text-zinc-200 transition-colors disabled:opacity-30"
           onClick={up}
@@ -255,7 +257,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
           when={editingPath()}
           fallback={
             <div
-              class="flex min-w-0 flex-1 cursor-text flex-wrap items-center gap-0.5 rounded px-1 py-0.5 font-mono text-xs hover:bg-zinc-800/60 transition-colors"
+              class="flex min-w-[10rem] flex-1 cursor-text flex-wrap items-center gap-0.5 rounded px-1 py-0.5 font-mono text-xs hover:bg-zinc-800/60 transition-colors"
               onClick={startEditPath}
               title="点击编辑路径"
             >
@@ -282,7 +284,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
         >
           <input
             ref={pathInput}
-            class="min-w-0 flex-1 rounded border border-indigo-500/50 bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+            class="min-w-[10rem] flex-1 rounded border border-indigo-500/50 bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
             value={pathDraft()}
             onInput={(e) => setPathDraft(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -369,7 +371,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
               {(() => {
                 const th = (col: string, label: string, extraClass = "") => (
                   <th
-                    class={`pb-1 pr-3 font-normal cursor-pointer hover:text-zinc-300 transition-colors ${extraClass}`}
+                    class={`whitespace-nowrap pb-1 pr-3 font-normal cursor-pointer hover:text-zinc-300 transition-colors ${extraClass}`}
                     onClick={() => toggleSort(col)}
                   >
                     {label}{sortCol() === col ? (sortDir() === 1 ? " ↑" : " ↓") : ""}
@@ -399,7 +401,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                     <td class="py-1 pr-3">
                       <Show when={isRenaming()} fallback={<>
                         <span
-                          class={`font-mono text-xs transition-colors ${
+                          class={`break-all font-mono text-xs transition-colors ${
                             gone
                               ? "text-zinc-500 line-through"
                               : e.is_dir
@@ -446,10 +448,11 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                     <td class="hidden py-1 pr-3 text-[11px] text-zinc-400 sm:table-cell">
                       {e.uname ?? (e.uid != null ? String(e.uid) : "")}{e.gid != null ? `:${e.gid}` : ""}
                     </td>
-                    <td class="py-1 pr-3 text-right font-mono text-[11px] text-zinc-400">{e.is_dir || gone ? "—" : fmtSize(e.size)}</td>
+                    <td class="whitespace-nowrap py-1 pr-3 text-right font-mono text-[11px] text-zinc-400">{e.is_dir || gone ? "—" : fmtSize(e.size)}</td>
                     <td class="hidden py-1 pr-3 text-[11px] text-zinc-400 sm:table-cell">{fmtTime(e.mod_time)}</td>
                     <td class="py-1">
-                      <div class="flex gap-2" classList={{ hidden: gone }}>
+                      {/* Each action stays one word; on a phone they wrap as whole buttons. */}
+                      <div class="flex flex-wrap justify-end gap-x-2 gap-y-0.5 whitespace-nowrap sm:flex-nowrap sm:justify-start" classList={{ hidden: gone }}>
                         <Show when={props.onRename}>
                           <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => startRename(e)}>重命名</button>
                         </Show>

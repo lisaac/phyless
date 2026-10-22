@@ -5,7 +5,7 @@ import { Component, Show } from "solid-js";
 export const KV: Component<{ k: string; children: any }> = (p) => (
   <div class="flex min-h-[1.75rem] items-start gap-3 py-0.5">
     <dt class="w-28 shrink-0 pt-px text-[10px] uppercase tracking-widest text-zinc-400">{p.k}</dt>
-    <dd class="min-w-0 flex-1 font-mono text-xs text-zinc-200">{p.children}</dd>
+    <dd class="min-w-0 flex-1 break-words font-mono text-xs text-zinc-200">{p.children}</dd>
   </div>
 );
 

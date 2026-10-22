@@ -61,11 +61,12 @@ const [imageRef, setImageRef] = createSignal<string | null>(null);
 export const openImageInspect = (ref: string) => setImageRef(ref);
 
 /** Image name + short id, both opening the image inspect. */
-export const ImageLink: Component<{ id?: string; label: string; class?: string }> = (p) => {
+/** `wrap`: detail pages show the whole name (wrapping); lists truncate to keep rows one line. */
+export const ImageLink: Component<{ id?: string; label: string; class?: string; wrap?: boolean }> = (p) => {
   const open = (e: MouseEvent) => { e.stopPropagation(); openImageInspect(p.id || p.label); };
   return (
-    <span class={`inline-flex min-w-0 max-w-full items-baseline gap-1.5 ${p.class ?? ""}`}>
-      <button type="button" class="min-w-0 truncate text-left transition-colors hover:text-indigo-400 hover:underline" title={`查看镜像 inspect：${p.label}`} onClick={open}>
+    <span class={`inline-flex min-w-0 max-w-full items-baseline gap-1.5 ${p.wrap ? "flex-wrap" : ""} ${p.class ?? ""}`}>
+      <button type="button" class={`min-w-0 text-left transition-colors hover:text-indigo-400 hover:underline ${p.wrap ? "break-all" : "truncate"}`} title={`查看镜像 inspect：${p.label}`} onClick={open}>
         {p.label}
       </button>
       <Show when={p.id}>
@@ -89,7 +90,7 @@ export const ImageInfo: Component<{
       <Info k="大小">{fmtBytes(p.img.Size)}</Info>
       <Show when={p.img.Platform}><Info k="平台">{p.img.Platform}</Info></Show>
       <Info k="创建">{fmtWhen(p.img.Created)}</Info>
-      <Info k="使用容器"><ContainerLinks items={p.img.UsedBy ?? []} /></Info>
+      <Info k="使用容器" title={(p.img.UsedBy ?? []).map((c) => c.Name).join("\n") || undefined}><ContainerLinks items={p.img.UsedBy ?? []} /></Info>
     </InfoBar>
   );
 };

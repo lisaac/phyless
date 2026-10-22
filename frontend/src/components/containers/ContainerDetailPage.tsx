@@ -88,7 +88,7 @@ const EditableKV: Component<{
         <Show when={editing()} fallback={
           <span class="inline-flex items-baseline gap-1.5">
             <span
-              class="cursor-text font-mono text-xs text-zinc-200 border-b border-dashed border-zinc-600 hover:border-zinc-400 transition-colors"
+              class="cursor-text break-all font-mono text-xs text-zinc-200 border-b border-dashed border-zinc-600 hover:border-zinc-400 transition-colors"
               title="点击编辑，回车保存，清空后保存可恢复默认"
               onClick={() => { setDraft(p.value); setEditing(true); }}
             >{p.value || <span class="text-zinc-500">{p.placeholder ?? "—"}</span>}</span>
@@ -332,23 +332,25 @@ export const ContainerDetailPage: Component = () => {
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <Show when={inspect()} fallback={<p class="text-xs text-zinc-400">加载中…</p>}>
         <div>
-          <div class="flex items-baseline gap-3">
-            <h1 class={`flex items-center gap-2 font-mono text-xl font-medium ${STATE_COLOR[state()] ?? "text-zinc-300"}`}>
+          {/* Wraps instead of squeezing: a long name takes the line, the meta
+              (id/state/health/badge) drops below it, each piece unbroken. */}
+          <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 class={`flex min-w-0 items-center gap-2 break-all font-mono text-xl font-medium ${STATE_COLOR[state()] ?? "text-zinc-300"}`}>
               <ContainerIcon size={18} class="shrink-0" />
               {name()}
             </h1>
-            <span class="font-mono text-xs text-zinc-400">{id().slice(0, 12)}</span>
-            <span class="text-xs text-zinc-400">{state()}</span>
+            <span class="whitespace-nowrap font-mono text-xs text-zinc-400">{id().slice(0, 12)}</span>
+            <span class="whitespace-nowrap text-xs text-zinc-400">{state()}</span>
             <Show when={inspect()?.State?.Health?.Status}>
-              {(h) => <span class="text-xs text-zinc-400">· {h()}</span>}
+              {(h) => <span class="whitespace-nowrap text-xs text-zinc-400">· {h()}</span>}
             </Show>
             <UpdateBadge check={update()} />
           </div>
-          <p class="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-zinc-400">
-            <ImageLink id={inspect()?.Image} label={cfg().Image ?? ""} />
+          <p class="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-[11px] text-zinc-400">
+            <ImageLink wrap id={inspect()?.Image} label={cfg().Image ?? ""} />
             <Show when={hasRole("operator")}>
               <button
-                class="font-sans text-[11px] text-zinc-500 transition-colors hover:text-zinc-200"
+                class="whitespace-nowrap font-sans text-[11px] text-zinc-500 transition-colors hover:text-zinc-200"
                 title="检查该容器的镜像是否有新版本"
                 onClick={() => setCheckTargets([{ id: id(), name: name() }])}
               >↻ 检查升级</button>
@@ -407,9 +409,9 @@ export const ContainerDetailPage: Component = () => {
             {/* ── Single-value rows ── */}
             <Sec noLine>标识</Sec>
             <EditableKV k="名称" value={name()} onSave={saveName} />
-            <KV k="ID"><span class="select-all truncate block" title={id()}>{id()}</span></KV>
+            <KV k="ID"><span class="select-all break-all">{id()}</span></KV>
             <KV k="镜像">
-              <ImageLink id={inspect()?.Image} label={displayImage(cfg().Image, cfg().Labels)} />
+              <ImageLink wrap id={inspect()?.Image} label={displayImage(cfg().Image, cfg().Labels)} />
             </KV>
             <KV k="状态">
               <span class={STATE_COLOR[state()] ?? "text-zinc-300"}>{STATE_ZH[state()] ?? state()}</span>
@@ -501,7 +503,7 @@ export const ContainerDetailPage: Component = () => {
             {/* ── List sections at bottom: 挂载 > 端口 > 网络 > 环境变量 > CAP > Devices > Sysctls > ExtraHosts > 标签 ── */}
             <Show when={(inspect()?.Mounts ?? []).length > 0}>
               <Sec>挂载</Sec>
-              <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
                 <For each={inspect()?.Mounts ?? []}>
                   {(m: any) => (
                     <div class="break-all">
@@ -522,7 +524,7 @@ export const ContainerDetailPage: Component = () => {
 
             <Show when={Object.keys(host()?.PortBindings ?? {}).length > 0}>
               <Sec>端口</Sec>
-              <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
                 <For each={Object.entries(host()?.PortBindings ?? {})}>
                   {([cPort, bindings]) => (
                     <For each={bindings as any[]}>
@@ -544,10 +546,10 @@ export const ContainerDetailPage: Component = () => {
             </Show>
 
             <Sec>网络</Sec>
-            <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+            <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
               <Show when={sharedNetTarget()}>
                 {(target) => (
-                  <div class="flex items-center gap-2">
+                  <div class="flex flex-wrap items-baseline gap-x-2 break-all">
                     <span class="text-zinc-500">模式:</span>
                     <span class="text-zinc-300">共享容器网络</span>
                     <A class="text-zinc-300 hover:text-indigo-400 transition-colors" href={`/containers/${target()}`}>{inspect()?.NetworkContainerName || target().slice(0, 12)}</A>
@@ -556,7 +558,7 @@ export const ContainerDetailPage: Component = () => {
               </Show>
               <For each={Object.entries(inspect()?.NetworkSettings?.Networks ?? {})}>
                 {([netName, net]: [string, any]) => (
-                  <div class="flex items-center gap-2">
+                  <div class="flex flex-wrap items-baseline gap-x-2 break-all">
                     <span class="text-zinc-500">{netName}:</span>
                     <span class="text-zinc-300">{net.IPAddress || "—"}</span>
                     <Show when={hasRole("operator")}>
@@ -599,7 +601,7 @@ export const ContainerDetailPage: Component = () => {
 
             <Show when={(cfg().Env ?? []).length > 0}>
               <Sec>环境变量</Sec>
-              <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
                 <For each={cfg().Env as string[]}>
                   {(e) => {
                     const eq = e.indexOf("=");
@@ -619,7 +621,7 @@ export const ContainerDetailPage: Component = () => {
 
             <Show when={(host()?.CapAdd ?? []).length > 0}>
               <Sec>CAP ADD</Sec>
-              <div class="flex flex-wrap gap-1 pb-1 pl-[7.75rem]">
+              <div class="flex flex-wrap gap-1 pb-1 sm:pl-[7.75rem]">
                 <For each={host().CapAdd as string[]}>
                   {(c) => <span class="border border-zinc-700 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{c}</span>}
                 </For>
@@ -628,7 +630,7 @@ export const ContainerDetailPage: Component = () => {
 
             <Show when={(host()?.CapDrop ?? []).length > 0}>
               <Sec>CAP DROP</Sec>
-              <div class="flex flex-wrap gap-1 pb-1 pl-[7.75rem]">
+              <div class="flex flex-wrap gap-1 pb-1 sm:pl-[7.75rem]">
                 <For each={host().CapDrop as string[]}>
                   {(c) => <span class="border border-zinc-700 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{c}</span>}
                 </For>
@@ -637,7 +639,7 @@ export const ContainerDetailPage: Component = () => {
 
             <Show when={(host()?.Devices ?? []).length > 0}>
               <Sec>设备</Sec>
-              <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
                 <For each={host().Devices as any[]}>
                   {(d) => (
                     <div class="break-all">
@@ -655,7 +657,7 @@ export const ContainerDetailPage: Component = () => {
 
             <Show when={Object.keys(host()?.Sysctls ?? {}).length > 0}>
               <Sec>Sysctls</Sec>
-              <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
                 <For each={Object.entries(host().Sysctls as Record<string, string>)}>
                   {([k, v]) => (
                     <div class="break-all">
@@ -670,16 +672,16 @@ export const ContainerDetailPage: Component = () => {
 
             <Show when={(host()?.ExtraHosts ?? []).length > 0}>
               <Sec>ExtraHosts</Sec>
-              <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
                 <For each={host().ExtraHosts as string[]}>
-                  {(h) => <div class="text-zinc-300">{h}</div>}
+                  {(h) => <div class="break-all text-zinc-300">{h}</div>}
                 </For>
               </div>
             </Show>
 
             <Show when={Object.entries(cfg()?.Labels ?? {}).filter(([k]) => !k.startsWith("com.docker.compose.")).length > 0}>
               <Sec>标签</Sec>
-              <div class="space-y-px pb-1 pl-[7.75rem] font-mono text-xs">
+              <div class="space-y-px pb-1 sm:pl-[7.75rem] font-mono text-xs">
                 <For each={Object.entries(cfg().Labels ?? {}).filter(([k]) => !k.startsWith("com.docker.compose."))}>
                   {([k, v]) => (
                     <div class="break-all">
