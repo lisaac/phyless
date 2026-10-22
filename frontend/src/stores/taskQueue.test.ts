@@ -45,8 +45,15 @@ describe("taskQueue scheduling", () => {
     expect(q.runningCount()).toBe(0);
   });
 
-  it("announces new tasks without opening the drawer", async () => {
+  it("opens the drawer on enqueue by default", async () => {
     const q = await load();
+    q.enqueue({ title: "a", url: "/a" });
+    expect(q.panelHidden()).toBe(false);
+  });
+
+  it("announces new tasks without opening the drawer when auto-open is off", async () => {
+    const q = await load();
+    q.setAutoOpenPanel(false);
     const announced: string[] = [];
     const onEnqueued = (e: Event) => announced.push((e as CustomEvent<{ id: string }>).detail.id);
     window.addEventListener(q.ENQUEUED_EVENT, onEnqueued);
@@ -180,6 +187,7 @@ describe("taskQueue outcomes", () => {
 
   it("notifies an unseen failure until the task panel is opened", async () => {
     const q = await load();
+    q.setAutoOpenPanel(false);
     const { done } = q.enqueue({ title: "pull", url: "/pull" });
     FakeXHR.requests[0].finish('{"error":"registry denied"}\n');
 

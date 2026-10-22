@@ -1,7 +1,7 @@
 import { Component, createSignal, createMemo, createEffect, onCleanup, Show, For } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import {
-  tasks, panelHidden, setPanelHidden, cancel, remove, clearFinished, isActive, runningCount, markFailuresSeen, type Task,
+  tasks, panelHidden, setPanelHidden, autoOpenPanel, setAutoOpenPanel, cancel, remove, clearFinished, isActive, runningCount, markFailuresSeen, type Task,
 } from "../../stores/taskQueue";
 
 const DEFAULT_VISIBLE = 12;
@@ -242,6 +242,10 @@ export const TaskQueueWidget: Component = () => {
             </button>
           </Show>
         </div>
+        <label class="flex cursor-pointer items-center gap-2 border-t border-zinc-800 px-4 py-2.5 text-xs text-zinc-400">
+          <input type="checkbox" class="accent-indigo-500" checked={autoOpenPanel()} onChange={(e) => setAutoOpenPanel(e.currentTarget.checked)} />
+          自动打开任务视图
+        </label>
       </div>
     </Show>
   );

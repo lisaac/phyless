@@ -59,6 +59,7 @@ export const SETTLED_EVENT = "phyless:task-settled";
 export const ENQUEUED_EVENT = "phyless:task-enqueued";
 const STORAGE_KEY = "phyless_tasks";
 const FAILURE_SEEN_KEY = "phyless_task_failure_seen_at";
+const AUTO_OPEN_KEY = "phyless_task_auto_open";
 const MAX_STORED = 50;
 const MAX_CONCURRENT = 4;
 const MAX_STORED_NOTES = 20;
@@ -85,9 +86,18 @@ function load(): Task[] {
 
 export const [tasks, setTasks] = createStore<{ list: Task[] }>({ list: load() });
 export const runningCount = () => tasks.list.filter((t) => t.status === "running").length;
-// The task drawer is a destination, not an interruption: only its header
-// button opens it. New tasks announce themselves with ENQUEUED_EVENT instead.
+// New tasks announce themselves with ENQUEUED_EVENT, and also open the drawer
+// unless the user turned 自动打开任务视图 off (per-browser, default on).
 export const [panelHidden, setPanelHidden] = createSignal(true);
+
+const [autoOpenPanel, setAutoOpenSignal] = createSignal((() => {
+  try { return localStorage.getItem(AUTO_OPEN_KEY) !== "0"; } catch { return true; }
+})());
+export { autoOpenPanel };
+export function setAutoOpenPanel(on: boolean): void {
+  setAutoOpenSignal(on);
+  try { localStorage.setItem(AUTO_OPEN_KEY, on ? "1" : "0"); } catch { /* ignore */ }
+}
 
 function loadFailureSeenAt(): number {
   try {
@@ -224,6 +234,7 @@ export function enqueue(spec: TaskSpec): { id: string; done: Promise<Task> } {
   persist();
   pump();
   window.dispatchEvent(new CustomEvent(ENQUEUED_EVENT, { detail: { id } }));
+  if (autoOpenPanel()) showTaskPanel();
   return { id, done };
 }
 

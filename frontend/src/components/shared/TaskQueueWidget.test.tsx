@@ -79,9 +79,10 @@ describe("TaskQueueWidget", () => {
     vi.useRealTimers();
   });
 
-  it("keeps the drawer closed when a new task is enqueued", async () => {
+  it("keeps the drawer closed on enqueue when auto-open is off", async () => {
     const q = await import("../../stores/taskQueue");
     const { TaskQueueWidget } = await import("./TaskQueueWidget");
+    q.setAutoOpenPanel(false);
     q.enqueue({ title: "one", url: "/1" });
     const view = render(() => <TaskQueueWidget />);
     expect(view.queryByText("one")).toBeNull();
