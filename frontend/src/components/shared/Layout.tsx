@@ -334,11 +334,11 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
               </Show>
             </span>
           </button>
-          {/* Refresh: one split control — left half refreshes now, the arrow opens
-              the settings popover. Indigo = auto-refresh on, grey = off. */}
-          <div class="relative flex h-6 shrink-0 items-stretch rounded border border-zinc-800">
+          {/* Refresh: borderless pair like the task button — refresh now, then the
+              arrow opening the settings popover. Indigo = auto-refresh on, grey = off. */}
+          <div class="relative flex h-6 shrink-0 items-stretch">
             <button
-              class={`inline-flex w-6 items-center justify-center rounded-l hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
+              class={`inline-flex w-6 items-center justify-center rounded hover:bg-zinc-800 hover:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
               onClick={refreshAll}
               title="立即刷新"
               aria-label="立即刷新"
@@ -349,7 +349,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
             </button>
             <details ref={refreshMenu} class="group flex">
               <summary
-                class={`flex cursor-pointer list-none items-center rounded-r border-l border-zinc-800 px-1 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
+                class={`flex cursor-pointer list-none items-center rounded px-1 hover:bg-zinc-800 hover:text-zinc-100 group-open:bg-zinc-800 group-open:text-zinc-100 ${autoRefresh() ? "text-indigo-400" : "text-zinc-400"}`}
                 title={autoRefresh() ? `刷新设置（自动刷新：每 ${refreshSeconds()} 秒）` : "刷新设置（自动刷新已关闭）"}
                 aria-label="刷新设置"
               >
