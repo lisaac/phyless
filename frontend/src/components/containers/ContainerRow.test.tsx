@@ -6,7 +6,7 @@ import type { ContainerSummary } from "../../types";
 const { get } = vi.hoisted(() => ({ get: vi.fn().mockResolvedValue([]) }));
 vi.mock("@solidjs/router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../stores/auth", () => ({ hasRole: () => true }));
-vi.mock("../../api/client", () => ({ get, getToken: () => "token" }));
+vi.mock("../../api/client", () => ({ get, request: (_m: string, u: string) => get(u), getToken: () => "token" }));
 
 afterEach(() => { cleanup(); get.mockClear(); });
 

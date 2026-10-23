@@ -1,5 +1,5 @@
-import { Component, createSignal, createResource, createEffect, For, Show, Suspense, createMemo } from "solid-js";
-import type { FileEntry } from "../../types";
+import { Component, createSignal, createResource, createEffect, For, Show, Suspense, createMemo, on } from "solid-js";
+import type { FileEntry, FileListing } from "../../types";
 import { confirmAction } from "./ConfirmModal";
 import { filesWindowUrl, openPopup, type FileSourceRef } from "../../api/fileSources";
 
@@ -50,7 +50,7 @@ function pathSegments(p: string) {
 }
 
 interface FileBrowserProps {
-  listPath: (sub: string) => Promise<FileEntry[]>;
+  listPath: (sub: string) => Promise<FileListing>;
   // Shows a "diff" toggle that lists only changes relative to the image.
   listDiff?: (sub: string) => Promise<FileEntry[]>;
   // Names + change kinds of a directory, to tag A/C on the normal listing.
@@ -101,13 +101,18 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
   const [mountOnly, setMountOnly] = createSignal(false);
   const [kinds, setKinds] = createSignal<Set<Change>>(new Set(CHANGES));
   const toggleKind = (k: Change) => setKinds((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  // Set from the latest normal listing; diff-only views keep the last one.
+  const [helper, setHelper] = createSignal<FileListing["helper"]>();
+  // Deferred: under Suspense the first run lands after the first listing.
+  createEffect(on(() => props.instanceKey, () => setHelper(undefined), { defer: true }));
+  const listPath = (p: string) => props.listPath(p).then((es) => { setHelper(es.helper); return es; });
   const [entries, { refetch }] = createResource(
     () => [props.instanceKey, path(), diff() && !!props.listDiff, mountOnly()] as const,
     async ([, p, d, m]) => {
       if (d && m) {
         // Union: the diff never covers mounts, so mounts come from the normal
         // listing, merged by name (a changed dir may also hold a mount).
-        const [ds, ns] = await Promise.all([props.listDiff!(p), props.listPath(p)]);
+        const [ds, ns] = await Promise.all([props.listDiff!(p), listPath(p)]);
         const byName = new Map(ds.map((e) => [e.name, e]));
         for (const n of ns.filter(isMount)) {
           const e = byName.get(n.name);
@@ -117,14 +122,14 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
       }
       if (d) return props.listDiff!(p);
       try {
-        return await props.listPath(p);
+        return await listPath(p);
       } catch (err) {
         // A file path (e.g. a file bind mount) can't be listed: show the
         // directory that holds it instead.
         const dir = p.replace(/\/+$/, "").replace(/\/[^/]+$/, "") || "/";
         const name = p.replace(/\/+$/, "").split("/").pop();
         if (dir === p) throw err;
-        const siblings = await props.listPath(dir).catch(() => { throw err; });
+        const siblings = await listPath(dir).catch(() => { throw err; });
         if (!siblings.some((e) => e.name === name && !e.is_dir)) throw err;
         nav(dir); // ponytail: refetches dir once more; cheap next to the failed try
         return siblings;
@@ -356,6 +361,14 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
           )}
         </Show>
       </div>
+
+      <Show when={helper()}>
+        {(h) => (
+          <p class="mb-2 border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300">
+            此列表由辅助容器 <span class="break-all font-mono">{h().name}</span> 读取（目标内无 ls、未运行或是镜像），不修改目标，闲置 {Math.round(h().life / 60) || "几"} 分钟后自动删除。
+          </p>
+        )}
+      </Show>
 
       <Show when={entries.error}>
         <p class="py-6 text-center text-sm text-red-400">{String(entries.error)}</p>

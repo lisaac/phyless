@@ -242,8 +242,12 @@ func TestPoolRecreatesVanishedOrExpiringBox(t *testing.T) {
 	p := NewPool(f)
 	now := time.Unix(0, 0)
 	p.now = func() time.Time { return now }
-	if _, err := p.Ls(context.Background(), "k", Spec{}, "/"); err != nil {
+	ctx, used := Track(context.Background())
+	if _, err := p.Ls(ctx, "k", Spec{Name: "app"}, "/"); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(used(), "phyless-autoremove-browse-app-") {
+		t.Fatalf("tracked helper = %q", used())
 	}
 	f.execGoneN = 1 // someone removed it
 	if _, err := p.Ls(context.Background(), "k", Spec{}, "/"); err != nil {
@@ -252,7 +256,7 @@ func TestPoolRecreatesVanishedOrExpiringBox(t *testing.T) {
 	if n := len(f.browseCreates()); n != 2 {
 		t.Fatalf("vanished box not recreated: creates=%d", n)
 	}
-	now = now.Add(boxLife - boxMargin + time.Second) // about to exit on its own
+	now = now.Add(BoxLife - boxMargin + time.Second) // about to exit on its own
 	if _, err := p.Ls(context.Background(), "k", Spec{}, "/"); err != nil {
 		t.Fatal(err)
 	}

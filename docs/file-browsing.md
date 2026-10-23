@@ -80,6 +80,7 @@ phyless 要能浏览任意镜像和任意状态容器里的文件，也要能给
 | 项 | 取值 |
 |---|---|
 | 容器名 | `phyless-autoremove-<用途>[-<目标>]-<6位随机>`，用途为 `browse`、`shell`、`download`、`busybox-init`；目标是容器名或镜像引用，截短并替换成 Docker 允许的字符 |
+| 界面提示 | 列目录用到浏览容器时，响应头 `X-Phyless-Helper`（容器名）和 `X-Phyless-Helper-Life`（闲置秒数）告诉文件浏览器显示「由辅助容器读取、闲置后自动删除」；调试终端在开头打印辅助容器名，并说明退出后自动删除 |
 | 标签 | 所有辅助对象都有 `phyless.role=debug`（调试镜像和 busybox 卷也有）；钉住某个镜像的还有 `phyless.image=<镜像ID>` |
 | 可见性 | 容器、镜像、卷列表和系统统计都按 `phyless.role` 隐藏；卷的"被谁使用"也不计入浏览容器。在 docker CLI 里能从名字看出它们是什么、会自己删除 |
 

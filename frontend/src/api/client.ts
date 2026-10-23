@@ -76,7 +76,8 @@ export function setToken(t: string | null): void {
   else localStorage.setItem(TOKEN_KEY, t);
 }
 
-export async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+// onHeaders sees a successful response's headers before its body is parsed.
+export async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal, onHeaders?: (h: Headers) => void): Promise<T> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -109,6 +110,7 @@ export async function request<T>(method: string, path: string, body?: unknown, s
       } catch {}
       throw new ApiError(res.status, msg);
     }
+    onHeaders?.(res.headers);
     if (res.status === 204) return undefined as T;
     const ct = res.headers.get("Content-Type") ?? "";
     const text = await res.text();

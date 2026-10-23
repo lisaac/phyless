@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
+	"phyless/backend/internal/docker/debugshell"
 )
 
 type containerRef struct {
@@ -171,11 +172,13 @@ func (s *Server) handleImageListFiles(w http.ResponseWriter, r *http.Request) {
 	if dirPath == "" {
 		dirPath = "/"
 	}
-	entries, err := s.fs.ListImage(r.Context(), id, dirPath)
+	ctx, helper := debugshell.Track(r.Context())
+	entries, err := s.fs.ListImage(ctx, id, dirPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	setHelperHeader(w, helper())
 	writeJSON(w, http.StatusOK, entries)
 }
 

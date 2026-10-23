@@ -1,6 +1,6 @@
-import { get, getToken } from "./client";
+import { get, getToken, request } from "./client";
 import { enqueue, queued } from "../stores/taskQueue";
-import type { FileEntry } from "../types";
+import type { FileEntry, FileListing } from "../types";
 
 // Every FileBrowser in the app browses one of these. The endpoint table lives
 // here once so the in-page browsers and the standalone window
@@ -29,7 +29,16 @@ export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: b
   const joinName = (dir: string, name: string) => (dir.endsWith("/") ? dir + name : dir + "/" + name);
 
   return {
-    listPath: (sub: string) => get<FileEntry[]>(url("", `path=${e(sub)}`)),
+    // Container/image listings may run in a self-removing browse container;
+    // the backend names it in X-Phyless-Helper so the browser can say so.
+    listPath: async (sub: string): Promise<FileListing> => {
+      let helper: FileListing["helper"];
+      const entries = await request<FileEntry[]>("GET", url("", `path=${e(sub)}`), undefined, undefined, (h) => {
+        const name = h.get("X-Phyless-Helper");
+        if (name) helper = { name, life: Number(h.get("X-Phyless-Helper-Life")) || 0 };
+      });
+      return Object.assign(entries, { helper });
+    },
     // Only what changed relative to the image (docker diff), directories kept.
     listDiff: kind !== "container" ? undefined : (sub: string) => get<FileEntry[]>(url("", `path=${e(sub)}&diff=1`)),
     // Names and change kinds only (no stat): marks A/C on a normal listing.

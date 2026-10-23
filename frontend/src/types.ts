@@ -147,6 +147,10 @@ export interface FileEntry {
   run_below?: boolean; // a dir holding one somewhere beneath
 }
 
+// A listing that ran in a browse container (no ls in the target, a stopped
+// container, an image): its name and how long it idles before removing itself.
+export type FileListing = FileEntry[] & { helper?: { name: string; life: number } };
+
 export interface Template {
   id: string;
   name: string;

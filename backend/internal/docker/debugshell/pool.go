@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	// boxLife is how long a browse container lives: its main process is
-	// `busybox sleep boxLife`, so it exits and auto-removes on its own and a
+	// BoxLife is how long a browse container lives: its main process is
+	// `busybox sleep BoxLife`, so it exits and auto-removes on its own and a
 	// crashed phyless leaves nothing behind — no GC loop needed.
-	boxLife = 5 * time.Minute
+	BoxLife = 5 * time.Minute
 	// boxMargin replaces a box this close to expiry so an ls never races exit.
 	boxMargin = 30 * time.Second
 	// opTimeout bounds one listing: ls on a hung mount must not pin a request.
@@ -55,6 +55,7 @@ type Pool struct {
 
 type box struct {
 	id      string
+	name    string
 	expires time.Time
 	ready   chan struct{} // closed once id/err are set
 	err     error
@@ -122,6 +123,9 @@ func (p *Pool) do(ctx context.Context, key string, spec Spec, op func(ctx contex
 		if err != nil {
 			return err
 		}
+		if used, ok := ctx.Value(usedKey{}).(*string); ok {
+			*used = b.name
+		}
 		err = op(ctx, b.id)
 		broken := errors.Is(err, ctr.ErrExecNotFound)
 		if err == nil || retried || !(broken || errdefs.IsNotFound(err) || errdefs.IsConflict(err)) {
@@ -138,6 +142,15 @@ func (p *Pool) do(ctx context.Context, key string, spec Spec, op func(ctx contex
 			_ = p.cli.VolumeRemove(ctx, a.volume(), false) // in use elsewhere: leave it
 		}
 	}
+}
+
+type usedKey struct{}
+
+// Track returns a ctx whose pool operations record the browse container they
+// ran in; used reports its name, "" when none was needed (the target's own ls).
+func Track(ctx context.Context) (_ context.Context, used func() string) {
+	name := new(string)
+	return context.WithValue(ctx, usedKey{}, name), func() string { return *name }
 }
 
 // Remove deletes key's browse container now, e.g. before removing the image
@@ -172,10 +185,10 @@ func (p *Pool) get(ctx context.Context, key string, spec Spec) (*box, error) {
 	b := p.boxes[key]
 	if b == nil || b.expires.Sub(now) < boxMargin {
 		p.sweepLocked(now)
-		b = &box{ready: make(chan struct{}), expires: now.Add(boxLife)}
+		b = &box{ready: make(chan struct{}), expires: now.Add(BoxLife)}
 		p.boxes[key] = b
 		p.mu.Unlock()
-		b.id, b.err = p.start(ctx, spec)
+		b.id, b.name, b.err = p.start(ctx, spec)
 		if b.err != nil {
 			p.forget(key, b) // the next call retries
 		}
@@ -195,7 +208,7 @@ func (p *Pool) get(ctx context.Context, key string, spec Spec) (*box, error) {
 }
 
 // sweepLocked drops boxes whose containers already exited by themselves, so
-// the map holds only keys used within the last boxLife. Caller holds p.mu.
+// the map holds only keys used within the last BoxLife. Caller holds p.mu.
 func (p *Pool) sweepLocked(now time.Time) {
 	for k, b := range p.boxes {
 		if b.expires.Before(now) {
@@ -215,12 +228,12 @@ func (p *Pool) forget(key string, b *box) {
 // start creates and starts a browse container. It is detached from the
 // caller's cancellation: a request dropped mid-create must not strand a
 // created-but-never-started container (AutoRemove only fires after start).
-func (p *Pool) start(ctx context.Context, spec Spec) (string, error) {
+func (p *Pool) start(ctx context.Context, spec Spec) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), opTimeout)
 	defer cancel()
 	bb, err := busyboxMount(ctx, p.cli)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	hc := spec.Host
 	hc.AutoRemove = true
@@ -235,7 +248,7 @@ func (p *Pool) start(ctx context.Context, spec Spec) (string, error) {
 		Image: spec.Image,
 		// Explicit Cmd: an image's own CMD must not leak in as sleep's args.
 		Entrypoint: []string{Busybox},
-		Cmd:        []string{"sleep", strconv.Itoa(int(boxLife / time.Second))},
+		Cmd:        []string{"sleep", strconv.Itoa(int(BoxLife / time.Second))},
 		User:       "0",
 		WorkingDir: "/",
 		// The image's healthcheck would run its own binaries every interval.
@@ -250,11 +263,11 @@ func (p *Pool) start(ctx context.Context, spec Spec) (string, error) {
 		resp, err = p.cli.ContainerCreate(ctx, cfg, &hc, nil, nil, name)
 	}
 	if err != nil {
-		return "", fmt.Errorf("%w（创建）: %w", ErrBoxStart, err)
+		return "", "", fmt.Errorf("%w（创建）: %w", ErrBoxStart, err)
 	}
 	if err := p.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		_ = p.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-		return "", fmt.Errorf("%w（启动）: %w", ErrBoxStart, err)
+		return "", "", fmt.Errorf("%w（启动）: %w", ErrBoxStart, err)
 	}
-	return resp.ID, nil
+	return resp.ID, name, nil
 }

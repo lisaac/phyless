@@ -7,10 +7,13 @@ import (
 	"io"
 	"net/http"
 	pathpkg "path"
+	"phyless/backend/internal/docker/debugshell"
 	"phyless/backend/internal/docker/self"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/containerd/platforms"
 	"github.com/docker/docker/api/types/container"
@@ -664,13 +667,15 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 	}
 	var entries []dockercontainer.FileEntry
 	var err error
+	ctx, helper := debugshell.Track(r.Context())
 	// diff=1: changed entries with metadata; diff=marks: names and kinds only.
 	switch d := r.URL.Query().Get("diff"); d {
 	case "1", "marks":
-		entries, err = s.fs.ListContainerDiff(r.Context(), id, dirPath, d == "1")
+		entries, err = s.fs.ListContainerDiff(ctx, id, dirPath, d == "1")
 	default:
-		entries, err = s.fs.ListContainer(r.Context(), id, dirPath)
+		entries, err = s.fs.ListContainer(ctx, id, dirPath)
 	}
+	setHelperHeader(w, helper())
 	if errdefs.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -680,6 +685,15 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// setHelperHeader tells the file browser which self-removing browse container
+// served the listing, so it can say so.
+func setHelperHeader(w http.ResponseWriter, name string) {
+	if name != "" {
+		w.Header().Set("X-Phyless-Helper", name)
+		w.Header().Set("X-Phyless-Helper-Life", strconv.Itoa(int(debugshell.BoxLife/time.Second)))
+	}
 }
 
 func (s *Server) handleContainerDownloadFile(w http.ResponseWriter, r *http.Request) {
