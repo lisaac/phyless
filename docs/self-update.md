@@ -29,7 +29,7 @@ helper 支持的操作：
 - `container-upgrade <id> [ENV...]`：执行现有的升级流程，使用已拉取的镜像；失败时同样会回滚。
 - `compose <up|redeploy|restart|stop|down> <项目 id>`：只使用本地镜像，不在 helper 里拉取。
 
-helper 执行结束后**保留不删**，下次执行前再删除，这样 phyless 重启后仍能读到上次的结果（`GET /api/system/helper`：`none | running | ok | failed`，附带最后一条消息或错误）。代价是它会让上一版 phyless 镜像一直被引用，直到下一次 helper 运行；如果要立即清理旧镜像，先删掉 `phyless-helper` 容器。审计记录由 helper 写入，用户名是发起操作的用户。
+helper 执行结束后不会立刻删除，phyless 重启后仍能读到结果（`GET /api/system/helper`：`none | running | ok | failed`，附带最后一条消息或错误）。第一次读到已结束的 helper 时，结果写入数据目录的 `helper-result.json`，随后删除容器，旧版 phyless 镜像不再被引用；之后从这个文件读结果。没有人轮询时（例如升级中途关了页面），容器会保留到下一次读取结果或下一次 helper 运行。审计记录由 helper 写入，用户名是发起操作的用户。
 
 ## 各操作的处理方式
 

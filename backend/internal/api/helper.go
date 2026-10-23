@@ -111,7 +111,7 @@ func (s *Server) handleSelf(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHelperResult(w http.ResponseWriter, r *http.Request) {
-	res, err := self.LastResult(r.Context(), s.docker)
+	res, err := self.LastResult(r.Context(), s.docker, s.dataDir)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return

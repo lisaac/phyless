@@ -137,6 +137,7 @@ func Launch(ctx context.Context, cli client.APIClient, selfID, dataDir string, w
 	} else if !errdefs.IsNotFound(err) {
 		return err
 	}
+	_ = os.Remove(resultPath(dataDir))
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -220,12 +221,17 @@ type Result struct {
 	Finished string `json:"finished_at,omitempty"`
 }
 
-// LastResult reads the kept helper container. The helper is left in place
-// after it exits so this survives the restart it caused.
-func LastResult(ctx context.Context, cli client.APIClient) (Result, error) {
+// LastResult reports the most recent helper run. A finished helper is read
+// once, its result saved to the data dir and the container removed, so it
+// stops pinning the previous phyless image; later calls read the saved file.
+func LastResult(ctx context.Context, cli client.APIClient, dataDir string) (Result, error) {
 	info, err := cli.ContainerInspect(ctx, HelperName)
 	if errdefs.IsNotFound(err) {
-		return Result{State: "none"}, nil
+		var res Result
+		if data, err := os.ReadFile(resultPath(dataDir)); err != nil || json.Unmarshal(data, &res) != nil {
+			return Result{State: "none"}, nil
+		}
+		return res, nil
 	}
 	if err != nil {
 		return Result{}, err
@@ -233,6 +239,22 @@ func LastResult(ctx context.Context, cli client.APIClient) (Result, error) {
 	if info.State != nil && info.State.Running {
 		return Result{State: "running"}, nil
 	}
+	res := readResult(ctx, cli, info)
+	// Saved before removal: if saving fails the container stays as the record.
+	if data, err := json.Marshal(res); err == nil {
+		tmp := resultPath(dataDir) + ".tmp"
+		if os.WriteFile(tmp, data, 0o600) == nil && os.Rename(tmp, resultPath(dataDir)) == nil {
+			if err := cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+				log.Printf("self: remove finished helper: %v", err)
+			}
+		}
+	}
+	return res, nil
+}
+
+func resultPath(dataDir string) string { return filepath.Join(dataDir, "helper-result.json") }
+
+func readResult(ctx context.Context, cli client.APIClient, info container.InspectResponse) Result {
 	res := Result{State: "ok"}
 	if info.State != nil {
 		res.Finished = info.State.FinishedAt
@@ -243,7 +265,7 @@ func LastResult(ctx context.Context, cli client.APIClient) (Result, error) {
 	}
 	rc, err := cli.ContainerLogs(ctx, info.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "50"})
 	if err != nil {
-		return res, nil
+		return res
 	}
 	defer rc.Close()
 	var out strings.Builder
@@ -259,7 +281,7 @@ func LastResult(ctx context.Context, cli client.APIClient) (Result, error) {
 			res.Message = s
 		}
 	}
-	return res, nil
+	return res
 }
 
 func flush(w io.Writer) {

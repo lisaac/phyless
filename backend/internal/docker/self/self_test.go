@@ -3,6 +3,7 @@ package self
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,5 +77,43 @@ func TestInitAndID(t *testing.T) {
 	}
 	if _, err := ID(ctx, &statClient{ids: []string{"a"}, fail: "a"}); err == nil {
 		t.Fatal("a transient stat error must not read as \"not ours\"")
+	}
+}
+
+type helperClient struct {
+	client.APIClient
+	gone bool
+}
+
+func (c *helperClient) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
+	if c.gone {
+		return container.InspectResponse{}, errdefs.NotFound(os.ErrNotExist)
+	}
+	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+		ID: "h", State: &container.State{ExitCode: 1, FinishedAt: "t"},
+	}}, nil
+}
+
+func (c *helperClient) ContainerLogs(context.Context, string, container.LogsOptions) (io.ReadCloser, error) {
+	return nil, errors.New("no logs")
+}
+
+func (c *helperClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
+	c.gone = true
+	return nil
+}
+
+func TestLastResultSavesAndRemoves(t *testing.T) {
+	ctx, dir := context.Background(), t.TempDir()
+	cli := &helperClient{}
+	if res, _ := LastResult(ctx, cli, dir); res.State != "failed" || !cli.gone {
+		t.Fatalf("first read = %+v, removed = %v", res, cli.gone)
+	}
+	res, err := LastResult(ctx, cli, dir)
+	if err != nil || res.State != "failed" || res.Finished != "t" {
+		t.Fatalf("saved result = %+v, %v", res, err)
+	}
+	if res, _ := LastResult(ctx, cli, t.TempDir()); res.State != "none" {
+		t.Fatalf("no helper, no file: %+v", res)
 	}
 }
