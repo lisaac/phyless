@@ -191,6 +191,7 @@ html:not(.dark) .text-zinc-600      { color: #94a3b8; }
 html:not(.dark) .text-zinc-700      { color: #cbd5e1; }
 
 html:not(.dark) .hover\:bg-zinc-800:hover   { background-color: #f1f5f9; }
+html:not(.dark) .group:hover .group-hover\:bg-zinc-800 { background-color: #f1f5f9; }
 html:not(.dark) .hover\:bg-zinc-700:hover   { background-color: #e2e8f0; }
 html:not(.dark) .hover\:bg-zinc-800\/60:hover { background-color: #f1f5f9; }
 html:not(.dark) .hover\:text-zinc-100:hover { color: #0f172a; }

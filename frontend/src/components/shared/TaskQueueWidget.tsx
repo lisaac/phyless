@@ -1,7 +1,7 @@
 import { Component, createSignal, createMemo, createEffect, onCleanup, Show, For } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import {
-  tasks, panelHidden, setPanelHidden, autoOpenPanel, setAutoOpenPanel, cancel, remove, clearFinished, isActive, runningCount, markFailuresSeen, type Task,
+  tasks, panelHidden, setPanelHidden, autoOpenPanel, setAutoOpenPanel, cancel, remove, clearFinished, isActive, runningCount, markFailuresSeen, taskPct, type Task,
 } from "../../stores/taskQueue";
 
 const DEFAULT_VISIBLE = 12;
@@ -42,12 +42,8 @@ const brief = (t: Task): string => {
     case "cancelled": return "已取消";
     case "interrupted": return "已中断";
   }
-  if (t.uploadPct !== null) return `上传 ${t.uploadPct.toFixed(0)}%`;
-  const total = t.layers.reduce((s, l) => s + (l.total ?? 0), 0);
-  if (total > 0) {
-    const cur = t.layers.reduce((s, l) => s + Math.min(l.current ?? 0, l.total ?? 0), 0);
-    return `${((cur / total) * 100).toFixed(0)}%`;
-  }
+  const pct = taskPct(t);
+  if (pct !== null) return `${t.uploadPct !== null ? "上传 " : ""}${pct.toFixed(0)}%`;
   return t.notes[t.notes.length - 1] ?? "连接中…";
 };
 

@@ -86,6 +86,19 @@ function load(): Task[] {
 
 export const [tasks, setTasks] = createStore<{ list: Task[] }>({ list: load() });
 export const runningCount = () => tasks.list.filter((t) => t.status === "running").length;
+// Known progress of one task (upload %, else summed layer bytes), null when
+// the backend reports none (plain JSON writes, pulls before layer sizes).
+export function taskPct(t: Task): number | null {
+  if (t.uploadPct !== null) return Math.min(100, t.uploadPct);
+  const total = t.layers.reduce((s, l) => s + (l.total ?? 0), 0);
+  if (!total) return null;
+  return (t.layers.reduce((s, l) => s + Math.min(l.current ?? 0, l.total ?? 0), 0) / total) * 100;
+}
+// Mean over running tasks that report progress; null = none do (indeterminate).
+export function runningPct(): number | null {
+  const pcts = tasks.list.filter((t) => t.status === "running").map(taskPct).filter((p): p is number => p !== null);
+  return pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
+}
 // New tasks announce themselves with ENQUEUED_EVENT, and also open the drawer
 // unless the user turned 自动打开任务视图 off (per-browser, default on).
 export const [panelHidden, setPanelHidden] = createSignal(true);

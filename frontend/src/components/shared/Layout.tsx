@@ -6,7 +6,7 @@ import { ComposeIcon } from "../compose/composeShared";
 import { ContainerIcon } from "../containers/ContainerIcon";
 import { TaskQueueWidget } from "./TaskQueueWidget";
 import { ImageInspectModal } from "./Inspect";
-import { panelHidden, setPanelHidden, ENQUEUED_EVENT, runningCount, showTaskPanel, unseenFailureCount } from "../../stores/taskQueue";
+import { panelHidden, setPanelHidden, ENQUEUED_EVENT, runningCount, runningPct, showTaskPanel, unseenFailureCount } from "../../stores/taskQueue";
 import { autoRefresh, refreshSeconds, setAutoRefresh, setRefreshSeconds, refreshAll } from "../../stores/refresh";
 
 const CLOSE_ANIM_MS = 200;
@@ -243,7 +243,8 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
   const taskBadgeCount = () => unseenFailureCount() || runningCount();
   const taskButtonLabel = () => {
     const failed = unseenFailureCount();
-    return `${panelHidden() ? "显示" : "隐藏"}任务面板${failed ? `，${failed} 个任务失败` : runningCount() ? `，${runningCount()} 个任务运行中` : ""}`;
+    const pct = runningPct();
+    return `${panelHidden() ? "显示" : "隐藏"}任务面板${failed ? `，${failed} 个任务失败` : runningCount() ? `，${runningCount()} 个任务运行中${pct === null ? "" : `，进度 ${pct.toFixed(0)}%`}` : ""}`;
   };
 
   return (
@@ -309,7 +310,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
           {/* Right group: task panel toggle, refresh now + settings, theme. */}
           <button
             ref={taskButton}
-            class={`ml-auto flex h-6 shrink-0 items-center gap-1 rounded p-1 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
+            class={`group ml-auto flex h-6 shrink-0 items-center gap-1 rounded p-1 text-sm hover:bg-zinc-800 ${panelHidden() ? "text-zinc-400 hover:text-zinc-100" : "bg-zinc-800 text-zinc-100"}`}
             onClick={() => panelHidden() ? showTaskPanel() : setPanelHidden(true)}
             title={taskButtonLabel()}
             aria-label={taskButtonLabel()}
@@ -318,13 +319,20 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" aria-hidden="true" class={unseenFailureCount() ? "text-red-400" : runningCount() ? "text-indigo-400" : ""}>
                 <path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
               </svg>
+              {/* Corner badge: count inside a ring. Running fills it with
+                  runningPct() (spinning quarter arc when no task reports %);
+                  unseen failures turn it red and full. Its bg tracks the
+                  button's (header / hover / open) so it cuts out the icon behind it. */}
               <Show when={taskBadgeCount()}>
-                <span class={`absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full ${unseenFailureCount() ? "bg-red-500" : "animate-pulse bg-indigo-500"}`} />
+                <span aria-hidden="true" class={`absolute -right-2 -top-2 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full text-[8px] font-semibold leading-none ${panelHidden() ? "bg-zinc-900 group-hover:bg-zinc-800" : "bg-zinc-800"} ${unseenFailureCount() ? "text-red-400" : "text-indigo-300"}`}>
+                  <svg viewBox="0 0 14 14" width="14" height="14" class={`absolute inset-0 -rotate-90 ${!unseenFailureCount() && runningPct() === null ? "animate-spin" : ""}`} fill="none" stroke-width="1.5">
+                    <circle cx="7" cy="7" r="6.25" stroke="currentColor" class="text-zinc-700" />
+                    <circle cx="7" cy="7" r="6.25" stroke="currentColor" stroke-linecap="round" pathLength="100" stroke-dasharray={`${unseenFailureCount() ? 100 : runningPct() ?? 25} 100`} class={`transition-[stroke-dasharray] duration-300 ${unseenFailureCount() ? "text-red-400" : "text-indigo-400"}`} />
+                  </svg>
+                  {taskBadgeCount()}
+                </span>
               </Show>
             </span>
-            <Show when={taskBadgeCount() > 0}>
-              <span aria-hidden="true" class={`rounded-full px-1.5 text-xs ${unseenFailureCount() ? "bg-red-500/20 text-red-300" : "bg-indigo-500/20 text-indigo-300"}`}>{taskBadgeCount()}</span>
-            </Show>
           </button>
           {/* Refresh: one split control — left half refreshes now, the arrow opens
               the settings popover. Indigo = auto-refresh on, grey = off. */}

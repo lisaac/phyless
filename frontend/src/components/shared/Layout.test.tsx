@@ -14,7 +14,7 @@ vi.mock("../../stores/tabs", () => ({
   tabSearch: () => "", setTabSearch: vi.fn(),
 }));
 vi.mock("../../stores/taskQueue", () => ({
-  tasks: { list: [] }, panelHidden: () => true, setPanelHidden: vi.fn(), runningCount: () => 0,
+  tasks: { list: [] }, panelHidden: () => true, setPanelHidden: vi.fn(), runningCount: () => 0, runningPct: () => null,
   unseenFailureCount: () => 0, showTaskPanel: vi.fn(),
   ENQUEUED_EVENT: "phyless:task-enqueued",
 }));
