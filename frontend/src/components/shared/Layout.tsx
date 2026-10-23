@@ -325,7 +325,7 @@ export const Layout: Component<{ children?: JSX.Element }> = (props) => {
                   button's (header / hover / open) so it cuts out the icon behind it. */}
               <Show when={taskBadgeCount()}>
                 <span aria-hidden="true" class={`absolute -right-2 -top-2 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full text-[8px] font-semibold leading-none ${panelHidden() ? "bg-zinc-900 group-hover:bg-zinc-800" : "bg-zinc-800"} ${unseenFailureCount() ? "text-red-400" : "text-indigo-300"}`}>
-                  <svg viewBox="0 0 14 14" width="14" height="14" class={`absolute inset-0 -rotate-90 ${!unseenFailureCount() && runningPct() === null ? "animate-spin" : ""}`} fill="none" stroke-width="1.5">
+                  <svg viewBox="0 0 14 14" width="14" height="14" class={`absolute inset-0 ${!unseenFailureCount() && runningPct() === null ? "animate-spin" : "-rotate-90"}`} fill="none" stroke-width="1.5">
                     <circle cx="7" cy="7" r="6.25" stroke="currentColor" class="text-zinc-700" />
                     <circle cx="7" cy="7" r="6.25" stroke="currentColor" stroke-linecap="round" pathLength="100" stroke-dasharray={`${unseenFailureCount() ? 100 : runningPct() ?? 25} 100`} class={`transition-[stroke-dasharray] duration-300 ${unseenFailureCount() ? "text-red-400" : "text-indigo-400"}`} />
                   </svg>
