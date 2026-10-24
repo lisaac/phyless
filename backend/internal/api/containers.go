@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -596,52 +595,6 @@ func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) handleContainerDeleteFile(w http.ResponseWriter, r *http.Request) {
-	id, p := chi.URLParam(r, "id"), r.URL.Query().Get("path")
-	s.containerFileOp(w, r, "container.file.delete", id+":"+p, s.fs.Remove(r.Context(), id, p))
-}
-
-func (s *Server) handleContainerRenameFile(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	var body struct {
-		OldPath string `json:"old_path"`
-		NewPath string `json:"new_path"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "old_path and new_path required")
-		return
-	}
-	s.containerFileOp(w, r, "container.file.rename", id+":"+body.OldPath+" -> "+body.NewPath,
-		s.fs.Rename(r.Context(), id, body.OldPath, body.NewPath))
-}
-
-func (s *Server) handleContainerChmodFile(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	body, ok := decodeChmod(w, r)
-	if !ok {
-		return
-	}
-	var err error
-	if body.Mode != "" {
-		err = s.fs.Chmod(r.Context(), id, body.Path, body.Mode, body.Recursive)
-	}
-	if err == nil && body.Owner != "" {
-		err = s.fs.Chown(r.Context(), id, body.Path, body.Owner, body.Recursive)
-	}
-	s.containerFileOp(w, r, "container.file.chmod", id+":"+body.String(), err)
-}
-
-// containerFileOp answers and audits one change to a container's files.
-func (s *Server) containerFileOp(w http.ResponseWriter, r *http.Request, action, target string, err error) {
-	if err != nil {
-		s.auditFromCtx(r, action, target, "failed")
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	s.auditFromCtx(r, action, target, "ok")
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	rc, err := s.docker.ContainerExport(r.Context(), id)
@@ -731,33 +684,6 @@ func serveArchive(w http.ResponseWriter, rc io.Reader, path string) {
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+base+`.tar"`)
 	io.Copy(w, rc) //nolint:errcheck // ponytail: pipe the tar stream directly
-}
-
-func (s *Server) handleContainerUploadFile(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = "/"
-	}
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "missing name")
-		return
-	}
-	if r.ContentLength > maxUploadSize {
-		writeError(w, http.StatusRequestEntityTooLarge, "upload exceeds size limit")
-		return
-	}
-	defer s.fs.Invalidate()
-	if err := dockercontainer.UploadTarFile(r.Context(), s.docker, id, path, name, r.Body, maxUploadSize); err != nil {
-		if errors.Is(err, dockercontainer.ErrUploadTooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleContainerCopyToContainer(w http.ResponseWriter, r *http.Request) {

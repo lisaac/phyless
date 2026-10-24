@@ -272,27 +272,28 @@ func (f *FS) lsStopped(ctx context.Context, t container.InspectResponse, p strin
 	return entries, err
 }
 
-// OpenImage streams p out of an image as a tar archive. It uses its own
-// never-started container: a browse container may expire mid-download.
+// OpenImage streams p out of an image as a tar archive.
 func (f *FS) OpenImage(ctx context.Context, ref, p string) (io.ReadCloser, error) {
 	id, err := f.imageID(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := f.cli.ContainerCreate(ctx, &container.Config{
-		Image:  id,
-		Cmd:    []string{"/"}, // never run; images without CMD need one to create
-		Labels: map[string]string{docker.RoleLabel: debugshell.Role, ImageLabel: id},
-	}, &container.HostConfig{NetworkMode: "none"}, nil, nil, debugshell.HelperName("download", ref))
+	return f.open(ctx, debugshell.Spec{Name: ref, Image: id, Labels: map[string]string{ImageLabel: id}}, path.Clean("/"+p))
+}
+
+// open streams p out of an idle helper built from spec, removed on Close.
+// Its own helper: a browse container may expire mid-download.
+func (f *FS) open(ctx context.Context, spec debugshell.Spec, p string) (io.ReadCloser, error) {
+	id, err := debugshell.CreateIdle(ctx, f.cli, "download", spec)
 	if err != nil {
 		return nil, err
 	}
-	rc, _, err := f.cli.CopyFromContainer(ctx, resp.ID, path.Clean("/"+p))
+	rc, _, err := f.cli.CopyFromContainer(ctx, id, p)
 	if err != nil {
-		_ = f.remove(context.WithoutCancel(ctx), resp.ID)
+		_ = f.remove(context.WithoutCancel(ctx), id)
 		return nil, err
 	}
-	return &removeOnClose{ReadCloser: rc, done: func() { _ = f.remove(context.WithoutCancel(ctx), resp.ID) }}, nil
+	return &removeOnClose{ReadCloser: rc, done: func() { _ = f.remove(context.WithoutCancel(ctx), id) }}, nil
 }
 
 // ReleaseImage removes every helper pinning an image so it can be deleted.

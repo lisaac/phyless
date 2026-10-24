@@ -26,11 +26,14 @@ export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: b
   const idq = kind === "image" || kind === "compose" ? `id=${e(id)}&` : "";
   const url = (suffix: string, query = "") => `${base}${suffix}?${idq}${query}`;
   const key = kind === "compose" ? `compose:${id}` : kind === "config" ? "config" : id;
-  const writable = kind === "container" || kind === "compose" || kind === "config";
+  const writable = kind !== "image";
+  // Container and volume files go through the archive API (one tar file);
+  // host files are a raw PUT of the content.
+  const viaArchive = kind === "container" || kind === "volume";
   const joinName = (dir: string, name: string) => (dir.endsWith("/") ? dir + name : dir + "/" + name);
 
   return {
-    // Container/image listings may run in a self-removing browse container;
+    // Container/image/volume listings may run in a self-removing browse container;
     // the backend names it in X-Phyless-Helper so the browser can say so.
     listPath: async (sub: string): Promise<FileListing> => {
       let helper: FileListing["helper"];
@@ -47,7 +50,7 @@ export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: b
     // Tar stream of a file/dir — also what the read-only viewer opens files through.
     downloadUrl: (sub: string) => url("/download", `path=${e(sub)}&token=${e(getToken() ?? "")}`),
     upload: !writable ? undefined : async (dir: string, file: File) => {
-      const t = await enqueue(kind === "container"
+      const t = await enqueue(viaArchive
         ? { title: `上传 ${file.name}`, url: url("/upload", `path=${e(dir)}&name=${e(file.name)}`), file, key }
         : { title: `上传 ${file.name}`, url: url("/content", `path=${e(joinName(dir, file.name))}`), method: "PUT", file, key }).done;
       if (t.status !== "done") throw new Error(t.error);

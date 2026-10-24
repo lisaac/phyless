@@ -283,3 +283,28 @@ func (p *Pool) start(ctx context.Context, spec Spec) (string, string, error) {
 	}
 	return resp.ID, name, nil
 }
+
+// CreateIdle creates a never-started helper from spec for the archive API
+// (CopyFromContainer/CopyToContainer need no running process), so a transfer
+// never races a browse container's expiry. The caller removes it; one a crash
+// leaves behind is pruned at startup.
+func CreateIdle(ctx context.Context, cli client.APIClient, purpose string, spec Spec) (string, error) {
+	labels := maps.Clone(spec.Labels)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[docker.RoleLabel] = Role
+	// Never run; an image without CMD still needs one to create.
+	cfg := &container.Config{Image: spec.Image, Cmd: []string{"/"}, Labels: labels}
+	hc := spec.Host
+	hc.NetworkMode = "none"
+	name := HelperName(purpose, spec.Name)
+	var resp container.CreateResponse
+	var err error
+	if spec.Image == "" {
+		resp, err = createDebug(ctx, cli, name, cfg, &hc)
+	} else {
+		resp, err = cli.ContainerCreate(ctx, cfg, &hc, nil, nil, name)
+	}
+	return resp.ID, err
+}

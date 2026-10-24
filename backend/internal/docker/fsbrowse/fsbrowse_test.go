@@ -18,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	ctr "phyless/backend/internal/docker/container"
@@ -34,9 +35,9 @@ type fakeDocker struct {
 	ls      map[string]string // path → ls -la output (any container)
 	diff    []container.FilesystemChange
 	diffs   int
-	execs   []string          // "container:path"
-	cmds    []string          // "container user: argv"
-	links   map[string]string // path → symlink target, for StatPath
+	execs   []string // "container:path"
+	cmds    []string // "container user: argv"
+	noVol   bool     // VolumeInspect: not found
 	creates []*container.HostConfig
 	exit    map[string]int // exec id → exit code
 	exitFor map[string]int // target command → exit code
@@ -52,7 +53,10 @@ func (f *fakeDocker) ServerVersion(context.Context) (types.Version, error) {
 func (f *fakeDocker) ImageInspect(_ context.Context, ref string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
 	return image.InspectResponse{ID: ref}, nil
 }
-func (f *fakeDocker) VolumeInspect(context.Context, string) (volume.Volume, error) {
+func (f *fakeDocker) VolumeInspect(_ context.Context, name string) (volume.Volume, error) {
+	if f.noVol && name != "" && !strings.HasPrefix(name, "phyless-busybox") {
+		return volume.Volume{}, errdefs.NotFound(errors.New("no such volume"))
+	}
 	return volume.Volume{}, nil
 }
 func (f *fakeDocker) ContainerCreate(_ context.Context, _ *container.Config, h *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, _ string) (container.CreateResponse, error) {
@@ -74,9 +78,6 @@ func (f *fakeDocker) ContainerDiff(context.Context, string) ([]container.Filesys
 	return f.diff, nil
 }
 func (f *fakeDocker) ContainerStatPath(_ context.Context, _ string, p string) (container.PathStat, error) {
-	if l, ok := f.links[p]; ok {
-		return container.PathStat{Name: p, Mode: os.ModeSymlink | 0o777, LinkTarget: l}, nil
-	}
 	if p == "/app" {
 		return container.PathStat{Name: "app", Mode: os.ModeDir | 0o755}, nil
 	}

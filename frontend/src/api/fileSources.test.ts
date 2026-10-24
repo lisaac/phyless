@@ -18,6 +18,7 @@ describe("fileSource", () => {
     expect(fileSource("compose", "p").downloadUrl!("/a")).toBe("/api/compose/files/download?id=p&path=%2Fa&token=t");
     expect(fileSource("volume", "v").downloadUrl("/a")).toMatch(/^\/api\/volumes\/v\/files\/download\?path=%2Fa&token=/);
     expect(fileSource("image", "i").remove).toBeUndefined();
+    expect([!!fileSource("volume", "v").chmod, fileSource("volume", "v").mountsOnly]).toEqual([true, false]);
     expect(fileSource("container", "c").create).toBeUndefined();
     const stopped = fileSource("container", "c", { stopped: true });
     expect([!!stopped.remove, !!stopped.chmod, stopped.mountsOnly, fileSource("container", "c").mountsOnly]).toEqual([true, true, true, false]);

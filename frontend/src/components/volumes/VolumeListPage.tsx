@@ -149,7 +149,7 @@ export const VolumeListPage: Component = () => {
       <Modal open={!!browse()} onClose={() => setBrowse(null)} title={`浏览 ${browse()?.Name ?? ""}`} wide>
         <Show when={browse()}>
           {(v) => (
-            <SourceFileBrowser src={{ kind: "volume", id: v().Name, name: v().Name }} download={download} />
+            <SourceFileBrowser src={{ kind: "volume", id: v().Name, name: v().Name }} download={download} writable />
           )}
         </Show>
       </Modal>

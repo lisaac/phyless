@@ -27,6 +27,7 @@ phyless 要能浏览任意镜像和任意状态容器里的文件，也要能给
 | 镜像 | 用这个镜像创建浏览容器，执行 `ls` | 首次 0.45 秒（和镜像大小无关），之后约 90 毫秒 |
 | 已停止的容器 | 一个浏览容器：它的镜像，加上 `VolumesFrom: [它自己]`（挂载模式继承目标，只读的仍只读；读写共用这一个）。挂载路径直接 `ls`，其余路径先 `ls` 再合并可写层的变更（见下节） | 首次约 4 秒（其中 3 秒是取 changes），之后约 100 毫秒 |
 | 从镜像下载文件 | 另外创建一个只创建不启动的容器，用 `CopyFromContainer` 读取，关闭时删除。不复用浏览容器，因为浏览容器可能在下载途中到期 | 75 毫秒 |
+| 卷 | 浏览容器用调试镜像，把卷挂到 `/.phyless-volume`，执行 `ls`。下载、上传同镜像下载：只创建不启动、挂着这个卷的容器，`CopyFromContainer` / `CopyToContainer`。先 `VolumeInspect`：挂载不存在的命名卷会让 Docker 新建它 | — |
 
 一些细节：
 
@@ -65,12 +66,13 @@ phyless 要能浏览任意镜像和任意状态容器里的文件，也要能给
 |---|---|
 | 运行中 | 先以 root（exec `User: 0`，chown 才能用）执行目标自己的 `rm`/`mv`/`chmod`/`chown`；命令不存在（126/127）才退到 pid 浏览容器里的 busybox，路径加 `/proc/1/root` 前缀。普通失败（权限不足、只读文件系统）如实报错，不回退 |
 | 已暂停 | exec 被拒，直接用 pid 浏览容器 |
+| 卷 | 直接用卷的浏览容器里的 busybox |
 | 已停止 | 只能改挂载内的路径，用同一个浏览容器里的 busybox。rootfs 路径一律拒绝：辅助容器的 rootfs 是它自己的可写层，写进去会"成功"而目标没变。还拒绝：只读挂载、tmpfs（停止后没有内容）、跨挂载移动 |
 
 所有状态共用的护栏：
 
 - 挂载点本身、以及其下有挂载点的目录，不能删除或移动（`rm -rf` 会先清空卷，再在忙碌的挂载点上失败）。
-- 经辅助容器 chmod/chown 时，先用 `ContainerStatPath` 拒绝符号链接：busybox 会在辅助容器自己的文件系统里跟随它。
+- 经辅助容器 chmod/chown 时，先在同一个辅助容器里 `busybox stat -c %F` 拒绝符号链接：busybox 会在辅助容器自己的文件系统里跟随它。
 - 写操作超时 2 分钟（列目录是 30 秒）；取浏览容器时要求它剩余寿命不少于本次超时，所以容器到期不会把 `rm -rf` 打断在半路。被提前替换的旧浏览容器照样到期自删；删除目标容器时按 `phyless.container` 标签把它们一并删除，不会占着卷。
 - 运行中容器写完清掉变更缓存；已停止容器只改挂载，挂载不在 diff 里，不清。
 
@@ -78,7 +80,7 @@ compose 和本机配置（宿主文件）的权限修改走 `os.Lchown` + `os.Ch
 
 ## 浏览容器（`debugshell.Pool`）
 
-- **每个 key 一个**：`image:<镜像ID>`、`pid:<容器ID>`、`stopped:<容器ID>`（加上兜底用的 `stopped-novols:<容器ID>`）。同一个 key 的并发请求只创建一次。
+- **每个 key 一个**：`image:<镜像ID>`、`pid:<容器ID>`、`stopped:<容器ID>`、`volume:<卷名>`（加上兜底用的 `stopped-novols:<容器ID>`）。同一个 key 的并发请求只创建一次。
 - **配置**：入口是 `/.phyless/busybox`，Cmd 显式写成 `sleep 300`（避免镜像自己的 CMD 被当成 sleep 的参数）；`User 0`、`NetworkMode none`；关闭 healthcheck（否则会定期运行镜像里的程序）；`AutoRemove`；只读挂载 busybox 卷。
 - **生命周期**：主进程 `sleep 300` 结束时容器自己退出并删除。剩余寿命不足本次操作的超时（列目录 30 秒、写操作 2 分钟）时，换一个新的。phyless 崩溃也不会留下残留，不需要 GC 协程。map 里过期的条目在每次新建时清理。
 - **创建和请求脱钩**：创建过程单独设超时，不受请求取消影响，所以不会留下"已创建但没启动"的容器（`AutoRemove` 只有启动后才生效）。
@@ -98,9 +100,9 @@ compose 和本机配置（宿主文件）的权限修改走 `os.Lchown` + `os.Ch
 
 | 项 | 取值 |
 |---|---|
-| 容器名 | `phyless-autoremove-<用途>[-<目标>]-<6位随机>`，用途为 `browse`、`shell`、`download`、`busybox-init`；目标是容器名或镜像引用，截短并替换成 Docker 允许的字符 |
+| 容器名 | `phyless-autoremove-<用途>[-<目标>]-<6位随机>`，用途为 `browse`、`shell`、`download`、`upload`、`busybox-init`；目标是容器名或镜像引用，截短并替换成 Docker 允许的字符 |
 | 界面提示 | 列目录用到浏览容器时，响应头 `X-Phyless-Helper`（容器名）和 `X-Phyless-Helper-Life`（闲置秒数）告诉文件浏览器显示「由辅助容器读取、闲置后自动删除」；调试终端在开头打印辅助容器名，并说明退出后自动删除 |
-| 标签 | 所有辅助对象都有 `phyless.role=debug`（调试镜像和 busybox 卷也有）；钉住某个镜像的还有 `phyless.image=<镜像ID>`；服务某个容器的（pid、已停止）还有 `phyless.container=<容器ID>` |
+| 标签 | 所有辅助对象都有 `phyless.role=debug`（调试镜像和 busybox 卷也有）；钉住某个镜像的还有 `phyless.image=<镜像ID>`；服务某个容器的（pid、已停止）还有 `phyless.container=<容器ID>`；挂着某个卷的还有 `phyless.volume=<卷名>`，删除卷之前按它清理 |
 | 可见性 | 容器、镜像、卷列表和系统统计都按 `phyless.role` 隐藏；卷的"被谁使用"也不计入浏览容器。在 docker CLI 里能从名字看出它们是什么、会自己删除 |
 
 隐藏的原因：浏览容器每几分钟就换一批，显示出来会让列表频繁变化；避免用户误删正在用的辅助对象；不让辅助对象虚增数量，或者让卷、镜像看起来"被某个陌生容器使用"。self-update 的 `phyless-helper` 用的也是同一个标签（值为 `helper`）。
@@ -112,7 +114,7 @@ compose 和本机配置（宿主文件）的权限修改走 `os.Lchown` + `os.Ch
 | 浏览容器 | 启动 5 分钟后自己删除；删除对应的镜像或容器时立即删除 | 照样 5 分钟后自己删除 |
 | PID 浏览容器 | 同上；目标停止时随之结束 | 同上 |
 | 终端调试容器 | 会话结束时立即删除 | 连接断开后自动删除 |
-| 下载容器、`busybox-init` 容器 | 用完立即删除 | phyless 下次启动时清理，只清理已存在超过 1 小时的（同一个 daemon 上可能还有别的 phyless 实例在用） |
+| 下载、上传容器，`busybox-init` 容器 | 用完立即删除 | phyless 下次启动时清理，只清理已存在超过 1 小时的（同一个 daemon 上可能还有别的 phyless 实例在用） |
 | 调试镜像、busybox 卷 | 常驻，各约 1 MB；被删除后按需重建；旧版本在 phyless 启动时删除 | — |
 | 变更缓存（phyless 内存） | 5 分钟没用就释放 | 随进程释放 |
 

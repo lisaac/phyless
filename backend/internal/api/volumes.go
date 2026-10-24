@@ -3,8 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -15,7 +14,10 @@ import (
 	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/docker/docker/errdefs"
+
 	"phyless/backend/internal/docker"
+	"phyless/backend/internal/docker/debugshell"
 )
 
 // volumeWithUsage adds which containers actually mount a volume — mirrors
@@ -72,17 +74,14 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVolumeDownloadFile(w http.ResponseWriter, r *http.Request) {
-	v, err := s.docker.VolumeInspect(r.Context(), chi.URLParam(r, "id"))
+	p := r.URL.Query().Get("path")
+	rc, err := s.fs.OpenVolume(r.Context(), chi.URLParam(r, "id"), p)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	fullPath := filepath.Join(v.Mountpoint, r.URL.Query().Get("path"))
-	if !isSubPath(v.Mountpoint, fullPath) {
-		writeError(w, http.StatusForbidden, "invalid path")
-		return
-	}
-	serveTar(w, fullPath)
+	defer rc.Close()
+	serveArchive(w, rc, path.Clean("/"+p))
 }
 
 func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +119,10 @@ func (s *Server) handleGetVolume(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	force := r.URL.Query().Get("force") == "true"
+	if err := s.fs.ReleaseVolume(r.Context(), id); err != nil { // its browse helpers would keep it in use
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := s.docker.VolumeRemove(r.Context(), id, force); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -133,36 +136,16 @@ func (s *Server) handleVolumeInspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVolumeListFiles(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	subPath := r.URL.Query().Get("path")
-	v, err := s.docker.VolumeInspect(r.Context(), id)
-	if err != nil {
+	ctx, helper := debugshell.Track(r.Context())
+	entries, err := s.fs.ListVolume(ctx, chi.URLParam(r, "id"), r.URL.Query().Get("path"))
+	setHelperHeader(w, helper())
+	if errdefs.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	root := filepath.Join(v.Mountpoint, subPath)
-	if !isSubPath(v.Mountpoint, root) {
-		writeError(w, http.StatusForbidden, "invalid path")
-		return
-	}
-	entries, err := os.ReadDir(root)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	type fileEntry struct {
-		Name  string `json:"name"`
-		IsDir bool   `json:"is_dir"`
-		Size  int64  `json:"size"`
-	}
-	out := make([]fileEntry, 0, len(entries))
-	for _, e := range entries {
-		info, _ := e.Info()
-		size := int64(0)
-		if info != nil && !e.IsDir() {
-			size = info.Size()
-		}
-		out = append(out, fileEntry{Name: e.Name(), IsDir: e.IsDir(), Size: size})
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, entries)
 }
