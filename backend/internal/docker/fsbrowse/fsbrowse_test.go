@@ -37,6 +37,7 @@ type fakeDocker struct {
 	execs   []string // "container:path"
 	creates []*container.HostConfig
 	exit    map[string]int // exec id → exit code
+	exitFor map[string]int // target command → exit code
 	badVols bool           // creating with VolumesFrom fails (bind source gone)
 }
 
@@ -87,6 +88,9 @@ func (f *fakeDocker) ContainerExecCreate(_ context.Context, id string, o contain
 	}
 	if id == "target" && f.noLs {
 		f.exit[eid] = 126
+	}
+	if c, ok := f.exitFor[p]; ok && id == "target" {
+		f.exit[eid] = c
 	}
 	return container.ExecCreateResponse{ID: eid + "|" + p}, nil
 }
@@ -144,8 +148,8 @@ func running(noLs bool) *fakeDocker {
 func TestListRunningContainerUsesItsOwnLs(t *testing.T) {
 	f := running(false)
 	got, err := New(f).ListContainer(context.Background(), "target", "/etc")
-	// Its own ls lists; the only box is the PID-sharing one reading processes.
-	if err != nil || names(got) != "hosts" || len(f.creates) != 1 || f.creates[0].PidMode != "container:target" || f.execs[0] != "target:/etc/" {
+	// Its own ls lists and its own sh reads processes: no box at all.
+	if err != nil || names(got) != "hosts" || len(f.creates) != 0 || f.execs[0] != "target:/etc/" || f.execs[1] != "target:"+ownExeScript {
 		t.Fatalf("got=%v err=%v creates=%d execs=%v", names(got), err, len(f.creates), f.execs)
 	}
 	// That box must not be mistaken for "the target has no ls".
@@ -158,7 +162,7 @@ func TestRunningExecutablesAndTheirDirectoriesAreTagged(t *testing.T) {
 	f := running(false)
 	f.ls["/usr/sbin"] = lsLines("nginx", "other")
 	f.ls["/usr"] = lsLines("sbin/", "lib/")
-	f.ls[exeScript] = "/usr/sbin/nginx\n/usr/sbin/nginx\n/.phyless/busybox\n"
+	f.ls[ownExeScript] = "/usr/sbin/nginx\n/usr/sbin/nginx\n"
 	fs := New(f)
 	sbin, err := fs.ListContainer(context.Background(), "target", "/usr/sbin")
 	if err != nil || !sbin[0].Run || sbin[1].Run {
@@ -172,12 +176,23 @@ func TestRunningExecutablesAndTheirDirectoriesAreTagged(t *testing.T) {
 	}
 	scripts := 0
 	for _, e := range f.execs {
-		if strings.HasSuffix(e, exeScript) {
+		if strings.HasSuffix(e, ownExeScript) {
 			scripts++
 		}
 	}
-	if scripts != 1 {
-		t.Fatalf("processes read %d times within runsTTL", scripts)
+	if scripts != 1 || len(f.creates) != 0 {
+		t.Fatalf("processes read %d times within runsTTL, creates=%d", scripts, len(f.creates))
+	}
+}
+
+func TestRunTagsFallBackToPidBoxWithoutReadlink(t *testing.T) {
+	f := running(false)
+	f.ls[exeScript] = "/usr/sbin/nginx\n/.phyless/busybox\n"
+	f.exitFor = map[string]int{ownExeScript: 127}
+	fs := New(f)
+	exes := fs.runs.get(context.Background(), fs, f.target)
+	if !slices.Equal(exes, []string{"/usr/sbin/nginx"}) || len(f.creates) != 1 || f.creates[0].PidMode != "container:target" {
+		t.Fatalf("exes=%v creates=%+v", exes, f.creates)
 	}
 }
 

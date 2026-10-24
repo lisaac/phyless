@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 
+	ctr "phyless/backend/internal/docker/container"
 	"phyless/backend/internal/docker/debugshell"
 )
 
@@ -19,6 +20,11 @@ const runsTTL = 10 * time.Second
 // readlink shows each path as the process's own mount namespace sees it,
 // so it reads like a path inside the target.
 var exeScript = `for e in /proc/[0-9]*/exe; do ` + debugshell.Busybox + ` readlink "$e"; done; true`
+
+// ownExeScript is exeScript run by the target's own shell, skipping that shell
+// (the readlinks start after the glob, so they are never listed). Exit 127
+// without readlink, so a missing tool falls back instead of tagging nothing.
+const ownExeScript = `command -v readlink >/dev/null || exit 127; for e in /proc/[0-9]*; do [ "$e" = /proc/$$ ] || readlink "$e/exe"; done; true`
 
 type runs struct {
 	at   time.Time
@@ -44,9 +50,11 @@ func (c *runCache) get(ctx context.Context, f *FS, t container.InspectResponse) 
 	if ok && time.Since(r.at) < runsTTL {
 		return r.exes
 	}
-	out, err := f.pool.Run(ctx, pidKey(t.ID), pidSpec(t), "sh", "-c", exeScript)
+	out, err := f.ownExes(ctx, t)
 	if err != nil {
-		return nil
+		if out, err = f.pool.Run(ctx, pidKey(t.ID), pidSpec(t), "sh", "-c", exeScript); err != nil {
+			return nil
+		}
 	}
 	r = runs{at: time.Now()}
 	box := path.Dir(debugshell.Busybox) + "/"
@@ -69,4 +77,20 @@ func (c *runCache) get(ctx context.Context, f *FS, t container.InspectResponse) 
 	c.m[t.ID] = r
 	c.mu.Unlock()
 	return r.exes
+}
+
+// ownExes reads t's executables with its own sh and readlink, so a container
+// that has them never needs a browse container just for the run tags.
+func (f *FS) ownExes(ctx context.Context, t container.InspectResponse) (string, error) {
+	if t.State.Paused || f.lacksLs(t.ID) { // exec refused / no coreutils either
+		return "", ctr.ErrExecNotFound
+	}
+	stdout, _, code, err := ctr.ExecCapture(ctx, f.cli, t.ID, []string{"sh", "-c", ownExeScript})
+	if err == nil && code != 0 {
+		err = ctr.ErrExecNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return stdout.String(), nil
 }
