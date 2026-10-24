@@ -24,7 +24,7 @@ func TestWriteRunningUsesItsOwnToolAsRoot(t *testing.T) {
 
 func TestWriteFallsBackToBusyboxInPidBox(t *testing.T) {
 	f := running(true) // own tools exit 126
-	if err := New(f).Chmod(context.Background(), Container("target"), "/etc/hosts", "0644", true); err != nil {
+	if err := New(f).SetPerm(context.Background(), Container("target"), "/etc/hosts", "0644", "", true); err != nil {
 		t.Fatal(err)
 	}
 	last := f.cmds[len(f.cmds)-1]
@@ -34,7 +34,7 @@ func TestWriteFallsBackToBusyboxInPidBox(t *testing.T) {
 
 	f = running(false)
 	f.target.State.Paused = true // exec refused: straight to the box
-	if err := New(f).Chown(context.Background(), Container("target"), "/x", "1000:1000", false); err != nil {
+	if err := New(f).SetPerm(context.Background(), Container("target"), "/x", "", "1000:1000", false); err != nil {
 		t.Fatal(err)
 	}
 	// stat (symlink check) then chown, both in the box.
@@ -46,7 +46,7 @@ func TestWriteFallsBackToBusyboxInPidBox(t *testing.T) {
 func TestWriteRefusesSymlinkInBox(t *testing.T) {
 	f := running(true)
 	f.ls["/bin/sh"] = "symbolic link\n" // busybox stat -c %F
-	if err := New(f).Chmod(context.Background(), Container("target"), "/bin/sh", "755", false); err == nil || !strings.Contains(err.Error(), "符号链接") {
+	if err := New(f).SetPerm(context.Background(), Container("target"), "/bin/sh", "755", "", false); err == nil || !strings.Contains(err.Error(), "符号链接") {
 		t.Fatalf("err=%v", err)
 	}
 	if last := f.cmds[len(f.cmds)-1]; !strings.Contains(last, "stat -c %F /proc/1/root/bin/sh") {
@@ -67,12 +67,12 @@ func TestWriteStoppedOnlyInsideWritableMounts(t *testing.T) {
 	}
 	for name, err := range map[string]error{
 		"rootfs":      fs.Remove(ctx, Container("target"), "/etc/hosts"),
-		"read-only":   fs.Chmod(ctx, Container("target"), "/conf/x", "644", false),
+		"read-only":   fs.SetPerm(ctx, Container("target"), "/conf/x", "644", "", false),
 		"cross-mount": fs.Rename(ctx, Container("target"), "/data/a", "/cache/a"),
 		"mount point": fs.Remove(ctx, Container("target"), "/data"),
 		"holds mount": fs.Rename(ctx, Container("target"), "/", "/x"),
-		"bad mode":    fs.Chmod(ctx, Container("target"), "/data/a", "8", false),
-		"bad owner":   fs.Chown(ctx, Container("target"), "/data/a", "root", false),
+		"bad mode":    fs.SetPerm(ctx, Container("target"), "/data/a", "8", "", false),
+		"bad owner":   fs.SetPerm(ctx, Container("target"), "/data/a", "", "root", false),
 		"relative":    fs.Remove(ctx, Container("target"), "data/a"),
 	} {
 		if err == nil {
@@ -128,5 +128,22 @@ func TestBoxErrStripsRootButStaysMatchable(t *testing.T) {
 	err := boxErr(fmt.Errorf("%w: "+volRoot+"/x", ctr.ErrUploadTooLarge), volRoot)
 	if err.Error() != ctr.ErrUploadTooLarge.Error()+": /x" || !errors.Is(err, ctr.ErrUploadTooLarge) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestSetPermChownsBeforeChmodAfterOneSymlinkCheck(t *testing.T) {
+	f := running(true) // own tools missing: the first one falls back
+	if err := New(f).SetPerm(context.Background(), Container("target"), "/x", "4755", "1:2", false); err != nil {
+		t.Fatal(err)
+	}
+	var box []string
+	for _, c := range f.cmds {
+		if strings.HasPrefix(c, "box") {
+			box = append(box, c[strings.Index(c, "busybox ")+8:])
+		}
+	}
+	want := []string{"stat -c %F /proc/1/root/x", "chown -- 1:2 /proc/1/root/x", "chmod -- 4755 /proc/1/root/x"}
+	if strings.Join(box, "|") != strings.Join(want, "|") {
+		t.Fatalf("box cmds=%v", box)
 	}
 }

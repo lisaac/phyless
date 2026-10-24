@@ -289,6 +289,10 @@ func (p *Pool) start(ctx context.Context, spec Spec) (string, string, error) {
 // never races a browse container's expiry. The caller removes it; one a crash
 // leaves behind is pruned at startup.
 func CreateIdle(ctx context.Context, cli client.APIClient, purpose string, spec Spec) (string, error) {
+	// Detached like start: a request dropped mid-create must not lose the ID
+	// of a container Docker did create.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), opTimeout)
+	defer cancel()
 	labels := maps.Clone(spec.Labels)
 	if labels == nil {
 		labels = map[string]string{}

@@ -3,6 +3,7 @@ import type { FileEntry, FileListing } from "../../types";
 import { confirmAction } from "./ConfirmModal";
 import { filesWindowUrl, openPopup, type FileSourceRef } from "../../api/fileSources";
 import { editPermissions, type ChmodBody } from "./PermissionModal";
+import { toast } from "./Toast";
 
 function fmtSize(b: number): string {
   if (b < 1024) return `${b}B`;
@@ -242,7 +243,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
 
   const doChmod = async (e: FileEntry) => {
     const body = props.onChmod && await editPermissions(e, join(e.name));
-    if (body) { await props.onChmod!(body); refetch(); }
+    if (body) try { await props.onChmod!(body); } finally { refetch(); }
   };
   // Mirrors the backend: a stopped container changes only inside mounts, and
   // a mount point (or a dir holding one) is never deleted or moved.
@@ -250,13 +251,16 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
   const movable = (e: FileEntry) => writable(e) && !e.mount_below && e.mount?.destination !== join(e.name);
 
   const commitRename = async (e: FileEntry) => {
+    if (renamingName() !== e.name) return; // Enter already committed; this is the input's blur
     const newName = renameVal().trim();
-    if (newName && newName !== e.name && props.onRename) {
-      const dir = path().endsWith("/") ? path() : path() + "/";
-      await props.onRename(dir + e.name, dir + newName);
-      refetch();
-    }
     setRenamingName(null);
+    if (!newName || newName === e.name || !props.onRename) return;
+    // mv/rename would silently replace it, or move into it if it is a dir.
+    if (newName.includes("/") || entries.latest?.some((x) => x.name === newName)) {
+      toast.error(newName.includes("/") ? "名称不能包含 /" : `${newName} 已存在`);
+      return;
+    }
+    try { await props.onRename(join(e.name), join(newName)); } finally { refetch(); }
   };
 
   const segs = () => pathSegments(path());
@@ -382,7 +386,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
       <Show when={helper()}>
         {(h) => (
           <p class="mb-2 border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300">
-            此列表由辅助容器 <span class="break-all font-mono">{h().name}</span> 读取（目标内无 ls、未运行或是镜像），不修改目标，闲置 {Math.round(h().life / 60) || "几"} 分钟后自动删除。
+            此列表由辅助容器 <span class="break-all font-mono">{h().name}</span> 读取（目标内无 ls、未运行，或是镜像、卷），不修改目标，闲置 {Math.round(h().life / 60) || "几"} 分钟后自动删除。
           </p>
         )}
       </Show>

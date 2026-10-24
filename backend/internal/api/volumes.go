@@ -76,6 +76,10 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVolumeDownloadFile(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Query().Get("path")
 	rc, err := s.fs.OpenVolume(r.Context(), chi.URLParam(r, "id"), p)
+	if errdefs.IsNotFound(err) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

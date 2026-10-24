@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@solidjs/testing-library";
+import { fireEvent, render } from "@solidjs/testing-library";
 import { FileBrowser } from "./FileBrowser";
 import { modeToOctal } from "./PermissionModal";
 
@@ -40,5 +40,27 @@ describe("modeToOctal", () => {
     expect(modeToOctal("-rwsr-sr-t")).toBe("7755");
     expect(modeToOctal("-rwSr--r-T")).toBe("5644");
     expect(modeToOctal("")).toBe("");
+  });
+});
+
+describe("FileBrowser rename", () => {
+  it("refuses a name that already exists and commits once", async () => {
+    const listPath = vi.fn().mockResolvedValue([
+      { name: "a", is_dir: false, size: 0 },
+      { name: "b", is_dir: false, size: 0 },
+    ]);
+    const onRename = vi.fn().mockResolvedValue(undefined);
+    const { findAllByText, container } = render(() => <FileBrowser listPath={listPath} onRename={onRename} />);
+    const rename = async (to: string) => {
+      (await findAllByText("重命名"))[0].click();
+      const input = container.querySelector("tbody input") as HTMLInputElement;
+      fireEvent.input(input, { target: { value: to } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.blur(input);
+    };
+    await rename("b");
+    expect(onRename).not.toHaveBeenCalled();
+    await rename("c");
+    expect(onRename.mock.calls).toEqual([["/a", "/c"]]);
   });
 });

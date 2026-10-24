@@ -42,35 +42,37 @@ func ValidOwner(owner string) bool { return ownerRe.MatchString(owner) }
 
 // Remove deletes p (recursively).
 func (f *FS) Remove(ctx context.Context, t Target, p string) error {
-	return f.write(ctx, t, write{cmd: "rm", flags: []string{"-rf"}, paths: []string{p}, moves: true})
+	return f.write(ctx, t, []string{p}, true, write{cmd: "rm", flags: []string{"-rf"}})
 }
 
 // Rename moves from to to.
 func (f *FS) Rename(ctx context.Context, t Target, from, to string) error {
-	return f.write(ctx, t, write{cmd: "mv", paths: []string{from, to}, moves: true})
+	return f.write(ctx, t, []string{from, to}, true, write{cmd: "mv"})
 }
 
-// Chmod sets p's mode, an octal string like "0755".
-func (f *FS) Chmod(ctx context.Context, t Target, p, mode string, recursive bool) error {
-	if !ValidMode(mode) {
-		return fmt.Errorf("权限须为 3 或 4 位八进制数: %q", mode)
+// SetPerm sets p's owner ("uid" or "uid:gid") and/or mode (octal like
+// "4755"); "" keeps either. chown runs first: it clears setuid/setgid.
+func (f *FS) SetPerm(ctx context.Context, t Target, p, mode, owner string, recursive bool) error {
+	var flags []string
+	if recursive {
+		flags = []string{"-R"}
 	}
-	return f.write(ctx, t, write{cmd: "chmod", flags: recursiveFlag(recursive), arg: mode, paths: []string{p}})
-}
-
-// Chown sets p's owner, "uid" or "uid:gid".
-func (f *FS) Chown(ctx context.Context, t Target, p, owner string, recursive bool) error {
-	if !ValidOwner(owner) {
+	var ws []write
+	switch {
+	case mode == "" && owner == "":
+		return errors.New("未指定权限或属主")
+	case mode != "" && !ValidMode(mode):
+		return fmt.Errorf("权限须为 3 或 4 位八进制数: %q", mode)
+	case owner != "" && !ValidOwner(owner):
 		return fmt.Errorf("属主须为数字 uid 或 uid:gid: %q", owner)
 	}
-	return f.write(ctx, t, write{cmd: "chown", flags: recursiveFlag(recursive), arg: owner, paths: []string{p}})
-}
-
-func recursiveFlag(on bool) []string {
-	if on {
-		return []string{"-R"}
+	if owner != "" {
+		ws = append(ws, write{cmd: "chown", flags: flags, arg: owner})
 	}
-	return nil
+	if mode != "" {
+		ws = append(ws, write{cmd: "chmod", flags: flags, arg: mode})
+	}
+	return f.write(ctx, t, []string{p}, false, ws...)
 }
 
 // write is `cmd flags -- [arg] paths...`.
@@ -78,28 +80,36 @@ type write struct {
 	cmd   string
 	flags []string
 	arg   string // mode/owner; "" for none
-	paths []string
-	moves bool // rm/mv: a mount point, or a directory holding one, must stay
 }
 
-func (w write) argv(root string) []string {
+func (w write) argv(root string, paths []string) []string {
 	out := append([]string{w.cmd}, w.flags...)
 	out = append(out, "--")
 	if w.arg != "" {
 		out = append(out, w.arg)
 	}
-	for _, p := range w.paths {
+	for _, p := range paths {
 		out = append(out, root+p)
 	}
 	return out
 }
 
-func (f *FS) write(ctx context.Context, target Target, w write) error {
-	for i, p := range w.paths {
+// op is one change: its commands, in order, on the same paths after a single
+// inspect (and, in a box, a single symlink check). moves: rm/mv, where a
+// mount point or a directory holding one must stay.
+type op struct {
+	paths []string
+	moves bool
+	ws    []write
+}
+
+func (f *FS) write(ctx context.Context, target Target, paths []string, moves bool, ws ...write) error {
+	o := op{paths: make([]string, len(paths)), moves: moves, ws: ws}
+	for i, p := range paths {
 		if p == "" || strings.ContainsRune(p, 0) || !path.IsAbs(p) {
 			return fmt.Errorf("路径须为绝对路径: %q", p)
 		}
-		if w.paths[i] = path.Clean(p); w.paths[i] == "/" {
+		if o.paths[i] = path.Clean(p); o.paths[i] == "/" {
 			return errors.New("不能修改根目录")
 		}
 	}
@@ -107,7 +117,7 @@ func (f *FS) write(ctx context.Context, target Target, w write) error {
 		if err := f.volume(ctx, target.volume); err != nil {
 			return err
 		}
-		return f.writeBox(ctx, volumeKey(target.volume), volumeSpec(target.volume), volRoot, w)
+		return f.writeBox(ctx, volumeKey(target.volume), volumeSpec(target.volume), volRoot, o)
 	}
 	t, err := f.cli.ContainerInspect(ctx, target.container)
 	if err != nil {
@@ -116,29 +126,42 @@ func (f *FS) write(ctx context.Context, target Target, w write) error {
 	if t.ContainerJSONBase == nil || t.State == nil {
 		return fmt.Errorf("容器状态未知: %s", target.container)
 	}
-	if w.moves {
-		for _, p := range w.paths {
+	if o.moves {
+		for _, p := range o.paths {
 			if err := keepsMounts(t.Mounts, p); err != nil {
 				return err
 			}
 		}
 	}
 	if !t.State.Running {
-		return f.writeStopped(ctx, t, w)
+		return f.writeStopped(ctx, t, o)
 	}
 	defer f.Invalidate() // a running container's diff changed
 	if !t.State.Paused {
-		err := ctr.ExecRoot(ctx, f.cli, t.ID, w.argv(""))
+		err := f.writeOwn(ctx, t.ID, o)
 		if !errors.Is(err, ctr.ErrExecNotFound) {
 			return err
 		}
 	}
-	return f.writeBox(ctx, pidKey(t.ID), pidSpec(t), debugshell.TargetRoot(t), w)
+	return f.writeBox(ctx, pidKey(t.ID), pidSpec(t), debugshell.TargetRoot(t), o)
 }
 
-func (f *FS) writeStopped(ctx context.Context, t container.InspectResponse, w write) error {
+// writeOwn runs o with the target's own tools. Missing ones surface as
+// ErrExecNotFound before anything changed — unless a later command of o is
+// the missing one, which then runs in the box after the first already did:
+// harmless, as each command is idempotent.
+func (f *FS) writeOwn(ctx context.Context, id string, o op) error {
+	for _, w := range o.ws {
+		if err := ctr.ExecRoot(ctx, f.cli, id, w.argv("", o.paths)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *FS) writeStopped(ctx context.Context, t container.InspectResponse, o op) error {
 	var mount string
-	for _, p := range w.paths {
+	for _, p := range o.paths {
 		m, ok := mountOf(t.Mounts, p)
 		switch {
 		case !ok:
@@ -153,23 +176,28 @@ func (f *FS) writeStopped(ctx context.Context, t container.InspectResponse, w wr
 		mount = m.Destination
 	}
 	// No Invalidate: mounts are not part of the container's diff.
-	return f.writeBox(ctx, stoppedKey(t.ID), stoppedSpec(t), "", w)
+	return f.writeBox(ctx, stoppedKey(t.ID), stoppedSpec(t), "", o)
 }
 
 // writeBox runs w with busybox in key's browse container, where the target's
 // files are under root. chmod/chown refuse a symlink first: busybox would
 // follow it in the box's own filesystem, not the target's.
-func (f *FS) writeBox(ctx context.Context, key string, spec debugshell.Spec, root string, w write) error {
-	if w.cmd == "chmod" || w.cmd == "chown" {
-		kind, err := f.pool.Run(ctx, key, spec, "stat", "-c", "%F", root+w.paths[0])
+func (f *FS) writeBox(ctx context.Context, key string, spec debugshell.Spec, root string, o op) error {
+	if !o.moves {
+		kind, err := f.pool.Run(ctx, key, spec, "stat", "-c", "%F", root+o.paths[0])
 		if err != nil {
 			return boxErr(err, root)
 		}
 		if strings.TrimSpace(kind) == "symbolic link" {
-			return fmt.Errorf("%s 是符号链接，请修改它指向的文件", w.paths[0])
+			return fmt.Errorf("%s 是符号链接，请修改它指向的文件", o.paths[0])
 		}
 	}
-	return boxErr(f.pool.Write(ctx, key, spec, w.argv(root)...), root)
+	for _, w := range o.ws {
+		if err := f.pool.Write(ctx, key, spec, w.argv(root, o.paths)...); err != nil {
+			return boxErr(err, root)
+		}
+	}
+	return nil
 }
 
 // keepsMounts refuses to remove or move a mount point or a directory holding

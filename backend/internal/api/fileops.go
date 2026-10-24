@@ -52,14 +52,7 @@ func (s *Server) handleChmodFile(kind string) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		t := fileTarget(kind, r)
-		var err error
-		if body.Mode != "" {
-			err = s.fs.Chmod(r.Context(), t, body.Path, body.Mode, body.Recursive)
-		}
-		if err == nil && body.Owner != "" {
-			err = s.fs.Chown(r.Context(), t, body.Path, body.Owner, body.Recursive)
-		}
+		err := s.fs.SetPerm(r.Context(), fileTarget(kind, r), body.Path, body.Mode, body.Owner, body.Recursive)
 		s.fileOp(w, r, kind+".file.chmod", chi.URLParam(r, "id")+":"+body.String(), err)
 	}
 }
