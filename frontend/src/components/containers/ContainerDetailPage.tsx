@@ -722,6 +722,7 @@ export const ContainerDetailPage: Component = () => {
           onCopyToContainer={hasRole("operator") ? (path) => setCopySource({ containerId: id(), path }) : undefined}
           initialPath={fileInitialPath()}
           initialDiff={searchParams.diff === "1"}
+          onDiffChange={(on) => setSearchParams({ diff: on ? "1" : undefined }, { replace: true })}
           onPathChange={onFilePathChange}
         />
       </Show>
@@ -769,6 +770,6 @@ export const ContainerDetailPage: Component = () => {
 // Image layers plus the writable layer. size=1 makes Docker walk the
 // writable layer, so it is fetched only while this tab is open.
 const ContainerLayers: Component<{ id: string; image: string; onShow: () => void }> = (p) => {
-  const [sized] = createResource(() => p.id, (i) => get<{ SizeRw?: number }>(`/api/containers/${i}/inspect?size=1`).catch(() => ({ SizeRw: undefined })));
-  return <LayerTable image={p.image} writable={{ size: settled(sized)?.SizeRw, loading: sized.loading, onShow: p.onShow }} />;
+  const [sized] = createResource(() => p.id, (i) => get<{ SizeRw?: number }>(`/api/containers/${i}/inspect?size=1`).catch(() => null));
+  return <LayerTable image={p.image} writable={{ size: settled(sized)?.SizeRw, loading: sized.loading, failed: settled(sized) === null, onShow: p.onShow }} />;
 };

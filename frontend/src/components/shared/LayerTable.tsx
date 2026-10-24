@@ -48,7 +48,7 @@ const Cmd: Component<{ text: string; raw: string; dim: boolean }> = (p) => {
  *  passes `writable` to add its own writable layer on top. */
 export const LayerTable: Component<{
   image: string;
-  writable?: { size?: number; loading?: boolean; onShow?: () => void };
+  writable?: { size?: number; loading?: boolean; failed?: boolean; onShow?: () => void };
 }> = (p) => {
   const [res] = createResource(() => p.image, async (id) => {
     try { return { items: await get<HistoryItem[]>(`/api/images/history?id=${encodeURIComponent(id)}`) }; }
@@ -65,7 +65,7 @@ export const LayerTable: Component<{
       fallback={<p class={settled(res)?.error ? "text-xs text-red-400" : "text-xs text-zinc-500"}>{settled(res)?.error ? `加载失败：${settled(res)!.error!.message}` : "加载中…"}</p>}
     >
       <p class="mb-2 text-xs text-zinc-500">
-        <Show when={p.writable}>可写层 {p.writable!.loading ? "计算中…" : fmtBytes(p.writable!.size)} · </Show>
+        <Show when={p.writable}>可写层 {p.writable!.loading ? "计算中…" : p.writable!.failed ? "获取失败" : fmtBytes(p.writable!.size)} · </Show>
         镜像 {items().length} 层（{fileLayers()} 层含文件，其余只改元数据），合计 {fmtBytes(total())}
       </p>
       <div class="border border-zinc-800">

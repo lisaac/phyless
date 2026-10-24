@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/go-chi/chi/v5"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"golang.org/x/sync/singleflight"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
 )
@@ -350,11 +352,20 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	// size=1 adds SizeRw/SizeRootFs; Docker walks the writable layer for it,
-	// so only the 层 tab asks.
+	// so only the 层 tab asks, and concurrent asks for one container share a
+	// walk. The daemon finishes the walk even if the client goes away, so the
+	// shared call ignores the first caller's cancellation.
 	var info container.InspectResponse
 	var err error
 	if r.URL.Query().Get("size") == "1" {
-		info, _, err = s.docker.ContainerInspectWithRaw(r.Context(), id, true)
+		var v any
+		v, err, _ = containerSizeFlight.Do(id, func() (any, error) {
+			i, _, err := s.docker.ContainerInspectWithRaw(context.WithoutCancel(r.Context()), id, true)
+			return i, err
+		})
+		if err == nil {
+			info = v.(container.InspectResponse)
+		}
 	} else {
 		info, err = s.docker.ContainerInspect(r.Context(), id)
 	}
@@ -376,6 +387,8 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
+var containerSizeFlight singleflight.Group
 
 func (s *Server) handleDeleteContainer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

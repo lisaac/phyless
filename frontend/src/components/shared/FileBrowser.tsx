@@ -69,8 +69,10 @@ interface FileBrowserProps {
   onCopyToContainer?: (fullPath: string) => void;
   onOpenFile?: (fullSubPath: string) => void;
   initialPath?: string;
-  // Start with the diff toggle on (container 层 tab's "查看改动").
+  // Start with the diff toggle on (container 层 tab's "查看改动"); the owner
+  // keeps it in the URL via onDiffChange so it restores like the path.
   initialDiff?: boolean;
+  onDiffChange?: (on: boolean) => void;
   onPathChange?: (path: string) => void;
   // Identifies which entity (e.g. container id) is being browsed. The page
   // that owns FileBrowser often doesn't remount across navigations (Solid
@@ -345,7 +347,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
           <button
             class={`shrink-0 px-2 py-0.5 text-xs transition-colors ${diff() ? "bg-indigo-500/15 text-indigo-300" : "text-zinc-500 hover:text-zinc-200"}`}
             title="只显示相对镜像的改动（A 新增 / C 修改 / D 删除）"
-            onClick={() => setDiff((d) => !d)}
+            onClick={() => { setDiff((d) => !d); props.onDiffChange?.(diff()); }}
           >± diff</button>
           <Show when={diff()}>
             <For each={CHANGES}>
