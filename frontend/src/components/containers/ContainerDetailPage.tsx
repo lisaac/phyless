@@ -34,6 +34,7 @@ import { ComposeIcon } from "../compose/composeShared";
 import type { NetworkSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 import { ImageLink } from "../shared/Inspect";
+import { LayerTable } from "../shared/LayerTable";
 import { Modal } from "../shared/Modal";
 import { Button } from "../shared/Button";
 import { settled } from "../../stores/resource";
@@ -57,11 +58,12 @@ const STATE_ZH: Record<string, string> = {
   exited: "已停止", dead: "已终止", created: "已创建", removing: "删除中",
 };
 
-type Tab = "info" | "stats" | "files" | "logs" | "inspect";
+type Tab = "info" | "stats" | "files" | "layers" | "logs" | "inspect";
 const TABS: { key: Tab; label: string; requiresRunning?: true }[] = [
   { key: "info",    label: "基本信息" },
   { key: "stats",   label: "状态",    requiresRunning: true },
   { key: "files",   label: "文件"   },
+  { key: "layers",  label: "层"     },
   { key: "logs",    label: "日志"   },
   { key: "inspect", label: "Inspect" },
 ];
@@ -719,10 +721,16 @@ export const ContainerDetailPage: Component = () => {
           initialPath={fileInitialPath()}
           onPathChange={onFilePathChange}
         />
+          initialDiff={searchParams.diff === "1"}
       </Show>
 
       {/* ── Tab: 日志 ──────────────────────────────────────────────────────── */}
       <Show when={tab() === "logs"}>
+      {/* ── Tab: 层 ────────────────────────────────────────────────────────── */}
+      <Show when={tab() === "layers" && inspect()?.Image}>
+        {(image) => <ContainerLayers id={id()} image={image()} onShow={() => setSearchParams({ tab: "files", path: "/", diff: "1" }, { replace: true })} />}
+      </Show>
+
         <div class="mb-2"><TimeRangePicker initial="1h" onChange={setLogRange} /></div>
         <LogsView wsUrl={appendTimeRange(`/ws/containers/${id()}/logs`, logRange())} />
       </Show>
@@ -754,4 +762,11 @@ export const ContainerDetailPage: Component = () => {
     </div>
     </Show>
   );
+};
+
+// Image layers plus the writable layer. size=1 makes Docker walk the
+// writable layer, so it is fetched only while this tab is open.
+const ContainerLayers: Component<{ id: string; image: string; onShow: () => void }> = (p) => {
+  const [sized] = createResource(() => p.id, (i) => get<{ SizeRw?: number }>(`/api/containers/${i}/inspect?size=1`).catch(() => ({ SizeRw: undefined })));
+  return <LayerTable image={p.image} writable={{ size: settled(sized)?.SizeRw, loading: sized.loading, onShow: p.onShow }} />;
 };

@@ -12,7 +12,9 @@ export const cname = (c: { Names?: string[] }) => (c.Names?.[0] ?? "").replace(/
 
 export function fmtBytes(b: number | undefined): string {
   if (!b) return "—";
-  return b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${(b / 1e6).toFixed(1)} MB`;
+  if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
+  if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`;
+  return b >= 1e3 ? `${(b / 1e3).toFixed(1)} kB` : `${b} B`;
 }
 
 /** Unix seconds or an ISO string → local "YYYY/MM/DD hh:mm". */

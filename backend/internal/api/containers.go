@@ -351,7 +351,15 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	info, err := s.docker.ContainerInspect(r.Context(), id)
+	// size=1 adds SizeRw/SizeRootFs; Docker walks the writable layer for it,
+	// so only the 层 tab asks.
+	var info container.InspectResponse
+	var err error
+	if r.URL.Query().Get("size") == "1" {
+		info, _, err = s.docker.ContainerInspectWithRaw(r.Context(), id, true)
+	} else {
+		info, err = s.docker.ContainerInspect(r.Context(), id)
+	}
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return

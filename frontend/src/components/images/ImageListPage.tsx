@@ -11,6 +11,7 @@ import { RemoteImageSearch } from "./RemoteImageSearch";
 import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { createListView, SearchBox, LoadMore, SortHead, More, by } from "../shared/ListView";
 import { SourceFileBrowser } from "../shared/SourceFileBrowser";
+import { LayerTable } from "../shared/LayerTable";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
 import { getToken } from "../../api/client";
@@ -122,6 +123,7 @@ export const ImageListPage: Component = () => {
   const [tagFor, setTagFor] = createSignal<ImageSummary | null>(null);
   const [tagVal, setTagVal] = createSignal("");
   const [filesFor, setFilesFor] = createSignal<ImageSummary | null>(null);
+  const [layersFor, setLayersFor] = createSignal<ImageSummary | null>(null);
   const download = createDownloadTask();
   const [createFrom, setCreateFrom] = createSignal<ImageSummary | null>(null);
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
@@ -388,6 +390,9 @@ export const ImageListPage: Component = () => {
                       <IBtn title="文件" onClick={() => setFilesFor(img)}>
                         <Ico path="M3 7v13a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z" />
                       </IBtn>
+                      <IBtn title="层：每层大小与层命令" onClick={() => setLayersFor(img)}>
+                        <Ico path="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                      </IBtn>
                       <Show when={hasRole("operator")}>
                         <IBtn title="新增标签" onClick={() => { setTagFor(img); setTagVal(""); }}>
                           <Ico path="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" />
@@ -566,6 +571,14 @@ export const ImageListPage: Component = () => {
           {(img) => (<>
             <ImageInfo img={img()} />
             <SourceFileBrowser src={{ kind: "image", id: img().Id, name: imgLabel(img()) }} download={download} />
+          </>)}
+        </Show>
+      </Modal>
+      <Modal open={!!layersFor()} onClose={() => setLayersFor(null)} title={`镜像层 · ${layersFor() ? imgLabel(layersFor()!) : ""}`} wide>
+        <Show when={layersFor()}>
+          {(img) => (<>
+            <ImageInfo img={img()} />
+            <LayerTable image={img().Id} />
           </>)}
         </Show>
       </Modal>

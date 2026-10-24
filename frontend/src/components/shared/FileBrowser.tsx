@@ -69,6 +69,8 @@ interface FileBrowserProps {
   // Identifies which entity (e.g. container id) is being browsed. The page
   // that owns FileBrowser often doesn't remount across navigations (Solid
   // Router reuses the same component instance for e.g. /containers/:id when
+  // Start with the diff toggle on (container 层 tab's "查看改动").
+  initialDiff?: boolean;
   // only :id changes), so without this, switching to a different container
   // whose file browser happens to already sit at the same path would never
   // refetch — leaving the previous container's stale listing on screen while
@@ -97,7 +99,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
     props.instanceKey;
     setPath(props.initialPath ?? "/");
   });
-  const [diff, setDiff] = createSignal(false);
+  const [diff, setDiff] = createSignal(!!props.initialDiff && !!props.listDiff);
   const [mountOnly, setMountOnly] = createSignal(false);
   const [kinds, setKinds] = createSignal<Set<Change>>(new Set(CHANGES));
   const toggleKind = (k: Change) => setKinds((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
