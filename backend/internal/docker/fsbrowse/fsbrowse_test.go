@@ -34,7 +34,9 @@ type fakeDocker struct {
 	ls      map[string]string // path → ls -la output (any container)
 	diff    []container.FilesystemChange
 	diffs   int
-	execs   []string // "container:path"
+	execs   []string          // "container:path"
+	cmds    []string          // "container user: argv"
+	links   map[string]string // path → symlink target, for StatPath
 	creates []*container.HostConfig
 	exit    map[string]int // exec id → exit code
 	exitFor map[string]int // target command → exit code
@@ -72,6 +74,9 @@ func (f *fakeDocker) ContainerDiff(context.Context, string) ([]container.Filesys
 	return f.diff, nil
 }
 func (f *fakeDocker) ContainerStatPath(_ context.Context, _ string, p string) (container.PathStat, error) {
+	if l, ok := f.links[p]; ok {
+		return container.PathStat{Name: p, Mode: os.ModeSymlink | 0o777, LinkTarget: l}, nil
+	}
 	if p == "/app" {
 		return container.PathStat{Name: "app", Mode: os.ModeDir | 0o755}, nil
 	}
@@ -82,6 +87,7 @@ func (f *fakeDocker) ContainerExecCreate(_ context.Context, id string, o contain
 	defer f.mu.Unlock()
 	p := o.Cmd[len(o.Cmd)-1]
 	f.execs = append(f.execs, id+":"+p)
+	f.cmds = append(f.cmds, id+" "+o.User+": "+strings.Join(o.Cmd, " "))
 	eid := fmt.Sprintf("e%d", len(f.execs))
 	if f.exit == nil {
 		f.exit = map[string]int{}
@@ -255,7 +261,7 @@ func TestListStoppedContainerMergesImageWithChanges(t *testing.T) {
 		t.Fatal("deleted directory listed")
 	}
 	// One box — its image with its volumes — served every path.
-	if len(f.creates) != 1 || f.creates[0].PidMode != "" || f.creates[0].VolumesFrom[0] != "target:ro" || f.diffs != 1 {
+	if len(f.creates) != 1 || f.creates[0].PidMode != "" || f.creates[0].VolumesFrom[0] != "target" || f.diffs != 1 {
 		t.Fatalf("creates=%+v diffs=%d", f.creates, f.diffs)
 	}
 }
@@ -263,7 +269,7 @@ func TestListStoppedContainerMergesImageWithChanges(t *testing.T) {
 func TestListStoppedContainerMountUsesItsVolumes(t *testing.T) {
 	f := stopped()
 	got, err := New(f).ListContainer(context.Background(), "target", "/data")
-	if err != nil || names(got) != "db/" || len(f.creates) != 1 || f.creates[0].VolumesFrom[0] != "target:ro" || f.diffs != 0 {
+	if err != nil || names(got) != "db/" || len(f.creates) != 1 || f.creates[0].VolumesFrom[0] != "target" || f.diffs != 0 {
 		t.Fatalf("got=%v err=%v creates=%+v diffs=%d", names(got), err, f.creates, f.diffs)
 	}
 	if got[0].Mount == nil || got[0].Mount.Destination != "/data" { // contents inherit the mount tag

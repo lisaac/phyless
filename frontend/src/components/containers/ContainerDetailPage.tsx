@@ -277,7 +277,7 @@ export const ContainerDetailPage: Component = () => {
   };
 
   // ── File actions ──────────────────────────────────────────────────────────────
-  const files = () => fileSource("container", id(), { stopped: state() !== "running" });
+  const files = () => fileSource("container", id(), { stopped: state() !== "running" && state() !== "paused" });
   const download = createDownloadTask();
   const downloadFile = (sub: string, name: string) => download.start(files().downloadUrl(sub), `${name}.tar`);
   onCleanup(() => download.cancel());
@@ -716,21 +716,23 @@ export const ContainerDetailPage: Component = () => {
           onUpload={hasRole("operator") ? files().upload : undefined}
           onDelete={hasRole("operator") ? files().remove : undefined}
           onRename={hasRole("operator") ? files().rename : undefined}
+          onChmod={hasRole("operator") ? files().chmod : undefined}
+          mountsOnly={files().mountsOnly}
           popout={{ kind: "container", id: id(), name: name() }}
           onCopyToContainer={hasRole("operator") ? (path) => setCopySource({ containerId: id(), path }) : undefined}
           initialPath={fileInitialPath()}
+          initialDiff={searchParams.diff === "1"}
           onPathChange={onFilePathChange}
         />
-          initialDiff={searchParams.diff === "1"}
       </Show>
 
-      {/* ── Tab: 日志 ──────────────────────────────────────────────────────── */}
-      <Show when={tab() === "logs"}>
       {/* ── Tab: 层 ────────────────────────────────────────────────────────── */}
       <Show when={tab() === "layers" && inspect()?.Image}>
         {(image) => <ContainerLayers id={id()} image={image()} onShow={() => setSearchParams({ tab: "files", path: "/", diff: "1" }, { replace: true })} />}
       </Show>
 
+      {/* ── Tab: 日志 ──────────────────────────────────────────────────────── */}
+      <Show when={tab() === "logs"}>
         <div class="mb-2"><TimeRangePicker initial="1h" onChange={setLogRange} /></div>
         <LogsView wsUrl={appendTimeRange(`/ws/containers/${id()}/logs`, logRange())} />
       </Show>

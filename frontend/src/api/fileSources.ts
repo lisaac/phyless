@@ -1,6 +1,7 @@
 import { get, getToken, request } from "./client";
 import { enqueue, queued } from "../stores/taskQueue";
 import type { FileEntry, FileListing } from "../types";
+import type { ChmodBody } from "../components/shared/PermissionModal";
 
 // Every FileBrowser in the app browses one of these. The endpoint table lives
 // here once so the in-page browsers and the standalone window
@@ -12,7 +13,8 @@ export interface FileSourceRef { kind: FileSourceKind; id: string; name: string 
 const e = encodeURIComponent;
 
 // `stopped`: a container that is not running. Listing, download and upload
-// still work (archive API); delete/rename exec rm/mv inside it, so they don't.
+// still work (archive API); delete/rename/chmod only inside its mounts — the
+// backend changes those through a browse container (see docs/file-browsing.md).
 export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: boolean } = {}) {
   const base = {
     container: `/api/containers/${e(id)}/files`,
@@ -25,7 +27,6 @@ export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: b
   const url = (suffix: string, query = "") => `${base}${suffix}?${idq}${query}`;
   const key = kind === "compose" ? `compose:${id}` : kind === "config" ? "config" : id;
   const writable = kind === "container" || kind === "compose" || kind === "config";
-  const execWrites = writable && !(kind === "container" && opts.stopped);
   const joinName = (dir: string, name: string) => (dir.endsWith("/") ? dir + name : dir + "/" + name);
 
   return {
@@ -55,12 +56,17 @@ export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: b
     create: kind === "compose" || kind === "config"
       ? async (path: string) => { await queued(`新建 ${path}`, "PUT", url("/content", `path=${e(path)}`), "", { key }); }
       : undefined,
-    remove: !execWrites ? undefined : async (path: string) => {
+    remove: !writable ? undefined : async (path: string) => {
       await queued(`删除 ${path}`, "DELETE", url("", `path=${e(path)}`), undefined, { key });
     },
-    rename: !execWrites ? undefined : async (oldPath: string, newPath: string) => {
+    rename: !writable ? undefined : async (oldPath: string, newPath: string) => {
       await queued(`重命名 ${oldPath}`, "POST", url("/rename"), { old_path: oldPath, new_path: newPath }, { key });
     },
+    chmod: !writable ? undefined : async (body: ChmodBody) => {
+      await queued(`修改权限 ${body.path}`, "POST", url("/chmod"), body, { key });
+    },
+    // Writes reach only entries inside a mount (FileEntry.mount).
+    mountsOnly: kind === "container" && !!opts.stopped,
   };
 }
 

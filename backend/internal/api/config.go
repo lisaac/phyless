@@ -20,6 +20,7 @@ func (s *Server) mountConfigRoutes(r chi.Router) {
 	r.Put("/api/config/files/content", s.handleConfigPutFile)
 	r.Delete("/api/config/files", s.handleConfigDeleteFile)
 	r.Post("/api/config/files/rename", s.handleConfigRenameFile)
+	r.Post("/api/config/files/chmod", s.handleConfigChmodFile)
 }
 
 func (s *Server) handleConfigListFiles(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +117,24 @@ func (s *Server) handleConfigRenameFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.auditFromCtx(r, "config.file.rename", body.OldPath+" -> "+body.NewPath, "ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleConfigChmodFile(w http.ResponseWriter, r *http.Request) {
+	body, ok := decodeChmod(w, r)
+	if !ok {
+		return
+	}
+	fullPath := filepath.Join(configRoot, body.Path)
+	if !isSubPath(configRoot, fullPath) || filepath.Clean(fullPath) == filepath.Clean(configRoot) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	if err := chmodHost(fullPath, body); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "config.file.chmod", body.String(), "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	pathpkg "path"
 	"phyless/backend/internal/docker/debugshell"
 	"phyless/backend/internal/docker/self"
 	"slices"
@@ -598,17 +597,8 @@ func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleContainerDeleteFile(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	path := r.URL.Query().Get("path")
-	if !validContainerMutationPath(path) {
-		writeError(w, http.StatusBadRequest, "path required")
-		return
-	}
-	if err := dockercontainer.ExecChecked(r.Context(), s.docker, id, []string{"rm", "-rf", "--", path}); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	id, p := chi.URLParam(r, "id"), r.URL.Query().Get("path")
+	s.containerFileOp(w, r, "container.file.delete", id+":"+p, s.fs.Remove(r.Context(), id, p))
 }
 
 func (s *Server) handleContainerRenameFile(w http.ResponseWriter, r *http.Request) {
@@ -617,27 +607,39 @@ func (s *Server) handleContainerRenameFile(w http.ResponseWriter, r *http.Reques
 		OldPath string `json:"old_path"`
 		NewPath string `json:"new_path"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.OldPath == "" || body.NewPath == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "old_path and new_path required")
 		return
 	}
-	if !validContainerMutationPath(body.OldPath) || !validContainerMutationPath(body.NewPath) {
-		writeError(w, http.StatusBadRequest, "invalid file path")
+	s.containerFileOp(w, r, "container.file.rename", id+":"+body.OldPath+" -> "+body.NewPath,
+		s.fs.Rename(r.Context(), id, body.OldPath, body.NewPath))
+}
+
+func (s *Server) handleContainerChmodFile(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	body, ok := decodeChmod(w, r)
+	if !ok {
 		return
 	}
-	if err := dockercontainer.ExecChecked(r.Context(), s.docker, id, []string{"mv", "--", body.OldPath, body.NewPath}); err != nil {
+	var err error
+	if body.Mode != "" {
+		err = s.fs.Chmod(r.Context(), id, body.Path, body.Mode, body.Recursive)
+	}
+	if err == nil && body.Owner != "" {
+		err = s.fs.Chown(r.Context(), id, body.Path, body.Owner, body.Recursive)
+	}
+	s.containerFileOp(w, r, "container.file.chmod", id+":"+body.String(), err)
+}
+
+// containerFileOp answers and audits one change to a container's files.
+func (s *Server) containerFileOp(w http.ResponseWriter, r *http.Request, action, target string, err error) {
+	if err != nil {
+		s.auditFromCtx(r, action, target, "failed")
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditFromCtx(r, action, target, "ok")
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func validContainerMutationPath(raw string) bool {
-	if raw == "" || strings.ContainsRune(raw, 0) || !pathpkg.IsAbs(raw) {
-		return false
-	}
-	clean := pathpkg.Clean(raw)
-	return clean != "/" && clean != "." && clean != ".."
 }
 
 func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {

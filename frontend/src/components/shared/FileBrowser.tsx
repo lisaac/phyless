@@ -2,6 +2,7 @@ import { Component, createSignal, createResource, createEffect, For, Show, Suspe
 import type { FileEntry, FileListing } from "../../types";
 import { confirmAction } from "./ConfirmModal";
 import { filesWindowUrl, openPopup, type FileSourceRef } from "../../api/fileSources";
+import { editPermissions, type ChmodBody } from "./PermissionModal";
 
 function fmtSize(b: number): string {
   if (b < 1024) return `${b}B`;
@@ -62,15 +63,18 @@ interface FileBrowserProps {
   onCreate?: (sub: string) => Promise<void>;
   onDelete?: (sub: string) => Promise<void>;
   onRename?: (oldPath: string, newPath: string) => Promise<void>;
+  onChmod?: (body: ChmodBody) => Promise<void>;
+  // Writes reach only entries inside a mount (a stopped container).
+  mountsOnly?: boolean;
   onCopyToContainer?: (fullPath: string) => void;
   onOpenFile?: (fullSubPath: string) => void;
   initialPath?: string;
+  // Start with the diff toggle on (container 层 tab's "查看改动").
+  initialDiff?: boolean;
   onPathChange?: (path: string) => void;
   // Identifies which entity (e.g. container id) is being browsed. The page
   // that owns FileBrowser often doesn't remount across navigations (Solid
   // Router reuses the same component instance for e.g. /containers/:id when
-  // Start with the diff toggle on (container 层 tab's "查看改动").
-  initialDiff?: boolean;
   // only :id changes), so without this, switching to a different container
   // whose file browser happens to already sit at the same path would never
   // refetch — leaving the previous container's stale listing on screen while
@@ -233,6 +237,15 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
   };
 
   const startRename = (e: FileEntry) => { setRenamingName(e.name); setRenameVal(e.name); };
+
+  const doChmod = async (e: FileEntry) => {
+    const body = props.onChmod && await editPermissions(e, join(e.name));
+    if (body) { await props.onChmod!(body); refetch(); }
+  };
+  // Mirrors the backend: a stopped container changes only inside mounts, and
+  // a mount point (or a dir holding one) is never deleted or moved.
+  const writable = (e: FileEntry) => !props.mountsOnly || !!e.mount;
+  const movable = (e: FileEntry) => writable(e) && !e.mount_below && e.mount?.destination !== join(e.name);
 
   const commitRename = async (e: FileEntry) => {
     const newName = renameVal().trim();
@@ -468,8 +481,11 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                     <td class="py-1">
                       {/* Each action stays one word; on a phone they wrap as whole buttons. */}
                       <div class="flex flex-wrap justify-end gap-x-2 gap-y-0.5 whitespace-nowrap sm:flex-nowrap sm:justify-start" classList={{ hidden: gone }}>
-                        <Show when={props.onRename}>
+                        <Show when={props.onRename && movable(e)}>
                           <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => startRename(e)}>重命名</button>
+                        </Show>
+                        <Show when={props.onChmod && writable(e) && !e.mode?.startsWith("l")}>
+                          <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => void doChmod(e)}>权限</button>
                         </Show>
                         <Show when={props.onDownload}>
                           <button
@@ -481,7 +497,7 @@ const FileBrowserInner: Component<FileBrowserProps> = (props) => {
                         <Show when={props.onCopyToContainer}>
                           <button class="text-[11px] text-zinc-400 hover:text-zinc-300" onClick={() => props.onCopyToContainer!(join(e.name))}>复制到容器</button>
                         </Show>
-                        <Show when={props.onDelete}>
+                        <Show when={props.onDelete && movable(e)}>
                           <button class="text-[11px] text-red-900 hover:text-red-400" onClick={() => void doDelete(e)}>删除</button>
                         </Show>
                       </div>

@@ -18,7 +18,7 @@ export const SourceFileBrowser: Component<{
   initialPath?: string;
   onPathChange?: (path: string) => void;
   noPopout?: boolean; // already inside the standalone window
-  stopped?: boolean; // container not running: no exec-based delete/rename
+  stopped?: boolean; // container not running: writes only inside its mounts
 }> = (props) => {
   const src = () => fileSource(props.src.kind, props.src.id, { stopped: props.stopped });
   const op = () => !!props.writable && hasRole("operator");
@@ -40,6 +40,8 @@ export const SourceFileBrowser: Component<{
         onCreate={op() ? src().create : undefined}
         onDelete={op() ? src().remove : undefined}
         onRename={op() ? src().rename : undefined}
+        onChmod={op() ? src().chmod : undefined}
+        mountsOnly={src().mountsOnly}
         popout={props.noPopout ? undefined : props.src}
       />
       <TarTextViewer url={viewUrl()} path={viewPath() ?? ""} onClose={() => setViewPath(null)} />

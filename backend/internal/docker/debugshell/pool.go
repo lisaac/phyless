@@ -24,10 +24,10 @@ const (
 	// `busybox sleep BoxLife`, so it exits and auto-removes on its own and a
 	// crashed phyless leaves nothing behind — no GC loop needed.
 	BoxLife = 5 * time.Minute
-	// boxMargin replaces a box this close to expiry so an ls never races exit.
-	boxMargin = 30 * time.Second
 	// opTimeout bounds one listing: ls on a hung mount must not pin a request.
 	opTimeout = 30 * time.Second
+	// writeTimeout bounds one change (rm -rf, chmod -R of a big tree).
+	writeTimeout = 2 * time.Minute
 )
 
 // ErrBoxStart wraps a browse container that could not be created or started
@@ -87,7 +87,7 @@ func (p *Pool) Has(key string) bool {
 // came up empty (deleted between inspect and create, Docker then creates a
 // blank one): that volume is dropped so the retry refills it.
 func (p *Pool) Ls(ctx context.Context, key string, spec Spec, path string) (entries []ctr.FileEntry, err error) {
-	err = p.do(ctx, key, spec, func(ctx context.Context, id string) error {
+	err = p.do(ctx, key, spec, opTimeout, func(ctx context.Context, id string) error {
 		entries, err = ctr.ExecLs(ctx, p.cli, id, path, Busybox, "ls")
 		return err
 	})
@@ -96,8 +96,19 @@ func (p *Pool) Ls(ctx context.Context, key string, spec Spec, path string) (entr
 
 // Run runs busybox with args in key's browse container and returns stdout;
 // a non-zero exit is an error carrying stderr.
-func (p *Pool) Run(ctx context.Context, key string, spec Spec, args ...string) (out string, err error) {
-	err = p.do(ctx, key, spec, func(ctx context.Context, id string) error {
+func (p *Pool) Run(ctx context.Context, key string, spec Spec, args ...string) (string, error) {
+	return p.run(ctx, key, spec, opTimeout, args)
+}
+
+// Write is Run for a change to the browsed files: a longer bound, in a box
+// that outlives it, so its expiry never stops an rm -rf halfway.
+func (p *Pool) Write(ctx context.Context, key string, spec Spec, args ...string) error {
+	_, err := p.run(ctx, key, spec, writeTimeout, args)
+	return err
+}
+
+func (p *Pool) run(ctx context.Context, key string, spec Spec, timeout time.Duration, args []string) (out string, err error) {
+	err = p.do(ctx, key, spec, timeout, func(ctx context.Context, id string) error {
 		stdout, stderr, code, err := ctr.ExecCapture(ctx, p.cli, id, append([]string{Busybox}, args...))
 		if err == nil && code != 0 {
 			err = fmt.Errorf("busybox %s: status %d: %s", args[0], code, strings.TrimSpace(stderr.String()))
@@ -113,13 +124,13 @@ func (p *Pool) Run(ctx context.Context, key string, spec Spec, args ...string) (
 	return out, err
 }
 
-// do runs op against key's browse container, creating it when missing or
-// about to expire.
-func (p *Pool) do(ctx context.Context, key string, spec Spec, op func(ctx context.Context, id string) error) error {
-	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+// do runs op against key's browse container within timeout, creating the box
+// when missing or expiring within timeout — so op never races its exit.
+func (p *Pool) do(ctx context.Context, key string, spec Spec, timeout time.Duration, op func(ctx context.Context, id string) error) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for retried := false; ; retried = true {
-		b, err := p.get(ctx, key, spec)
+		b, err := p.get(ctx, key, spec, timeout)
 		if err != nil {
 			return err
 		}
@@ -178,12 +189,13 @@ func (p *Pool) Remove(ctx context.Context, key string) error {
 	return err
 }
 
-// get returns key's ready box. Concurrent callers share one creation.
-func (p *Pool) get(ctx context.Context, key string, spec Spec) (*box, error) {
+// get returns key's ready box with at least margin left. Concurrent callers
+// share one creation. A box replaced early still expires on its own.
+func (p *Pool) get(ctx context.Context, key string, spec Spec, margin time.Duration) (*box, error) {
 	p.mu.Lock()
 	now := p.now()
 	b := p.boxes[key]
-	if b == nil || b.expires.Sub(now) < boxMargin {
+	if b == nil || b.expires.Sub(now) < margin {
 		p.sweepLocked(now)
 		b = &box{ready: make(chan struct{}), expires: now.Add(BoxLife)}
 		p.boxes[key] = b

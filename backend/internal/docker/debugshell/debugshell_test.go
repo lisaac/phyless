@@ -256,7 +256,7 @@ func TestPoolRecreatesVanishedOrExpiringBox(t *testing.T) {
 	if n := len(f.browseCreates()); n != 2 {
 		t.Fatalf("vanished box not recreated: creates=%d", n)
 	}
-	now = now.Add(BoxLife - boxMargin + time.Second) // about to exit on its own
+	now = now.Add(BoxLife - opTimeout + time.Second) // about to exit on its own
 	if _, err := p.Ls(context.Background(), "k", Spec{}, "/"); err != nil {
 		t.Fatal(err)
 	}

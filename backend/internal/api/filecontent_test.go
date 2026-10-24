@@ -179,16 +179,3 @@ func TestConfigRenameRejectsRoot(t *testing.T) {
 		t.Fatalf("status = %d, want 403", w.Code)
 	}
 }
-
-func TestContainerMutationPathRejectsRootAliases(t *testing.T) {
-	for _, raw := range []string{"", ".", "..", "/", "//", "/tmp/..", "relative"} {
-		if validContainerMutationPath(raw) {
-			t.Fatalf("path %q accepted", raw)
-		}
-	}
-	for _, raw := range []string{"/tmp/file", "/tmp/..hidden"} {
-		if !validContainerMutationPath(raw) {
-			t.Fatalf("path %q rejected", raw)
-		}
-	}
-}

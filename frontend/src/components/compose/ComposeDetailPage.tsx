@@ -371,6 +371,7 @@ export const ComposeDetailPage: Component = () => {
               onCreate={hasRole("operator") ? files().create : undefined}
               onDelete={hasRole("operator") ? deleteFile : undefined}
               onRename={hasRole("operator") ? renameFile : undefined}
+              onChmod={hasRole("operator") ? files().chmod : undefined}
               onUpload={hasRole("operator") ? files().upload : undefined}
               onDownload={downloadFile}
               instanceKey={id()}

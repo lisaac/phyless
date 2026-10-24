@@ -29,6 +29,10 @@ import (
 // can release its helpers first (Docker refuses while they exist).
 const ImageLabel = "phyless.image"
 
+// ContainerLabel names the container a browse container serves, so deleting
+// that container releases them all — a box replaced early still runs a while.
+const ContainerLabel = "phyless.container"
+
 // Pool keys: one browse container per image, per running container without
 // ls (PID-sharing), and per stopped container (its image + its volumes, or
 // without volumes when those cannot be mounted).
@@ -54,7 +58,7 @@ type FS struct {
 	cli     client.APIClient
 	pool    *debugshell.Pool
 	changes changeCache
-	noLs    sync.Map // container ID → struct{}: its own ls is missing
+	noLs    sync.Map // container ID → struct{}: its own ls is missing; dropped on ReleaseContainer
 	runs    runCache
 }
 
@@ -156,7 +160,7 @@ func (f *FS) listContainer(ctx context.Context, t container.InspectResponse, p s
 		if !errors.Is(err, ctr.ErrExecNotFound) {
 			return entries, err
 		}
-		f.noLs.Store(t.ID, struct{}{}) // ponytail: never pruned; IDs are tiny
+		f.noLs.Store(t.ID, struct{}{}) // ponytail: containers deleted outside phyless stay; IDs are tiny
 		fallthrough
 	case t.State.Running: // no ls (distroless), or paused (exec refused)
 		return f.pool.Ls(ctx, pidKey(t.ID), pidSpec(t), debugshell.TargetRoot(t)+p)
@@ -207,15 +211,24 @@ func (f *FS) lacksLs(id string) bool { _, ok := f.noLs.Load(id); return ok }
 
 // pidSpec is a browse container sharing t's PID namespace.
 func pidSpec(t container.InspectResponse) debugshell.Spec {
-	return debugshell.Spec{Name: t.Name, Host: container.HostConfig{
+	return debugshell.Spec{Name: t.Name, Labels: map[string]string{ContainerLabel: t.ID}, Host: container.HostConfig{
 		PidMode: container.PidMode("container:" + t.ID),
 		CapAdd:  []string{"SYS_PTRACE"}, // /proc/<pid>/root of another uid
 	}}
 }
 
+// stoppedSpec is a stopped container's one browse container, for listing and
+// for changes: its image with its volumes mounted as t mounts them (a
+// read-only mount stays read-only).
+func stoppedSpec(t container.InspectResponse) debugshell.Spec {
+	return debugshell.Spec{Name: t.Name, Image: t.Image,
+		Labels: map[string]string{ImageLabel: t.Image, ContainerLabel: t.ID},
+		Host:   container.HostConfig{VolumesFrom: []string{t.ID}}}
+}
+
 // listStopped lists a stopped container's filesystem without streaming its
 // bytes (a 4 GB layer took minutes via archive/export). One browse container
-// — its image with its own volumes mounted read-only — serves every path:
+// — its image with its own volumes — serves every path:
 // mounts are listed as they are, the rest is the image's listing merged with
 // the writable-layer changes.
 func (f *FS) listStopped(ctx context.Context, t container.InspectResponse, p string) ([]ctr.FileEntry, error) {
@@ -250,8 +263,7 @@ func (f *FS) listStopped(ctx context.Context, t container.InspectResponse, p str
 // (say a deleted bind directory) fails that container as a whole; paths
 // outside the mounts then still list from a volume-less one.
 func (f *FS) lsStopped(ctx context.Context, t container.InspectResponse, p string) ([]ctr.FileEntry, error) {
-	spec := debugshell.Spec{Name: t.Name, Image: t.Image, Labels: map[string]string{ImageLabel: t.Image},
-		Host: container.HostConfig{VolumesFrom: []string{t.ID + ":ro"}}}
+	spec := stoppedSpec(t)
 	entries, err := f.pool.Ls(ctx, stoppedKey(t.ID), spec, p)
 	if errors.Is(err, debugshell.ErrBoxStart) && !underMount(t.Mounts, p) {
 		spec.Host.VolumesFrom = nil
@@ -292,17 +304,7 @@ func (f *FS) ReleaseImage(ctx context.Context, ref string) error {
 	if err := f.pool.Remove(ctx, imageKey(id)); err != nil {
 		return err
 	}
-	list, err := f.cli.ContainerList(ctx, container.ListOptions{All: true,
-		Filters: filters.NewArgs(filters.Arg("label", ImageLabel+"="+id))})
-	if err != nil {
-		return err
-	}
-	for _, c := range list {
-		if err := f.remove(ctx, c.ID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return f.removeLabeled(ctx, ImageLabel+"="+id)
 }
 
 // ReleaseContainer drops a container's browse helpers before it is deleted, so
@@ -315,8 +317,24 @@ func (f *FS) ReleaseContainer(ctx context.Context, ref string) error {
 	if err != nil {
 		return err // unknown: deleting now could leave its volumes pinned
 	}
+	f.noLs.Delete(t.ID)
 	for _, key := range containerKeys(t.ID) {
 		if err := f.pool.Remove(ctx, key); err != nil {
+			return err
+		}
+	}
+	return f.removeLabeled(ctx, ContainerLabel+"="+t.ID)
+}
+
+// removeLabeled removes every helper carrying label, other phyless
+// instances' included.
+func (f *FS) removeLabeled(ctx context.Context, label string) error {
+	list, err := f.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: filters.NewArgs(filters.Arg("label", label))})
+	if err != nil {
+		return err
+	}
+	for _, c := range list {
+		if err := f.remove(ctx, c.ID); err != nil {
 			return err
 		}
 	}

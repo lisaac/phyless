@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 
 	types "github.com/docker/docker/api/types"
@@ -20,6 +21,7 @@ type helperClient struct {
 	copyCalls int
 	copyData  bytes.Buffer
 	execCmd   []string
+	execUser  string
 	execCode  int
 	execRun   bool
 }
@@ -32,6 +34,7 @@ func (c *helperClient) CopyToContainer(_ context.Context, _ string, _ string, co
 
 func (c *helperClient) ContainerExecCreate(_ context.Context, _ string, opts container.ExecOptions) (container.ExecCreateResponse, error) {
 	c.execCmd = append([]string(nil), opts.Cmd...)
+	c.execUser = opts.User
 	return container.ExecCreateResponse{ID: "exec"}, nil
 }
 
@@ -107,17 +110,6 @@ func (*earlyReturnClient) CopyToContainer(context.Context, string, string, io.Re
 	return nil
 }
 
-func TestExecCheckedReturnsExitCodeAndPreservesArgv(t *testing.T) {
-	c := &helperClient{execCode: 7}
-	err := ExecChecked(context.Background(), c, "id", []string{"rm", "-rf", "--", "-danger"})
-	if err == nil || c.execCmd[len(c.execCmd)-1] != "-danger" {
-		t.Fatalf("error=%v cmd=%v", err, c.execCmd)
-	}
-	if got := err.Error(); got != "exec exited with status 7" {
-		t.Fatalf("error=%q", got)
-	}
-}
-
 type lsClient struct {
 	helperClient
 	output []byte
@@ -163,5 +155,28 @@ func TestExecListDirChecksStreamAndExit(t *testing.T) {
 	c.execCode = 127
 	if _, err := ExecLs(context.Background(), c, "id", "/"); !errors.Is(err, ErrExecNotFound) {
 		t.Fatalf("missing ls not reported as ErrExecNotFound: %v", err)
+	}
+}
+
+func TestExecRootRunsAsRootAndReportsStderr(t *testing.T) {
+	msg := []byte("mv: can't rename '-danger': Permission denied\n")
+	frame := append([]byte{2, 0, 0, 0, 0, 0, 0, byte(len(msg))}, msg...) // stderr
+	c := &lsClient{output: frame}
+	c.execCode = 1
+	err := ExecRoot(context.Background(), c, "id", []string{"mv", "--", "-danger", "/b"})
+	if c.execUser != "0" || c.execCmd[2] != "-danger" {
+		t.Fatalf("user=%q cmd=%v", c.execUser, c.execCmd)
+	}
+	if err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("error=%v", err)
+	}
+	c = &lsClient{}
+	c.execCode = 127
+	if err := ExecRoot(context.Background(), c, "id", []string{"chown"}); !errors.Is(err, ErrExecNotFound) {
+		t.Fatalf("missing tool: %v", err)
+	}
+	c = &lsClient{}
+	if err := ExecRoot(context.Background(), c, "id", []string{"rm"}); err != nil {
+		t.Fatal(err)
 	}
 }

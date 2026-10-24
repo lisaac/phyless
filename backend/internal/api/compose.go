@@ -54,6 +54,7 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 	r.Put("/api/compose/files/content", s.handleComposePutFileContent)
 	r.Delete("/api/compose/files", s.handleComposeDeleteFile)
 	r.Post("/api/compose/files/rename", s.handleComposeRenameFile)
+	r.Post("/api/compose/files/chmod", s.handleComposeChmodFile)
 }
 
 const (
@@ -1568,6 +1569,29 @@ func (s *Server) handleComposeRenameFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.auditFromCtx(r, "compose.file.rename", p.Name+":"+body.OldPath+" -> "+body.NewPath, "ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleComposeChmodFile(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findCompose(r.Context(), r.URL.Query().Get("id"))
+	if err != nil {
+		writeComposeLookupError(w, err)
+		return
+	}
+	body, ok := decodeChmod(w, r)
+	if !ok {
+		return
+	}
+	fullPath := filepath.Join(p.BaseDir, body.Path)
+	if !isSubPath(p.BaseDir, fullPath) || filepath.Clean(fullPath) == filepath.Clean(p.BaseDir) {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	if err := chmodHost(fullPath, body); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditFromCtx(r, "compose.file.chmod", p.Name+":"+body.String(), "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 

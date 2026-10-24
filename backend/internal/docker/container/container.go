@@ -155,8 +155,14 @@ func ExecLs(ctx context.Context, cli client.APIClient, containerID, path string,
 // ExecCapture runs cmd in a running container and returns its output (each
 // stream bounded by maxLsOutput) and exit code.
 func ExecCapture(ctx context.Context, cli client.APIClient, containerID string, cmd []string) (stdout, stderr *LsBuffer, code int, err error) {
+	return execCapture(ctx, cli, containerID, "", cmd)
+}
+
+// execCapture is ExecCapture as user ("" = the container's own).
+func execCapture(ctx context.Context, cli client.APIClient, containerID, user string, cmd []string) (stdout, stderr *LsBuffer, code int, err error) {
 	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmd,
+		User:         user,
 		AttachStdout: true,
 		AttachStderr: true,
 		// C.UTF-8: English dates for ParseLs, but non-ASCII names intact —
@@ -405,37 +411,26 @@ func validateTarFilename(filename string) error {
 	return nil
 }
 
-// ExecChecked runs an argv-only command and waits for Docker's exec process
-// to exit. Callers still validate their own arguments; argv avoids shell
-// injection and the command itself uses -- where supported.
-func ExecChecked(ctx context.Context, cli client.APIClient, containerID string, cmd []string) error {
-	if len(cmd) == 0 || strings.TrimSpace(cmd[0]) == "" {
-		return fmt.Errorf("empty exec command")
-	}
-	execResp, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{Cmd: cmd})
+// ExecRoot runs an argv-only command as root (so chown works whatever the
+// container's user) and waits for it; a non-zero exit is an error carrying
+// its stderr, ErrExecNotFound when the command is missing.
+func ExecRoot(ctx context.Context, cli client.APIClient, containerID string, cmd []string) error {
+	_, stderr, code, err := execCapture(ctx, cli, containerID, "0", cmd)
 	if err != nil {
 		return err
 	}
-	if execResp.ID == "" {
-		return fmt.Errorf("Docker returned an empty exec ID")
-	}
-	if err := cli.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{}); err != nil {
+	if err := exitError(code); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" && code != 126 && code != 127 {
+			return fmt.Errorf("%s", msg)
+		}
 		return err
 	}
-	return waitExec(ctx, cli, execResp.ID)
+	return nil
 }
 
 // ErrExecNotFound means the exec'd command is missing or not executable in the
 // container (shell exit codes 126/127), e.g. a distroless image without ls.
 var ErrExecNotFound = errors.New("command not found in container")
-
-func waitExec(ctx context.Context, cli client.APIClient, execID string) error {
-	code, err := execExitCode(ctx, cli, execID)
-	if err != nil {
-		return err
-	}
-	return exitError(code)
-}
 
 func exitError(code int) error {
 	switch code {

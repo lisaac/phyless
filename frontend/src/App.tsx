@@ -4,6 +4,7 @@ import { currentUser, doLogout, loadSession } from "./stores/auth";
 import { dockerServerEpoch } from "./stores/dockerServer";
 import { Layout } from "./components/shared/Layout";
 import { ToastHost } from "./components/shared/Toast";
+import { PermissionModal } from "./components/shared/PermissionModal";
 import { ConfirmModal } from "./components/shared/ConfirmModal";
 
 // Keep the login shell small; page-only dependencies (xterm, CodeMirror,
@@ -51,6 +52,7 @@ export const App: Component = () => {
     <Show when={ready()} fallback={<div class="p-8">…</div>}>
       <ToastHost />
       <ConfirmModal />
+      <PermissionModal />
       <Suspense fallback={<div class="p-8">加载中…</div>}>
       <Router>
         <Route path="/login" component={LoginPage} />
