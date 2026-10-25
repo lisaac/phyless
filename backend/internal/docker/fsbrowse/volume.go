@@ -1,6 +1,7 @@
 package fsbrowse
 
 import (
+	"archive/tar"
 	"context"
 	"io"
 	"path"
@@ -55,7 +56,7 @@ func (f *FS) OpenVolume(ctx context.Context, name, p string) (io.ReadCloser, err
 }
 
 // UploadVolume writes one file named filename into dir of a volume.
-func (f *FS) UploadVolume(ctx context.Context, name, dir, filename string, src io.Reader, maxBytes int64) error {
+func (f *FS) UploadVolume(ctx context.Context, name, dir, filename string, src io.Reader, maxBytes int64, meta *tar.Header) error {
 	if err := f.volume(ctx, name); err != nil {
 		return err
 	}
@@ -64,7 +65,7 @@ func (f *FS) UploadVolume(ctx context.Context, name, dir, filename string, src i
 		return err
 	}
 	defer f.remove(context.WithoutCancel(ctx), id) //nolint:errcheck // a leftover is pruned at startup
-	return boxErr(ctr.UploadTarFile(ctx, f.cli, id, volRoot+path.Clean("/"+dir), filename, src, maxBytes), volRoot)
+	return boxErr(ctr.UploadTarFile(ctx, f.cli, id, volRoot+path.Clean("/"+dir), filename, src, maxBytes, meta), volRoot)
 }
 
 // ReleaseVolume removes every helper mounting a volume so it can be deleted.

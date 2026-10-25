@@ -320,6 +320,8 @@ export const ContainerRow: Component<{
         <SourceFileBrowser
           src={{ kind: "container", id: c().Id, name: name() || c().Id.slice(0, 12) }}
           download={download}
+          writable
+          stopped={!["running", "paused"].includes(c().State)}
           initialPath={browsePath() ?? "/"}
         />
       </Modal>

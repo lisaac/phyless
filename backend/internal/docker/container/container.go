@@ -324,7 +324,9 @@ func UploadFile(ctx context.Context, cli client.APIClient, containerID, destPath
 // UploadTarFile bounds the raw upload before making a Docker API call, then
 // streams a single-file tar from disk. The temporary file keeps request and
 // tar data from becoming two in-memory copies of the same upload.
-func UploadTarFile(ctx context.Context, cli client.APIClient, containerID, destPath, filename string, src io.Reader, maxBytes int64) error {
+// `meta` (optional) supplies Mode/Uid/Gid for the entry — the text editor
+// passes the original file's so a save doesn't reset it to root 0644.
+func UploadTarFile(ctx context.Context, cli client.APIClient, containerID, destPath, filename string, src io.Reader, maxBytes int64, meta *tar.Header) error {
 	if err := validateTarFilename(filename); err != nil {
 		return err
 	}
@@ -367,7 +369,12 @@ func UploadTarFile(ctx context.Context, cli client.APIClient, containerID, destP
 	done := make(chan error, 1)
 	go func() {
 		tw := tar.NewWriter(pw)
-		streamErr := tw.WriteHeader(&tar.Header{Name: filename, Size: n, Mode: 0644})
+		hdr := tar.Header{Mode: 0644}
+		if meta != nil {
+			hdr = tar.Header{Mode: meta.Mode, Uid: meta.Uid, Gid: meta.Gid}
+		}
+		hdr.Name, hdr.Size = filename, n
+		streamErr := tw.WriteHeader(&hdr)
 		if streamErr == nil {
 			_, streamErr = io.Copy(tw, tmp)
 		}

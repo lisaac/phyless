@@ -2,6 +2,7 @@ import { get, getToken, request } from "./client";
 import { enqueue, queued } from "../stores/taskQueue";
 import type { FileEntry, FileListing } from "../types";
 import type { ChmodBody } from "../components/shared/PermissionModal";
+import type { TarMeta } from "./dockerTar";
 
 // Every FileBrowser in the app browses one of these. The endpoint table lives
 // here once so the in-page browsers and the standalone window
@@ -53,6 +54,17 @@ export function fileSource(kind: FileSourceKind, id: string, opts: { stopped?: b
       const t = await enqueue(viaArchive
         ? { title: `上传 ${file.name}`, url: url("/upload", `path=${e(dir)}&name=${e(file.name)}`), file, key }
         : { title: `上传 ${file.name}`, url: url("/content", `path=${e(joinName(dir, file.name))}`), method: "PUT", file, key }).done;
+      if (t.status !== "done") throw new Error(t.error);
+    },
+    // The text editor's save: overwrite one file. Through the archive API the
+    // original mode/owner ride along, or the tar entry would reset it to root 0644.
+    saveText: !writable ? undefined : async (path: string, text: string, meta?: TarMeta) => {
+      const slash = path.lastIndexOf("/");
+      const dir = path.slice(0, slash) || "/", name = path.slice(slash + 1);
+      const keep = meta ? `&mode=${meta.mode.toString(8)}&uid=${meta.uid}&gid=${meta.gid}` : "";
+      const t = await enqueue(viaArchive
+        ? { title: `保存 ${path}`, url: url("/upload", `path=${e(dir)}&name=${e(name)}${keep}`), file: new File([text], name), key }
+        : { title: `保存 ${path}`, url: url("/content", `path=${e(path)}`), method: "PUT", file: new File([text], name), key }).done;
       if (t.status !== "done") throw new Error(t.error);
     },
     // Creating is a PUT with empty content — same endpoint the editors save through.

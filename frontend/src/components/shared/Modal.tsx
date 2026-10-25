@@ -14,7 +14,8 @@ export const Modal: Component<{
   // key press.
   createEffect(() => {
     if (!props.open) return;
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") props.onClose(); };
+    // …unless something inside already handled it (e.g. Esc closing the editor's search panel).
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) props.onClose(); };
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
   });

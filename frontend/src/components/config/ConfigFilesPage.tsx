@@ -152,7 +152,7 @@ export const ConfigFilesPage: Component = () => {
           <Show when={loadError()}><p class="mb-1 text-xs text-red-400">{loadError()}</p></Show>
           <div class="min-h-0 flex-1">
             <Show when={openPath()} fallback={<div class="flex h-full items-center justify-center text-xs text-zinc-500">点击左侧文件开始编辑</div>}>
-              <CodeEditor value={content()} onChange={setContent} language={langFor(openPath())} />
+              <CodeEditor value={content()} onChange={setContent} language={langFor(openPath())} onSave={() => !saving() && save()} />
             </Show>
           </div>
         </div>

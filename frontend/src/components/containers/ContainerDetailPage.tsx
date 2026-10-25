@@ -761,7 +761,7 @@ export const ContainerDetailPage: Component = () => {
 
       {/* ── Download progress — non-blocking floating card ───────────────── */}
       <DownloadStatusWidget task={download} />
-      <TarTextViewer url={viewUrl()} path={viewPath() ?? ""} onClose={() => setViewPath(null)} />
+      <TarTextViewer url={viewUrl()} path={viewPath() ?? ""} onClose={() => setViewPath(null)} onSave={hasRole("operator") ? files().saveText : undefined} />
     </div>
     </Show>
   );

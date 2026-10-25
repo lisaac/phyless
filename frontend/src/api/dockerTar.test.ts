@@ -195,6 +195,8 @@ describe("readTarFirstFile", () => {
     const f = await readTarFirstFile(stream([...entry("a.txt", enc.encode("hello")), new Uint8Array(1024)]), 1024);
     expect(f.kind).toBe("file");
     if (f.kind === "file") expect(new TextDecoder().decode(f.bytes)).toBe("hello");
+    // Mode/owner come back so an editor save can keep them.
+    if (f.kind === "file") expect(f.meta).toEqual({ mode: 0o644, uid: 0, gid: 0 });
   });
 
   it("skips a PAX header", async () => {

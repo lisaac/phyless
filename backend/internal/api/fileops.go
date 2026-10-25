@@ -1,11 +1,14 @@
 package api
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -58,13 +61,13 @@ func (s *Server) handleChmodFile(kind string) http.HandlerFunc {
 }
 
 func (s *Server) handleUploadFile(kind string) http.HandlerFunc {
-	put := func(ctx context.Context, id, dir, name string, body io.Reader) error {
+	put := func(ctx context.Context, id, dir, name string, body io.Reader, meta *tar.Header) error {
 		defer s.fs.Invalidate()
-		return dockercontainer.UploadTarFile(ctx, s.docker, id, dir, name, body, maxUploadSize)
+		return dockercontainer.UploadTarFile(ctx, s.docker, id, dir, name, body, maxUploadSize, meta)
 	}
 	if kind == "volume" {
-		put = func(ctx context.Context, id, dir, name string, body io.Reader) error {
-			return s.fs.UploadVolume(ctx, id, dir, name, body, maxUploadSize)
+		put = func(ctx context.Context, id, dir, name string, body io.Reader, meta *tar.Header) error {
+			return s.fs.UploadVolume(ctx, id, dir, name, body, maxUploadSize, meta)
 		}
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -80,13 +83,33 @@ func (s *Server) handleUploadFile(kind string) http.HandlerFunc {
 			writeError(w, http.StatusRequestEntityTooLarge, "upload exceeds size limit")
 			return
 		}
-		err := put(r.Context(), chi.URLParam(r, "id"), dir, name, r.Body)
+		meta, err := uploadMeta(r.URL.Query())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		err = put(r.Context(), chi.URLParam(r, "id"), dir, name, r.Body, meta)
 		if errors.Is(err, dockercontainer.ErrUploadTooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
 			return
 		}
 		s.fileOp(w, r, kind+".file.upload", chi.URLParam(r, "id")+":"+dir+"/"+name, err)
 	}
+}
+
+// uploadMeta reads the optional mode (octal) / uid / gid an editor save sends
+// to keep the overwritten file's permissions and owner; all three or none.
+func uploadMeta(q url.Values) (*tar.Header, error) {
+	if q.Get("mode") == "" {
+		return nil, nil
+	}
+	mode, err1 := strconv.ParseInt(q.Get("mode"), 8, 64)
+	uid, err2 := strconv.Atoi(q.Get("uid"))
+	gid, err3 := strconv.Atoi(q.Get("gid"))
+	if err1 != nil || err2 != nil || err3 != nil || mode < 0 || mode > 0o7777 || uid < 0 || gid < 0 {
+		return nil, errors.New("invalid mode/uid/gid")
+	}
+	return &tar.Header{Mode: mode, Uid: uid, Gid: gid}, nil
 }
 
 // fileOp answers and audits one change.

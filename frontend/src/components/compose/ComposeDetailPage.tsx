@@ -397,7 +397,7 @@ export const ComposeDetailPage: Component = () => {
             <Show when={fileLoadError()}><p class="mb-1 text-xs text-red-400">{fileLoadError()}</p></Show>
             <div class="min-h-0 flex-1">
               <Show when={selectedFile()} fallback={<div class="flex h-full items-center justify-center text-xs text-zinc-500">点击左侧文件开始编辑</div>}>
-                <CodeEditor value={fileContent()} onChange={setFileContent} language={fileLang()} />
+                <CodeEditor value={fileContent()} onChange={setFileContent} language={fileLang()} onSave={() => !savingFile() && saveSelectedFile()} />
               </Show>
             </div>
           </div>

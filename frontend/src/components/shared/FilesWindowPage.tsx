@@ -12,8 +12,8 @@ import { InfoBar, Info, ContainerInfo, ImageInfo, ImageInspectModal } from "./In
 
 // Standalone file-browser window, the file-side twin of TerminalWindowPage:
 // a top-level route outside Guard/Layout, opened via FileBrowser's "独立窗口"
-// button. Handlers are rebuilt from (kind, id) by SourceFileBrowser; files open
-// in the read-only tar viewer (editing stays in the main window's editor).
+// button. Handlers are rebuilt from (kind, id) by SourceFileBrowser, the same
+// wiring the list-page 文件 modals use.
 const KIND_LABEL: Record<FileSourceKind, string> = {
   container: "容器", image: "镜像", volume: "存储卷", compose: "Compose", config: "本机配置",
 };

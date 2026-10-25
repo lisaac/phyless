@@ -210,9 +210,12 @@ function writeOctal(target: Uint8Array, offset: number, length: number, value: n
 // ── Reading: first real entry of a `docker cp`-style tar ───────────────────
 
 export type TarFile =
-  | { kind: "file"; bytes: Uint8Array; size: number; truncated: boolean }
+  | { kind: "file"; bytes: Uint8Array; size: number; truncated: boolean; meta: TarMeta }
   | { kind: "link"; target: string }
   | { kind: "dir" };
+
+// Permission bits and owner of an entry — an editor save writes them back.
+export interface TarMeta { mode: number; uid: number; gid: number }
 
 const dec = new TextDecoder();
 
@@ -292,7 +295,9 @@ export async function readTarFirstFile(src: ReadableStream<Uint8Array>, limit: n
       if (type === "5") return { kind: "dir" };
       if (type === "2" || type === "1") return { kind: "link", target: pax.linkpath ?? cstr(h, 157, 100) };
       const keep = Math.min(size, limit);
-      return { kind: "file", bytes: await q.take(keep), size, truncated: size > limit };
+      const num = (key: string, off: number) => Number(pax[key] ?? parseInt(cstr(h, off, 8).trim() || "0", 8));
+      const meta = { mode: parseInt(cstr(h, 100, 8).trim() || "644", 8) & 0o7777, uid: num("uid", 108), gid: num("gid", 116) };
+      return { kind: "file", bytes: await q.take(keep), size, truncated: size > limit, meta };
     }
   } finally {
     await reader.cancel().catch(() => undefined);

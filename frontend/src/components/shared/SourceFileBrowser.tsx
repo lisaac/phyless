@@ -7,7 +7,7 @@ import { fileSource, type FileSourceRef } from "../../api/fileSources";
 import { hasRole } from "../../stores/auth";
 
 // FileBrowser fully wired from a (kind, id) file source: download, open-file
-// in the read-only tar viewer, and (with `writable`) operator file actions.
+// in the tar viewer, and (with `writable`) operator file actions + editing.
 // The one place list-page modals and the standalone window get their file
 // behaviour from, so every "文件" browser opens files the same way.
 // `download` is owned by the caller so a transfer outlives the modal.
@@ -44,7 +44,7 @@ export const SourceFileBrowser: Component<{
         mountsOnly={src().mountsOnly}
         popout={props.noPopout ? undefined : props.src}
       />
-      <TarTextViewer url={viewUrl()} path={viewPath() ?? ""} onClose={() => setViewPath(null)} />
+      <TarTextViewer url={viewUrl()} path={viewPath() ?? ""} onClose={() => setViewPath(null)} onSave={op() ? src().saveText : undefined} />
     </>
   );
 };

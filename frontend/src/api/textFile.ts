@@ -1,5 +1,5 @@
 import { backendFetch, getToken, readSignal, setToken } from "./client";
-import { readTarFirstFile } from "./dockerTar";
+import { readTarFirstFile, type TarMeta } from "./dockerTar";
 import { confirmAction } from "../components/shared/ConfirmModal";
 
 // Extensions the CodeEditor/browser can render safely as text. Anything else
@@ -53,7 +53,7 @@ async function authedGet(url: string, signal: AbortSignal): Promise<Response | n
 export const MAX_VIEW_BYTES = 2 << 20;
 
 export type TarText =
-  | { kind: "text"; text: string; size: number; truncated: boolean }
+  | { kind: "text"; text: string; size: number; truncated: boolean; meta?: TarMeta }
   | { kind: "binary" | "dir"; size?: number }
   | { kind: "link"; target: string };
 
@@ -67,7 +67,8 @@ export async function fetchTarText(url: string, signal?: AbortSignal): Promise<T
     if (!res.body) throw new Error("empty response");
     const f = await readTarFirstFile(res.body, MAX_VIEW_BYTES);
     if (f.kind !== "file") return f;
-    return decodeText(f.bytes, f.size, f.truncated);
+    const t = decodeText(f.bytes, f.size, f.truncated);
+    return t.kind === "text" ? { ...t, meta: f.meta } : t;
   } finally {
     read.dispose();
   }

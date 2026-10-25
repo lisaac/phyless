@@ -48,7 +48,7 @@ func (c *helperClient) ContainerExecInspect(context.Context, string) (container.
 
 func TestUploadTarFileBoundsAndStreams(t *testing.T) {
 	c := &helperClient{}
-	if err := UploadTarFile(context.Background(), c, "id", "/", "hello.txt", bytes.NewBufferString("hello"), 5); err != nil {
+	if err := UploadTarFile(context.Background(), c, "id", "/", "hello.txt", bytes.NewBufferString("hello"), 5, nil); err != nil {
 		t.Fatal(err)
 	}
 	archive := append([]byte(nil), c.copyData.Bytes()...)
@@ -69,6 +69,19 @@ func TestUploadTarFileBoundsAndStreams(t *testing.T) {
 	}
 }
 
+// An editor save keeps the overwritten file's mode and owner.
+func TestUploadTarFileKeepsMeta(t *testing.T) {
+	c := &helperClient{}
+	meta := &tar.Header{Mode: 0o755, Uid: 1000, Gid: 33}
+	if err := UploadTarFile(context.Background(), c, "id", "/", "run.sh", bytes.NewBufferString("hi"), 5, meta); err != nil {
+		t.Fatal(err)
+	}
+	hdr, err := tar.NewReader(&c.copyData).Next()
+	if err != nil || hdr.Name != "run.sh" || hdr.Size != 2 || hdr.Mode != 0o755 || hdr.Uid != 1000 || hdr.Gid != 33 {
+		t.Fatalf("header=%#v err=%v", hdr, err)
+	}
+}
+
 func TestUploadTarFileOverflowAndFilenameDoNotCallDocker(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -80,7 +93,7 @@ func TestUploadTarFileOverflowAndFilenameDoNotCallDocker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &helperClient{}
-			err := UploadTarFile(context.Background(), c, "id", "/", tc.name, bytes.NewBufferString(tc.body), 5)
+			err := UploadTarFile(context.Background(), c, "id", "/", tc.name, bytes.NewBufferString(tc.body), 5, nil)
 			if tc.want == ErrUploadTooLarge {
 				if !errors.Is(err, ErrUploadTooLarge) {
 					t.Fatalf("error=%v", err)
@@ -99,7 +112,7 @@ func TestUploadTarFileRejectsEarlySuccessfulConsumer(t *testing.T) {
 	// The helper client consumes the pipe in CopyToContainer; an immediate
 	// success is modeled below to verify the producer cannot remain blocked.
 	client := &earlyReturnClient{}
-	if err := UploadTarFile(context.Background(), client, "id", "/", "hello.txt", bytes.NewBufferString("hello"), 10); err == nil {
+	if err := UploadTarFile(context.Background(), client, "id", "/", "hello.txt", bytes.NewBufferString("hello"), 10, nil); err == nil {
 		t.Fatal("expected producer error when Docker stops reading early")
 	}
 }
