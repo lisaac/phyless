@@ -211,7 +211,7 @@ func (b *LsBuffer) Write(p []byte) (int, error) {
 
 // ParseLs parses `ls -la` output (GNU or busybox, C locale).
 func ParseLs(r io.Reader) ([]FileEntry, error) {
-	var out []FileEntry
+	out := []FileEntry{} // an empty dir is [], not JSON null
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		if e, ok := parseLsLine(scanner.Text()); ok {

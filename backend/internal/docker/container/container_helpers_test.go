@@ -193,3 +193,13 @@ func TestExecRootRunsAsRootAndReportsStderr(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// An empty directory (only . and ..) must encode as [], not null: the
+// frontend decorates the listing array and choked on null (empty volumes
+// spun forever).
+func TestParseLsEmptyDirIsEmptySlice(t *testing.T) {
+	out, err := ParseLs(strings.NewReader("total 8\ndrwxr-xr-x    2 999      999           4096 Jul  2 02:30 .\ndrwxr-xr-x    1 0        0             4096 Oct 27 02:39 ..\n"))
+	if err != nil || out == nil || len(out) != 0 {
+		t.Fatalf("got %#v, %v; want empty non-nil slice", out, err)
+	}
+}
