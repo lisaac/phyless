@@ -34,7 +34,7 @@ export const Modal: Component<{
         >
           {/* Header */}
           <div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
-            <h2 class="text-sm font-semibold text-zinc-200">{props.title}</h2>
+            <h2 class="min-w-0 break-all text-sm font-semibold text-zinc-200">{props.title}</h2>
             <button
               class="p-1 text-zinc-500 transition-colors hover:text-zinc-200"
               onClick={props.onClose}

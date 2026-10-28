@@ -26,7 +26,7 @@ const resolve = (confirmed: boolean) => {
 
 export const ConfirmModal: Component = () => (
   <Modal open={!!pending()} onClose={() => resolve(false)} title={pending()?.title ?? "确认操作"} priority>
-    <p class="mb-4 whitespace-pre-line text-sm text-zinc-300">{pending()?.message}</p>
+    <p class="mb-4 whitespace-pre-line break-all text-sm text-zinc-300">{pending()?.message}</p>
     <div class="flex justify-end gap-2">
       <Button onClick={() => resolve(false)}>取消</Button>
       <Button variant={pending()?.danger ? "danger" : "primary"} onClick={() => resolve(true)}>
