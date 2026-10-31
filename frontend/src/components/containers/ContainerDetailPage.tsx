@@ -391,7 +391,7 @@ export const ContainerDetailPage: Component = () => {
             >↑ 升级</Btn>
             {/* Compose-managed containers are updated through their project. */}
             <Show when={!cfg().Labels?.[LABEL_PROJECT]}>
-              <Btn title="定时检查镜像更新，可自动升级" onClick={() => setAutoTarget(name())}>⟳ 自动更新</Btn>
+              <Btn title="定时检查镜像更新，可自动升级" onClick={() => setAutoTarget(name())}>↻ 自动更新</Btn>
             </Show>
             <Btn onClick={() => void openCmdModal()}>
               <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>

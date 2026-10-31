@@ -86,7 +86,7 @@ export const AutoUpdatesPage: Component = () => {
             </For>
           </Show>
           <Show when={autoUpdateList().length === 0}>
-            <p class="px-3 py-6 text-center text-xs text-zinc-500">还没有自动更新设置。在容器或 Compose 详情页点「⟳ 自动更新」添加。</p>
+            <p class="px-3 py-6 text-center text-xs text-zinc-500">还没有自动更新设置。在容器或 Compose 详情页点「↻ 自动更新」添加。</p>
           </Show>
         </div>
       </div>

@@ -282,7 +282,7 @@ export const ComposeDetailPage: Component = () => {
             loading={isRunning("update")}
             onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "update", canBuild: servicesHaveBuild(detail()?.services) })}
           >↑ Update</ActBtn>
-          <ActBtn title="定时检查镜像更新，可自动 pull + up" onClick={() => setAutoOpen(true)}>⟳ 自动更新</ActBtn>
+          <ActBtn title="定时检查镜像更新，可自动 pull + up" onClick={() => setAutoOpen(true)}>↻ 自动更新</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>
             <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>

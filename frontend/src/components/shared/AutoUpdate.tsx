@@ -73,7 +73,7 @@ export const AutoUpdateBadge: Component<{ kind: AutoUpdateKind; target?: string 
   const tone = () => (p()?.enabled ? toneCls(p()?.last_status) : "text-zinc-500");
   return (
     <Show when={p()}>
-      {(pol) => <span class={`shrink-0 cursor-help text-[10px] font-normal ${tone()}`} title={badgeTitle(pol())}>⟳ 自动</span>}
+      {(pol) => <span class={`shrink-0 cursor-help text-[10px] font-normal ${tone()}`} title={badgeTitle(pol())}>↻ 自动</span>}
     </Show>
   );
 };
