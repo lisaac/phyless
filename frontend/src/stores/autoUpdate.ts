@@ -22,15 +22,21 @@ export interface AutoUpdatePolicy {
   remove_old_image?: boolean;
   updated_at?: string;
   last_run_at?: string;
-  last_status?: "running" | "latest" | "available" | "updated" | "handed-off" | "skipped" | "error";
+  last_status?: "running" | "latest" | "available" | "updated" | "handed-off" | "skipped" | "missing" | "interrupted" | "error";
   last_error?: string;
   last_log?: string[];
+  /** Set while runs find the target gone; the policy is never deleted for it. */
+  missing_since?: string;
+  /** The last real update attempt (checks don't touch these). */
+  last_update_at?: string;
+  last_update_status?: "running" | "updated" | "handed-off" | "failed" | "interrupted";
+  last_update_message?: string;
 }
 
 let store: ReturnType<typeof createPollingResource<AutoUpdatePolicy[]>> | undefined;
 
-/** The policy of a target; the first call loads the list and subscribes. */
-export function autoUpdateFor(kind: AutoUpdateKind, target: string | undefined): AutoUpdatePolicy | undefined {
+/** Every policy of the active Docker server; the first call loads the list and subscribes. */
+export function autoUpdateList(): AutoUpdatePolicy[] {
   if (!store) {
     const s = store = createPollingResource<AutoUpdatePolicy[]>("/api/auto-updates", [], "id");
     const reload = () => void s.refresh();
@@ -38,7 +44,13 @@ export function autoUpdateFor(kind: AutoUpdateKind, target: string | undefined):
     window.addEventListener(REFRESH_EVENT, reload);
     reload();
   }
-  return target ? store.items().find((p) => p.kind === kind && p.target === target) : undefined;
+  return store.items();
+}
+
+/** The policy of a target. */
+export function autoUpdateFor(kind: AutoUpdateKind, target: string | undefined): AutoUpdatePolicy | undefined {
+  const all = autoUpdateList();
+  return target ? all.find((p) => p.kind === kind && p.target === target) : undefined;
 }
 
 export const saveAutoUpdate = (p: Omit<AutoUpdatePolicy, "id"> & { id?: string }) =>
@@ -68,5 +80,22 @@ export const AUTO_STATUS_LABEL: Record<NonNullable<AutoUpdatePolicy["last_status
   updated: "已更新",
   "handed-off": "已交给 helper 更新",
   skipped: "已跳过",
+  missing: "目标不存在",
+  interrupted: "中断",
   error: "失败",
 };
+
+export const UPDATE_STATUS_LABEL: Record<NonNullable<AutoUpdatePolicy["last_update_status"]>, string> = {
+  running: "更新中",
+  updated: "成功",
+  "handed-off": "已交给 helper",
+  failed: "失败",
+  interrupted: "中断",
+};
+
+/** Tone of a last-run / last-update status: "bad" | "warn" | "ok". */
+export function statusTone(s?: string): "bad" | "warn" | "ok" {
+  if (s === "error" || s === "skipped" || s === "missing" || s === "failed" || s === "interrupted") return "bad";
+  if (s === "available" || s === "running") return "warn";
+  return "ok";
+}

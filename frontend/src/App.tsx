@@ -24,6 +24,7 @@ const EventsPage = lazy(() => import("./components/events/EventsPage").then((m) 
 const ConfigFilesPage = lazy(() => import("./components/config/ConfigFilesPage").then((m) => ({ default: m.ConfigFilesPage })));
 const UsersPage = lazy(() => import("./components/settings/UsersPage").then((m) => ({ default: m.UsersPage })));
 const DockerSettingsPage = lazy(() => import("./components/settings/DockerSettingsPage").then((m) => ({ default: m.DockerSettingsPage })));
+const AutoUpdatesPage = lazy(() => import("./components/settings/AutoUpdatesPage").then((m) => ({ default: m.AutoUpdatesPage })));
 const AuditPage = lazy(() => import("./components/settings/AuditPage").then((m) => ({ default: m.AuditPage })));
 
 // Guard wraps the authenticated layout; redirects to /login when no user.
@@ -72,6 +73,7 @@ export const App: Component = () => {
           <Route path="/volumes" component={VolumeListPage} />
           <Route path="/events" component={EventsPage} />
           <Route path="/config" component={ConfigFilesPage} />
+          <Route path="/auto-updates" component={AutoUpdatesPage} />
           <Route path="/settings/users" component={UsersPage} />
           <Route path="/settings/docker" component={DockerSettingsPage} />
           <Route path="/settings/audit" component={AuditPage} />

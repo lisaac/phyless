@@ -8,6 +8,7 @@
 - **Compose 详情**：操作栏 `⟳ 自动更新`。
 - 设置了策略的容器 / 项目，在列表行和详情标题旁显示 `⟳ 自动`，悬停可看定时和上次结果。颜色：绿 = 正常，琥珀 = 有新版本（只检查模式），红 = 失败或跳过，灰 = 已停用。
 - 弹窗里可以 `立即执行` 一次（进入任务抽屉），也可以删除策略。
+- **全局管理**：侧栏「配置 → 自动更新」（operator 及以上）列出当前 Docker 服务器的全部策略：目标、定时、上次运行、最近一次更新的结果和原因。每行可以编辑（同一个弹窗）、立即执行、删除。目标已不存在的策略标为「目标不存在」，在这里清理。
 
 ## 结构
 
@@ -38,7 +39,24 @@
 | `updated_at` | 保存时间，从未运行过时作为定时起点 |
 | `last_run_at`, `last_status`, `last_error`, `last_log` | 上次运行结果；`last_log` 只留最后 30 行文本，跳过逐层下载进度 |
 
-`last_status`：`running`、`latest`（已是最新）、`available`（只检查模式下有新版本）、`updated`、`handed-off`（phyless 自身，交给 helper 完成并审计）、`skipped`（需要人工处理，原因在 `last_error`）、`error`。
+`last_status`：`running`、`latest`（已是最新）、`available`（只检查模式下有新版本）、`updated`、`handed-off`（phyless 自身，交给 helper 完成并审计）、`skipped`（需要人工处理，原因在 `last_error`）、`missing`（目标不存在）、`interrupted`（执行中 phyless 停止）、`error`。
+
+**最近一次更新**单独记录，不会被之后的例行检查覆盖：
+
+| 字段 | 说明 |
+|---|---|
+| `last_update_at` | 开始更新的时间（检查结束、真正动手之前写入） |
+| `last_update_status` | `running`、`updated`、`handed-off`、`failed`、`interrupted` |
+| `last_update_message` | 改了什么（容器：`ref：旧镜像 → 新镜像`；Compose：`服务 a, b`）；失败时附上原因 |
+
+**中断**：phyless 启动（或切换到某个 Docker 服务器）时，把该服务器上仍是 `running` 的记录改为 `interrupted`。更新 phyless 自身时一定会这样结束，结果以审计日志里 helper 的记录为准。
+
+### 目标不存在
+
+- 执行时容器 inspect 返回 NotFound，或 Compose 项目查找返回 404，记为 `missing`，并在 `missing_since` 记下第一次发现的时间。`compose down` 后项目仍登记着，这算"未运行"（`skipped`），不算不存在。
+- **从不自动删除策略**：同名容器重新创建（CLI `docker rm` + `docker run --name 同名`、重建 Compose 项目）后，下次执行会自动接上，并清除 `missing_since`。
+- 在 phyless 里删除容器或注销 Compose 项目时，同时删除对应策略；在 phyless 里重命名容器时，策略跟着改到新名字。这一步只在存在容器策略时多做一次 inspect。
+- 在 CLI 中删除或改名不经过 phyless，靠上面的执行时检查发现。全局管理页还会拿当前的容器 / Compose 列表比对，不必等到下次执行。
 
 **拉取方式**：只支持"不使用代理"和"服务端代理"。"浏览器代理导入"要求浏览器在线，定时任务无法执行，弹窗中不提供这个选项。
 
@@ -120,5 +138,5 @@ POST   /api/auto-updates/{id}/run   （operator）立即执行一次，输出与
 ## 已知限制
 
 - 不发外部通知（webhook / 邮件），结果只在 UI 和审计日志中。
-- 容器改名、删除，或 Compose 项目 ID 变化（例如自动发现的 `auto:<名称>` 项目被手动注册后）：旧策略找不到目标，每次执行都记为失败，需要重新设置。
+- Compose 项目 ID 变化（例如自动发现的 `auto:<名称>` 项目被手动注册后）：旧策略显示「目标不存在」，需要重新设置后删除旧的。
 - phyless 自身容器或项目更新后，不会清理旧镜像。

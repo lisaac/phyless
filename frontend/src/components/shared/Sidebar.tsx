@@ -16,6 +16,7 @@ export const mainLinks = [
   { to: "/volumes",    label: "存储卷" },
   { to: "/events",     label: "事件" },
   { to: "/config",     label: "本机配置" },
+  { to: "/auto-updates", label: "自动更新" },
 ];
 export const adminLinks = [
   { to: "/settings/docker",     label: "Docker 连接" },
@@ -27,6 +28,7 @@ const DOCKER_PATHS = new Set(["/containers", "/compose", "/images", "/networks",
 const dockerLinks = mainLinks.filter((l) => DOCKER_PATHS.has(l.to));
 const overviewLink = mainLinks.find((l) => l.to === "/overview")!;
 const configLink = mainLinks.find((l) => l.to === "/config")!;
+const autoUpdateLink = mainLinks.find((l) => l.to === "/auto-updates")!;
 
 export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
   const navigate = useNavigate();
@@ -91,6 +93,11 @@ export const Sidebar: Component<{ onClose?: () => void }> = (props) => {
         <A href={configLink.to} replace class={linkCls} activeClass={activeCls} onClick={() => props.onClose?.()}>
           {configLink.label}
         </A>
+        <Show when={hasRole("operator")}>
+          <A href={autoUpdateLink.to} replace class={linkCls} activeClass={activeCls} onClick={() => props.onClose?.()}>
+            {autoUpdateLink.label}
+          </A>
+        </Show>
 
         <Show when={hasRole("admin")}>
           <div class="mx-4 mt-4 mb-1 border-t border-zinc-800 pt-3 text-[10px] font-medium uppercase tracking-widest text-zinc-500">

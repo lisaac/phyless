@@ -398,11 +398,13 @@ func (s *Server) handleDeleteContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "释放文件浏览容器失败: "+err.Error())
 		return
 	}
+	policyName := s.containerPolicyName(r.Context(), id)
 	err := s.docker.ContainerRemove(r.Context(), id, container.RemoveOptions{Force: force})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.followAutoUpdate("container", policyName, "")
 	s.auditFromCtx(r, "container.delete", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -480,10 +482,12 @@ func (s *Server) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
+	policyName := s.containerPolicyName(r.Context(), id)
 	if err := s.docker.ContainerRename(r.Context(), id, body.Name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.followAutoUpdate("container", policyName, strings.TrimPrefix(strings.TrimSpace(body.Name), "/"))
 	s.auditFromCtx(r, "container.rename", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }

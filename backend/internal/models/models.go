@@ -97,6 +97,15 @@ type AutoUpdatePolicy struct {
 	LastStatus string     `json:"last_status,omitempty"`
 	LastError  string     `json:"last_error,omitempty"`
 	LastLog    []string   `json:"last_log,omitempty"`
+	// MissingSince is when a run first found the target gone. Policies are
+	// never deleted automatically: the same name may come back (docker rm +
+	// run, compose recreate), which clears it.
+	MissingSince *time.Time `json:"missing_since,omitempty"`
+	// The last actual update attempt, kept apart from Last*, which every
+	// check overwrites. Message says what changed, or why it failed.
+	LastUpdateAt      *time.Time `json:"last_update_at,omitempty"`
+	LastUpdateStatus  string     `json:"last_update_status,omitempty"`
+	LastUpdateMessage string     `json:"last_update_message,omitempty"`
 }
 
 // Schedule: Kind picks the fields that apply.

@@ -7,34 +7,70 @@ import { RemoveOldImageCheckbox } from "./RemoveOldImage";
 import { confirmAction } from "./ConfirmModal";
 import { toast } from "./Toast";
 import {
-  AUTO_STATUS_LABEL, WEEKDAYS, autoUpdateFor, deleteAutoUpdate, runAutoUpdate, saveAutoUpdate, scheduleLabel,
+  AUTO_STATUS_LABEL, UPDATE_STATUS_LABEL, WEEKDAYS, autoUpdateFor, statusTone, deleteAutoUpdate, runAutoUpdate, saveAutoUpdate, scheduleLabel,
   type AutoUpdateKind, type AutoUpdatePolicy, type Schedule, type ScheduleKind,
 } from "../../stores/autoUpdate";
 
-// The one auto-update UI for containers and Compose projects: a header badge
-// and the settings dialog. Pages own the button that opens it.
+// The one auto-update UI for containers and Compose projects: a header badge,
+// the settings dialog and the run/update record shared with the global page.
+// Pages own the button that opens the dialog.
 
 const inputCls = "min-w-0 border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs outline-none transition-colors focus:border-indigo-500";
 
-const fmtTime = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "");
+export const fmtTime = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "");
+
+const TONE_CLS = { bad: "text-red-400", warn: "text-amber-400", ok: "text-emerald-400" };
+export const toneCls = (s?: string) => TONE_CLS[statusTone(s)];
 
 function badgeTitle(p: AutoUpdatePolicy): string {
   const lines = [`自动${p.mode === "update" ? "更新" : "检查"}：${scheduleLabel(p.schedule)}${p.enabled ? "" : "（已停用）"}`];
-  if (p.last_run_at) lines.push(`上次 ${fmtTime(p.last_run_at)}：${p.last_status ? AUTO_STATUS_LABEL[p.last_status] : ""}`);
+  if (p.last_run_at) lines.push(`上次运行 ${fmtTime(p.last_run_at)}：${p.last_status ? AUTO_STATUS_LABEL[p.last_status] : ""}`);
   if (p.last_error) lines.push(p.last_error);
+  if (p.last_update_at) lines.push(`最近更新 ${fmtTime(p.last_update_at)}：${p.last_update_status ? UPDATE_STATUS_LABEL[p.last_update_status] : ""}`);
   return lines.join("\n");
 }
+
+/** Last run and last update of a policy, with reasons; dialog and global page. */
+export const AutoUpdateRecord: Component<{ policy: AutoUpdatePolicy; log?: boolean }> = (props) => (
+  <div class="space-y-1 text-xs">
+    <div>
+      <span class="text-zinc-500">上次运行 </span>
+      <Show when={props.policy.last_run_at} fallback={<span class="text-zinc-500">尚未运行</span>}>
+        <span class="text-zinc-400">{fmtTime(props.policy.last_run_at)} </span>
+        <span class={toneCls(props.policy.last_status)}>{props.policy.last_status ? AUTO_STATUS_LABEL[props.policy.last_status] : ""}</span>
+      </Show>
+      <Show when={props.policy.missing_since}>
+        <span class="text-zinc-500">（自 {fmtTime(props.policy.missing_since)} 起找不到目标）</span>
+      </Show>
+      <Show when={props.policy.last_error}><div class="break-all text-red-400">{props.policy.last_error}</div></Show>
+    </div>
+    <div>
+      <span class="text-zinc-500">最近更新 </span>
+      <Show when={props.policy.last_update_at} fallback={<span class="text-zinc-500">从未更新</span>}>
+        <span class="text-zinc-400">{fmtTime(props.policy.last_update_at)} </span>
+        <span class={toneCls(props.policy.last_update_status)}>
+          {props.policy.last_update_status ? UPDATE_STATUS_LABEL[props.policy.last_update_status] : ""}
+        </span>
+        <Show when={props.policy.last_update_message}>
+          <div class={`break-all ${statusTone(props.policy.last_update_status) === "bad" ? "text-red-400" : "text-zinc-400"}`}>
+            {props.policy.last_update_message}
+          </div>
+        </Show>
+      </Show>
+    </div>
+    <Show when={props.log && props.policy.last_log?.length}>
+      <details>
+        <summary class="cursor-pointer text-zinc-500">上次运行日志</summary>
+        <pre class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all bg-zinc-950 p-2 font-mono text-[11px] text-zinc-400">{props.policy.last_log!.join("\n")}</pre>
+      </details>
+    </Show>
+  </div>
+);
 
 /** Small marker next to a container/project name; nothing without a policy. */
 export const AutoUpdateBadge: Component<{ kind: AutoUpdateKind; target?: string }> = (props) => {
   const p = () => autoUpdateFor(props.kind, props.target);
-  const tone = () => {
-    const s = p()?.last_status;
-    if (!p()?.enabled) return "text-zinc-500";
-    if (s === "error" || s === "skipped") return "text-red-400";
-    if (s === "available") return "text-amber-400";
-    return "text-emerald-400";
-  };
+  const tone = () => (p()?.enabled ? toneCls(p()?.last_status) : "text-zinc-500");
   return (
     <Show when={p()}>
       {(pol) => <span class={`shrink-0 cursor-help text-[10px] font-normal ${tone()}`} title={badgeTitle(pol())}>⟳ 自动</span>}
@@ -174,22 +210,8 @@ export const AutoUpdateModal: Component<{
           <RemoveOldImageCheckbox checked={removeOld()} onChange={setRemoveOld} />
         </Show>
 
-        <Show when={policy()?.last_run_at}>
-          <div class="border-t border-zinc-800 pt-2">
-            <div class="text-zinc-500">
-              上次运行 {fmtTime(policy()!.last_run_at)}：
-              <span class={policy()!.last_status === "error" || policy()!.last_status === "skipped" ? "text-red-400" : "text-zinc-300"}>
-                {policy()!.last_status ? AUTO_STATUS_LABEL[policy()!.last_status!] : ""}
-              </span>
-            </div>
-            <Show when={policy()!.last_error}><div class="mt-0.5 break-all text-red-400">{policy()!.last_error}</div></Show>
-            <Show when={policy()!.last_log?.length}>
-              <details class="mt-1">
-                <summary class="cursor-pointer text-zinc-500">日志</summary>
-                <pre class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all bg-zinc-950 p-2 font-mono text-[11px] text-zinc-400">{policy()!.last_log!.join("\n")}</pre>
-              </details>
-            </Show>
-          </div>
+        <Show when={policy()}>
+          {(p) => <div class="border-t border-zinc-800 pt-2"><AutoUpdateRecord policy={p()} log /></div>}
         </Show>
       </div>
 

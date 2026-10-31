@@ -808,6 +808,7 @@ func (s *Server) handleDeleteCompose(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	s.followAutoUpdate("compose", id, "")
 	s.auditFromCtx(r, "compose.delete", id, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }

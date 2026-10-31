@@ -17,6 +17,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/errdefs"
 	"github.com/go-chi/chi/v5"
 	"phyless/backend/internal/autoupdate"
 	dockercompose "phyless/backend/internal/docker/compose"
@@ -33,7 +34,11 @@ const (
 	autoUpdated   = "updated"
 	autoHandedOff = "handed-off" // phyless itself: the helper finishes and audits it
 	autoSkipped   = "skipped"    // needs a person; LastError says why
+	autoMissing   = "missing"    // target not found; see MissingSince
 	autoError     = "error"
+	// LastUpdateStatus only.
+	autoFailed      = "failed"
+	autoInterrupted = "interrupted" // phyless stopped mid-run (expected when it updates itself)
 
 	autoUpdateUser    = "auto-update"
 	autoUpdateTimeout = time.Hour
@@ -51,6 +56,7 @@ func (s *Server) mountAutoUpdateRoutes(r chi.Router) {
 // newAutoUpdater runs this Docker server's policies; one per runtime, so a
 // server switch stops it with the runtime context.
 func (s *Server) newAutoUpdater() *autoupdate.Runner {
+	s.markInterruptedAutoUpdates()
 	return autoupdate.New(s.autoUpdatePolicies, func(ctx context.Context, p models.AutoUpdatePolicy) {
 		s.runAutoUpdate(ctx, p, io.Discard)
 	})
@@ -68,6 +74,79 @@ func (s *Server) autoUpdatePolicies() ([]models.AutoUpdatePolicy, error) {
 		}
 	}
 	return out, nil
+}
+
+// markInterruptedAutoUpdates settles runs a previous process left "running":
+// it died mid-run, which is how an update of phyless itself always ends.
+func (s *Server) markInterruptedAutoUpdates() {
+	ps, err := s.autoUpdatePolicies()
+	if err != nil || !slices.ContainsFunc(ps, func(p models.AutoUpdatePolicy) bool {
+		return p.LastStatus == autoRunning || p.LastUpdateStatus == autoRunning
+	}) {
+		return
+	}
+	err = s.store.Update(func(cfg *store.Config) error {
+		for i := range cfg.AutoUpdates {
+			q := &cfg.AutoUpdates[i]
+			if q.ServerID != s.serverID {
+				continue
+			}
+			if q.LastStatus == autoRunning {
+				q.LastStatus, q.LastError = autoInterrupted, "phyless 在执行中停止（重启或切换了 Docker 服务器）"
+			}
+			if q.LastUpdateStatus == autoRunning {
+				q.LastUpdateStatus = autoInterrupted
+				q.LastUpdateMessage += "；执行中 phyless 停止，更新 phyless 自身时属正常，结果见审计日志"
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("autoupdate: mark interrupted: %v", err)
+	}
+}
+
+// followAutoUpdate keeps a policy on its target when phyless renames it
+// (to != "") and drops it when phyless deletes it (to == ""). Changes made
+// outside phyless are noticed at run time instead (autoMissing).
+func (s *Server) followAutoUpdate(kind, from, to string) {
+	match := func(p models.AutoUpdatePolicy) bool {
+		return p.ServerID == s.serverID && p.Kind == kind && p.Target == from
+	}
+	if ps, err := s.autoUpdatePolicies(); err != nil || from == "" || !slices.ContainsFunc(ps, match) {
+		return
+	}
+	err := s.store.Update(func(cfg *store.Config) error {
+		if to == "" {
+			cfg.AutoUpdates = slices.DeleteFunc(cfg.AutoUpdates, match)
+			return nil
+		}
+		for i := range cfg.AutoUpdates {
+			if match(cfg.AutoUpdates[i]) {
+				cfg.AutoUpdates[i].Target = to
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("autoupdate: follow %s %s: %v", kind, from, err)
+		return
+	}
+	s.wakeAutoUpdater()
+}
+
+// containerPolicyName is the name a container policy would use for id, or ""
+// when no container policy exists (then no inspect is spent).
+func (s *Server) containerPolicyName(ctx context.Context, id string) string {
+	ps, err := s.autoUpdatePolicies()
+	if err != nil || !slices.ContainsFunc(ps, func(p models.AutoUpdatePolicy) bool { return p.Kind == "container" }) {
+		return ""
+	}
+	info, err := s.docker.ContainerInspect(ctx, id)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(info.Name, "/")
 }
 
 func (s *Server) wakeAutoUpdater() {
@@ -192,12 +271,22 @@ func (s *Server) runAutoUpdate(ctx context.Context, p models.AutoUpdatePolicy, w
 	})
 	ctx, cancel := context.WithTimeout(ctx, autoUpdateTimeout)
 	defer cancel()
+	// attempt marks the point of no return: from here the outcome is an
+	// update result, recorded apart from routine checks.
+	var detail string
+	attempt := func(d string) {
+		detail = d
+		now := time.Now()
+		s.recordAutoUpdate(p.ID, func(q *models.AutoUpdatePolicy) {
+			q.LastUpdateAt, q.LastUpdateStatus, q.LastUpdateMessage = &now, autoRunning, d
+		})
+	}
 	var status string
 	var err error
 	if p.Kind == "compose" {
-		status, err = s.autoUpdateCompose(ctx, p, out, cancel)
+		status, err = s.autoUpdateCompose(ctx, p, out, cancel, attempt)
 	} else {
-		status, err = s.autoUpdateContainer(ctx, p, out)
+		status, err = s.autoUpdateContainer(ctx, p, out, attempt)
 	}
 	if status == "" {
 		status = autoError
@@ -212,6 +301,22 @@ func (s *Server) runAutoUpdate(ctx context.Context, p models.AutoUpdatePolicy, w
 	}
 	s.recordAutoUpdate(p.ID, func(q *models.AutoUpdatePolicy) {
 		q.LastStatus, q.LastError, q.LastLog = status, msg, out.lines
+		if status != autoMissing {
+			q.MissingSince = nil
+		} else if q.MissingSince == nil {
+			q.MissingSince = &start
+		}
+		if detail == "" {
+			return
+		}
+		switch {
+		case err != nil:
+			q.LastUpdateStatus, q.LastUpdateMessage = autoFailed, detail+"；失败："+msg
+		case status == autoHandedOff:
+			q.LastUpdateStatus = autoHandedOff
+		default:
+			q.LastUpdateStatus = autoUpdated
+		}
 	})
 }
 
@@ -228,8 +333,11 @@ func (s *Server) recordAutoUpdate(id string, fn func(*models.AutoUpdatePolicy)) 
 }
 
 // autoUpdateContainer returns the outcome; for skipped, err says why.
-func (s *Server) autoUpdateContainer(ctx context.Context, p models.AutoUpdatePolicy, w io.Writer) (string, error) {
+func (s *Server) autoUpdateContainer(ctx context.Context, p models.AutoUpdatePolicy, w io.Writer, attempt func(string)) (string, error) {
 	info, err := s.docker.ContainerInspect(ctx, p.Target)
+	if errdefs.IsNotFound(err) {
+		return autoMissing, fmt.Errorf("目标容器 %s 不存在", p.Target)
+	}
 	if err != nil {
 		return "", fmt.Errorf("目标容器 %s 不可用：%w", p.Target, err)
 	}
@@ -265,6 +373,7 @@ func (s *Server) autoUpdateContainer(ctx context.Context, p models.AutoUpdatePol
 	if err != nil {
 		return "", err
 	}
+	attempt(fmt.Sprintf("%s：%s → %s", res.Ref, shortImageID(res.LocalID), shortImageID(res.RemoteID)))
 	handedOff, err := s.upgradeContainer(ctx, info, containerUpgrade{
 		user: autoUpdateUser, auth: auth, skipPull: skipPull, removeOldImage: p.RemoveOldImage,
 	}, w)
@@ -281,8 +390,11 @@ func (s *Server) autoUpdateContainer(ctx context.Context, p models.AutoUpdatePol
 // service is behind, pulls only those services and runs `up`, which
 // recreates just the services whose image changed. Build services are not
 // rebuilt.
-func (s *Server) autoUpdateCompose(ctx context.Context, p models.AutoUpdatePolicy, w io.Writer, cancel context.CancelFunc) (string, error) {
+func (s *Server) autoUpdateCompose(ctx context.Context, p models.AutoUpdatePolicy, w io.Writer, cancel context.CancelFunc, attempt func(string)) (string, error) {
 	resolved, err := s.resolveCompose(ctx, p.Target)
+	if lookupErr := (*composeLookupError)(nil); errors.As(err, &lookupErr) && lookupErr.status == http.StatusNotFound {
+		return autoMissing, fmt.Errorf("Compose 项目 %s 不存在", p.Target)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -350,6 +462,7 @@ func (s *Server) autoUpdateCompose(ctx context.Context, p models.AutoUpdatePolic
 	if err != nil {
 		return "", err
 	}
+	attempt("服务 " + strings.Join(behind, ", "))
 	output := dockercompose.NewNDJSONWriter(w, cancel)
 	defer output.Flush()
 	task := composeTask{
