@@ -85,7 +85,38 @@ func TestUpdateStatusDigestOnlyWithoutRepoDigests(t *testing.T) {
 	}
 }
 
+// offlineHead makes the HEAD probe fail so checks fall back to the daemon.
+func offlineHead(t *testing.T) {
+	prev := resolveRemoteDigest
+	resolveRemoteDigest = func(context.Context, *http.Transport, string, string) (docker.RemoteImage, error) {
+		return docker.RemoteImage{}, errors.New("offline")
+	}
+	t.Cleanup(func() { resolveRemoteDigest = prev })
+}
+
+func TestCheckUpdatesPrefersHead(t *testing.T) {
+	heads := 0
+	prev := resolveRemoteDigest
+	resolveRemoteDigest = func(context.Context, *http.Transport, string, string) (docker.RemoteImage, error) {
+		heads++
+		return docker.RemoteImage{Digest: "sha256:cur"}, nil
+	}
+	t.Cleanup(func() { resolveRemoteDigest = prev })
+	c := &updateCheckClient{}
+	out, err := (&Server{docker: c}).checkUpdates(context.Background(), []string{"a", "b"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Status != updateLatest || out[1].Status != updateLocalNewer {
+		t.Errorf("got %+v", out)
+	}
+	if heads != 1 || c.distCalls != 0 {
+		t.Errorf("heads=%d distCalls=%d, want one HEAD and no daemon lookup", heads, c.distCalls)
+	}
+}
+
 func TestHandleCheckUpdatesDirect(t *testing.T) {
+	offlineHead(t)
 	c := &updateCheckClient{}
 	s := &Server{docker: c}
 	rec := httptest.NewRecorder()

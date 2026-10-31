@@ -9,6 +9,8 @@ import { toast } from "../shared/Toast";
 import { UpgradeContainerModal, type UpgradeTarget } from "./UpgradeContainerModal";
 import { CheckUpdatesModal } from "./CheckUpdatesModal";
 import { UpdateBadge } from "./UpdateBadge";
+import { AutoUpdateBadge, AutoUpdateModal } from "../shared/AutoUpdate";
+import { LABEL_PROJECT } from "../compose/composeShared";
 import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
 import { DownloadStatusWidget } from "../shared/UploadStatusWidget";
 import { createDownloadTask } from "../../api/download";
@@ -174,6 +176,7 @@ export const ContainerDetailPage: Component = () => {
   const [consoleTarget, setConsoleTarget] = createSignal<{ id: string; name: string } | null>(null);
   const [copySource, setCopySource] = createSignal<{ containerId: string; path: string } | null>(null);
   const [upgradeTargets, setUpgradeTargets] = createSignal<UpgradeTarget[] | null>(null);
+  const [autoTarget, setAutoTarget] = createSignal<string | null>(null);
   const [checkTargets, setCheckTargets] = createSignal<{ id: string; name: string }[] | null>(null);
 
   // React to queued tasks on this container finishing (while mounted): refetch
@@ -347,6 +350,7 @@ export const ContainerDetailPage: Component = () => {
               {(h) => <span class="whitespace-nowrap text-xs text-zinc-400">· {h()}</span>}
             </Show>
             <UpdateBadge check={update()} />
+            <AutoUpdateBadge kind="container" target={name()} />
           </div>
           <p class="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-[11px] text-zinc-400">
             <ImageLink wrap id={inspect()?.Image} label={cfg().Image ?? ""} />
@@ -385,6 +389,10 @@ export const ContainerDetailPage: Component = () => {
               title={isUpgradable(update()) ? "有新镜像可升级" : undefined}
               onClick={() => setUpgradeTargets([{ id: id(), name: name(), imageId: inspect()?.Image, labels: cfg().Labels }])}
             >↑ 升级</Btn>
+            {/* Compose-managed containers are updated through their project. */}
+            <Show when={!cfg().Labels?.[LABEL_PROJECT]}>
+              <Btn title="定时检查镜像更新，可自动升级" onClick={() => setAutoTarget(name())}>⟳ 自动更新</Btn>
+            </Show>
             <Btn onClick={() => void openCmdModal()}>
               <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
             </Btn>
@@ -757,6 +765,7 @@ export const ContainerDetailPage: Component = () => {
       <CopyToContainerModal source={copySource()} onClose={() => setCopySource(null)} />
 
       <UpgradeContainerModal targets={upgradeTargets()} onClose={() => setUpgradeTargets(null)} />
+      <AutoUpdateModal kind="container" target={autoTarget()} title={name()} onClose={() => setAutoTarget(null)} />
       <CheckUpdatesModal targets={checkTargets()} onClose={() => setCheckTargets(null)} />
 
       {/* ── Download progress — non-blocking floating card ───────────────── */}

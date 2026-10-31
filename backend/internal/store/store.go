@@ -23,7 +23,8 @@ type Config struct {
 	LegacyDocker         *models.DockerEndpoint  `json:"docker,omitempty"`
 	Templates            []models.Template       `json:"templates"`
 	// ComposeDirs are scanned for compose files; the first is the default parent for new projects.
-	ComposeDirs []string `json:"compose_dirs"`
+	ComposeDirs []string                  `json:"compose_dirs"`
+	AutoUpdates []models.AutoUpdatePolicy `json:"auto_updates,omitempty"`
 }
 
 type Store struct {

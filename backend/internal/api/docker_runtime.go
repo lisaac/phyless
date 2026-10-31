@@ -99,7 +99,10 @@ func (r *dockerRuntime) newState(server models.DockerServer) (*dockerRuntimeStat
 		fs:             fs,
 		buildCache:     newBuildCapabilityCache(),
 		reloadDocker:   r.reload,
+		serverID:       server.ID,
 	}
+	srv.autoUpdater = srv.newAutoUpdater()
+	go srv.autoUpdater.Loop(ctx)
 	return &dockerRuntimeState{handler: srv.routes(), ctx: ctx, cancel: cancel, client: client}, nil
 }
 

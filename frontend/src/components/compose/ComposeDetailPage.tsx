@@ -24,6 +24,7 @@ import { ViewCmdModal } from "../containers/ViewCmdModal";
 import { ConsoleModal } from "../containers/ConsoleModal";
 import { CreateContainerModal } from "../containers/CreateContainerModal";
 import { containersOf, representative, ActBtn, ComposeIcon, servicesHaveBuild, type ComposeVerb } from "./composeShared";
+import { AutoUpdateBadge, AutoUpdateModal } from "../shared/AutoUpdate";
 import { ComposeActionModal, isComposeRunning, requestComposeAction, type ComposeAction } from "./ComposeActionModal";
 import { queued } from "../../stores/taskQueue";
 import type { ComposeProject, ContainerSummary } from "../../types";
@@ -43,6 +44,7 @@ export const ComposeDetailPage: Component = () => {
   const navigate = useNavigate();
   const params = useParams();
   const id = () => params.id;
+  const [autoOpen, setAutoOpen] = createSignal(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = () => (searchParams.tab as Tab) || "info";
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
@@ -255,6 +257,7 @@ export const ComposeDetailPage: Component = () => {
       <h1 class="mb-3 flex min-w-0 items-center gap-2 break-all text-xl font-semibold">
         <ComposeIcon size={20} class="shrink-0" />
         {project()?.name ?? id()}
+        <AutoUpdateBadge kind="compose" target={id()} />
       </h1>
 
       <Show when={hasRole("operator")}>
@@ -279,6 +282,7 @@ export const ComposeDetailPage: Component = () => {
             loading={isRunning("update")}
             onClick={() => request({ id: id(), name: project()?.name ?? id(), verb: "update", canBuild: servicesHaveBuild(detail()?.services) })}
           >↑ Update</ActBtn>
+          <ActBtn title="定时检查镜像更新，可自动 pull + up" onClick={() => setAutoOpen(true)}>⟳ 自动更新</ActBtn>
           <span class="mx-0.5 text-zinc-600">│</span>
           <ActBtn title="基于项目下所有容器创建容器 / 注册 Compose" onClick={() => void runProject()}>
             <span class="inline-flex items-center gap-1"><ComposeIcon size={14} /> Run/Compose</span>
@@ -418,6 +422,7 @@ export const ComposeDetailPage: Component = () => {
       <ConsoleModal target={consoleTarget()} onClose={() => setConsoleTarget(null)} />
 
       <ComposeActionModal target={composeTarget()} onClose={() => setComposeTarget(null)} />
+      <AutoUpdateModal kind="compose" target={autoOpen() ? id() : null} title={project()?.name ?? id()} onClose={() => setAutoOpen(false)} />
 
       <UploadStatusWidget
         active={downloadState().active}

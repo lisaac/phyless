@@ -125,6 +125,25 @@ func ResolveRemoteImage(ctx context.Context, t *http.Transport, ref, platform, r
 	return RemoteImage{Digest: desc.Digest.String(), ManifestDigest: md.String(), ConfigDigest: m.Config.Digest.String()}, nil
 }
 
+// ResolveRemoteDigest HEADs the tag for its top-level digest only. Docker Hub
+// does not count HEAD against the pull quota, so periodic checks of images
+// that carry RepoDigests cost nothing there.
+func ResolveRemoteDigest(ctx context.Context, t *http.Transport, ref, registryAuth string) (RemoteImage, error) {
+	parsed, err := name.ParseReference(ref)
+	if err != nil {
+		return RemoteImage{}, errors.New("invalid image reference")
+	}
+	auth, err := pullAuth(parsed, registryAuth)
+	if err != nil {
+		return RemoteImage{}, err
+	}
+	desc, err := remote.Head(parsed, remote.WithAuth(auth), remote.WithContext(ctx), remote.WithTransport(t))
+	if err != nil {
+		return RemoteImage{}, registryCheckError(err)
+	}
+	return RemoteImage{Digest: desc.Digest.String()}, nil
+}
+
 // registryCheckError keeps the registry's status/code but never echoes the
 // underlying error text, which can carry proxy URLs with credentials.
 func registryCheckError(err error) error {

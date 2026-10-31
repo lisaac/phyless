@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -524,13 +525,13 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 	}()
 	var body struct {
 		requestPullOptions
-		EnvFromImage []string `json:"env_from_image,omitempty"`
+		EnvFromImage   []string `json:"env_from_image,omitempty"`
+		RemoveOldImage bool     `json:"remove_old_image,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	uopts := dockercontainer.UpgradeOptions{EnvFromImage: body.EnvFromImage}
 	if body.PullPolicy != "" && body.PullPolicy != "never" {
 		writeError(w, http.StatusBadRequest, "invalid pull_policy: upgrade only accepts never")
 		return
@@ -545,37 +546,104 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	imageRef := dockercontainer.UpgradeImageRef(info)
-	if imageRef == "" {
-		writeError(w, http.StatusBadRequest, "container has no image reference")
+	auth, err := s.upgradeAuth(info, body.PullPolicy == "never", body.requestPullOptions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	if info.ID == s.selfID(ctx) {
-		uopts.Handoff = func() error {
-			handedOff = true
-			args := append([]string{"--user", auditUser(r), "container-upgrade", info.ID}, body.EnvFromImage...)
-			return self.Launch(ctx, s.docker, info.ID, s.dataDir, w, false, args...)
-		}
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Accel-Buffering", "no")
-	var newID string
-	if body.PullPolicy == "never" {
-		newID, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, id, w, uopts)
-	} else {
-		encoded, authErr := s.requestRegistryAuth(imageRef, body.requestPullOptions)
-		if authErr != nil {
-			writeError(w, http.StatusBadRequest, authErr.Error())
-			return
-		}
-		newID, err = dockercontainer.Upgrade(ctx, s.docker, id, w, image.PullOptions{RegistryAuth: encoded}, uopts)
-	}
+	handedOff, err = s.upgradeContainer(ctx, info, containerUpgrade{
+		user: auditUser(r), auth: auth, skipPull: body.PullPolicy == "never",
+		envFromImage: body.EnvFromImage, removeOldImage: body.RemoveOldImage,
+	}, w)
 	if err != nil {
 		dockercontainer.EmitError(w, err)
 		return
 	}
 	result = "ok"
-	_ = newID // output already written inside Upgrade
+}
+
+type containerUpgrade struct {
+	user           string // audit user the self-upgrade helper reports as
+	auth           string // encoded registry auth; unused with skipPull
+	skipPull       bool
+	envFromImage   []string
+	removeOldImage bool
+}
+
+// upgradeAuth validates the upgrade reference and encodes registry
+// credentials for the pull, before any progress is streamed.
+func (s *Server) upgradeAuth(info container.InspectResponse, skipPull bool, opts requestPullOptions) (string, error) {
+	imageRef := dockercontainer.UpgradeImageRef(info)
+	if imageRef == "" {
+		return "", errors.New("container has no image reference")
+	}
+	if skipPull {
+		return "", nil
+	}
+	return s.requestRegistryAuth(imageRef, opts)
+}
+
+// upgradeContainer is the upgrade shared by the HTTP handler and scheduled
+// auto-updates. phyless's own container is handed to the helper, which then
+// owns the outcome (handedOff); old-image cleanup is skipped in that case.
+func (s *Server) upgradeContainer(ctx context.Context, info container.InspectResponse, u containerUpgrade, w io.Writer) (handedOff bool, err error) {
+	uopts := dockercontainer.UpgradeOptions{EnvFromImage: u.envFromImage}
+	if info.ID == s.selfID(ctx) {
+		uopts.Handoff = func() error {
+			handedOff = true
+			args := append([]string{"--user", u.user, "container-upgrade", info.ID}, u.envFromImage...)
+			return self.Launch(ctx, s.docker, info.ID, s.dataDir, w, false, args...)
+		}
+	}
+	var newID string
+	if u.skipPull {
+		newID, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, info.ID, w, uopts)
+	} else {
+		newID, err = dockercontainer.Upgrade(ctx, s.docker, info.ID, w, image.PullOptions{RegistryAuth: u.auth}, uopts)
+	}
+	if err == nil && newID != "" && u.removeOldImage {
+		s.removeUnusedImages(ctx, []string{info.Image}, w)
+	}
+	return handedOff, err
+}
+
+// removeUnusedImages deletes replaced images no container still uses. Never
+// forced: an image with other tags or users stays, with a note.
+func (s *Server) removeUnusedImages(ctx context.Context, ids []string, w io.Writer) {
+	list, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		dockercontainer.EmitStream(w, "⚠ 未清理旧镜像：无法列出容器：%v", err)
+		return
+	}
+	used, seen := make(map[string]bool, len(list)), map[string]bool{}
+	for _, c := range list {
+		used[c.ImageID] = true
+	}
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if used[id] {
+			dockercontainer.EmitStream(w, "旧镜像 %s 仍被其他容器使用，保留", shortImageID(id))
+			continue
+		}
+		if err := s.removeImage(ctx, id, false); err != nil {
+			dockercontainer.EmitStream(w, "旧镜像 %s 未删除：%v", shortImageID(id), err)
+			continue
+		}
+		dockercontainer.EmitStream(w, "✓ 已删除旧镜像 %s", shortImageID(id))
+	}
+}
+
+func shortImageID(id string) string {
+	id = strings.TrimPrefix(id, "sha256:")
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func (s *Server) handleContainerUpdateResources(w http.ResponseWriter, r *http.Request) {

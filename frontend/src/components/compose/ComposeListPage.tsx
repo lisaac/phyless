@@ -23,6 +23,7 @@ import { Btn, IBtn, Ico } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
 import type { ComposeProject, ContainerSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
+import { AutoUpdateBadge } from "../shared/AutoUpdate";
 
 // Files-tab links for the Compose 文件 column; only files under base_dir are reachable there.
 const fileLinkCls = "text-zinc-400 transition-colors hover:text-indigo-400 hover:underline";
@@ -279,6 +280,7 @@ export const ComposeListPage: Component = () => {
                               class="break-all border-b border-dashed border-indigo-400/60 font-medium text-indigo-400 transition-colors hover:border-indigo-300 hover:text-indigo-300"
                               onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                             >{p.name}</a>
+                            <AutoUpdateBadge kind="compose" target={p.id} />
                             <Show when={p.discovered}>
                               <Show when={fromDir()} fallback={
                                 <span class="border border-violet-500/40 bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300" title="根据运行中 Docker 容器的 Compose 标签发现；尚未手动注册，点击加号可注册">运行中发现</span>

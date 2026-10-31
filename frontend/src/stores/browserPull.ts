@@ -350,6 +350,7 @@ function upgradeTarget(info: UpgradeInspect, image: ImageInspect): { ref: string
 export interface BrowserUpgradeParams {
   id: string;
   envFromImage?: string[];
+  removeOldImage?: boolean;
   workerUrl: string;
   token: string;
   creds?: RegistryCreds;
@@ -384,7 +385,11 @@ export async function runBrowserUpgrade(
   await runBrowserAction({
     pull: { ref: target.ref, platform: target.platform, workerUrl: params.workerUrl, token: params.token, creds: params.creds },
     path: `/api/containers/${encodeURIComponent(params.id)}/upgrade`,
-    body: { pull_policy: "never", ...(params.envFromImage?.length ? { env_from_image: params.envFromImage } : {}) },
+    body: {
+      pull_policy: "never",
+      ...(params.envFromImage?.length ? { env_from_image: params.envFromImage } : {}),
+      ...(params.removeOldImage ? { remove_old_image: true } : {}),
+    },
     note: "升级容器（使用本地镜像）…",
   }, cb, deps);
 }

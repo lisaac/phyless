@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type Role string
 
 const (
@@ -72,4 +74,41 @@ type Template struct {
 	Name    string `json:"name"`
 	Cmd     string `json:"cmd"` // docker run command
 	Created string `json:"created"`
+}
+
+// AutoUpdatePolicy schedules an update check, and optionally the update, of
+// one container or Compose project. See docs/auto-update.md.
+type AutoUpdatePolicy struct {
+	ID       string   `json:"id"`
+	Kind     string   `json:"kind"`   // "container" | "compose"
+	Target   string   `json:"target"` // container name, or Compose project id
+	ServerID string   `json:"server_id"`
+	Enabled  bool     `json:"enabled"`
+	Mode     string   `json:"mode"` // "check" | "update"
+	Schedule Schedule `json:"schedule"`
+	// Server-side pull path only: a schedule runs with no browser attached.
+	ProxyURL       string   `json:"proxy_url,omitempty"`
+	RegistryIDs    []string `json:"registry_ids,omitempty"`
+	RemoveOldImage bool     `json:"remove_old_image,omitempty"`
+
+	// UpdatedAt is the schedule's starting point until the first run.
+	UpdatedAt  time.Time  `json:"updated_at"`
+	LastRunAt  *time.Time `json:"last_run_at,omitempty"`
+	LastStatus string     `json:"last_status,omitempty"`
+	LastError  string     `json:"last_error,omitempty"`
+	LastLog    []string   `json:"last_log,omitempty"`
+}
+
+// Schedule: Kind picks the fields that apply.
+//
+//	hours:   Every (1–168) hours after the previous run
+//	daily:   Time ("HH:MM")
+//	weekly:  Weekday (0 = Sunday) at Time
+//	monthly: Day (1–31, clamped to the month's last day) at Time
+type Schedule struct {
+	Kind    string `json:"kind"`
+	Every   int    `json:"every,omitempty"`
+	Time    string `json:"time,omitempty"`
+	Weekday int    `json:"weekday,omitempty"`
+	Day     int    `json:"day,omitempty"`
 }

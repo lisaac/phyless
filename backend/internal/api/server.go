@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/auth"
+	"phyless/backend/internal/autoupdate"
 	dockercompose "phyless/backend/internal/docker/compose"
 	"phyless/backend/internal/docker/fsbrowse"
 	"phyless/backend/internal/models"
@@ -37,6 +38,8 @@ type Server struct {
 	fs             *fsbrowse.FS
 	buildCache     *buildCapabilityCache
 	reloadDocker   func() error
+	serverID       string // active Docker server; auto-update policies are per server
+	autoUpdater    *autoupdate.Runner
 
 	// phyless's own container on this daemon, scanned once per runtime (see
 	// self.ID); a Docker server switch builds a new Server and rescans.
@@ -142,6 +145,7 @@ func (s *Server) routes() http.Handler {
 		s.mountFsRoutes(r)
 		s.mountRegistryRoutes(r)
 		s.mountTemplateRoutes(r)
+		s.mountAutoUpdateRoutes(r)
 	})
 
 	// Admin only

@@ -26,7 +26,11 @@ const (
 
 	updateCheckConcurrency = 4
 	updateCheckTimeout     = 20 * time.Second
+	headProbeTimeout       = 5 * time.Second
 )
+
+// resolveRemoteDigest is swapped out by tests, which must not reach a registry.
+var resolveRemoteDigest = docker.ResolveRemoteDigest
 
 type updateCheckResult struct {
 	ID       string `json:"id"`
@@ -111,12 +115,24 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ids := body.IDs
+	out, err := s.checkUpdates(ctx, body.IDs, body.RegistryIDs)
+	if err != nil {
+		if ctx.Err() == nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// checkUpdates is the check shared by the HTTP handler and scheduled
+// auto-updates. ctx carries the pull proxy (see pullContext); no ids means
+// every container.
+func (s *Server) checkUpdates(ctx context.Context, ids, registryIDs []string) ([]updateCheckResult, error) {
 	if len(ids) == 0 {
 		list, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
+			return nil, err
 		}
 		for _, c := range list {
 			if !docker.IsHelper(c.Labels) {
@@ -124,7 +140,6 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
 	// Containers commonly share images and tags; inspect each once.
 	images := map[string]imageLookup{}
 	inspectImage := func(ref string) (image.InspectResponse, error) {
@@ -182,8 +197,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	proxied := docker.HasPullProxy(ctx)
 	transport, err := docker.RequestTransport(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return nil, err
 	}
 	defer transport.CloseIdleConnections()
 	sem := make(chan struct{}, updateCheckConcurrency)
@@ -192,7 +206,8 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			return
+			wg.Wait()
+			return nil, ctx.Err()
 		}
 		wg.Add(1)
 		go func(g *remoteGroup) {
@@ -200,7 +215,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 			defer func() { <-sem }()
 			gctx, cancel := context.WithTimeout(ctx, updateCheckTimeout)
 			defer cancel()
-			g.remote, g.err = s.resolveRemote(gctx, transport, g, body.RegistryIDs, proxied)
+			g.remote, g.err = s.resolveRemote(gctx, transport, g, registryIDs, proxied)
 		}(g)
 	}
 	wg.Wait()
@@ -217,7 +232,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, t.result)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // resolveRemote asks the daemon first when no proxy is set, so registry
@@ -228,6 +243,22 @@ func (s *Server) resolveRemote(ctx context.Context, t *http.Transport, g *remote
 	auth, err := s.registryAuthFromIDs(g.ref, registryIDs)
 	if err != nil {
 		return docker.RemoteImage{}, err
+	}
+	if !g.needConfig {
+		// Every image in the group has RepoDigests: the top-level digest is
+		// enough, and a HEAD is free of Docker Hub pull quota. Any failure
+		// (registry without a digest header, phyless lacking the daemon's
+		// registry access) falls back to the full lookup below; without a
+		// proxy the probe keeps a short budget for that fallback.
+		hctx, cancel := ctx, context.CancelFunc(func() {})
+		if !proxied {
+			hctx, cancel = context.WithTimeout(ctx, headProbeTimeout)
+		}
+		r, err := resolveRemoteDigest(hctx, t, g.ref, auth)
+		cancel()
+		if err == nil {
+			return r, nil
+		}
 	}
 	if proxied {
 		if g.platform == "" {

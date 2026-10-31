@@ -404,6 +404,7 @@ function startBrowserAction(id: string) {
     : runBrowserUpgrade({
       id: String(t.meta?.containerId ?? ""),
       envFromImage: Array.isArray(t.meta?.envFromImage) ? t.meta.envFromImage : undefined,
+      removeOldImage: t.meta?.removeOldImage === true,
       workerUrl: String(t.meta?.workerUrl ?? ""),
       token: getToken() ?? "",
       creds: t.secret?.creds,

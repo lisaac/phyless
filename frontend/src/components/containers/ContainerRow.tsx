@@ -12,6 +12,7 @@ import { createDownloadTask } from "../../api/download";
 import { get } from "../../api/client";
 import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
 import { UpdateBadge } from "./UpdateBadge";
+import { AutoUpdateBadge } from "../shared/AutoUpdate";
 import { toUpgradeTarget, type UpgradeTarget } from "./UpgradeContainerModal";
 import { containerName, findContainer, STATE_DOT, fmtContainerStatus, fmtRelTime, midPath } from "./containerActions";
 import type { ContainerSummary } from "../../types";
@@ -150,6 +151,7 @@ export const ContainerRow: Component<{
         <div class="flex max-w-[12rem] items-center gap-1">
           <ImageLink class="text-[11px] text-zinc-400" id={c().ImageID} label={displayImage(c().Image, c().Labels)} />
           <UpdateBadge check={update()} />
+          <AutoUpdateBadge kind="container" target={name()} />
         </div>
         <div class="mt-0.5 text-[11px] text-zinc-400">
           {fmtContainerStatus(c().State, c().Status)}

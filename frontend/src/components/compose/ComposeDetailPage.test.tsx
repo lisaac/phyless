@@ -15,6 +15,7 @@ vi.mock("../../api/client", async (importOriginal) => ({
 }));
 vi.mock("../../stores/resource", async (importOriginal) => ({ settled: (await importOriginal<typeof import("../../stores/resource")>()).settled,
   createResourceStore: () => ({ items: () => [], startPolling: vi.fn(), stopPolling: vi.fn() }),
+  createPollingResource: () => ({ items: () => [], refresh: vi.fn(async () => {}) }),
 }));
 vi.mock("../../stores/tabs", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../stores/tabs")>(),

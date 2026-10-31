@@ -9,6 +9,7 @@ import { updateCheckFor, staleEnvCandidates } from "../../stores/updateCheck";
 import { UpdateBadge } from "./UpdateBadge";
 import { UPGRADE_IMAGE_REF_LABEL, type EnvCandidate } from "../../api/inspect";
 import { containerName } from "./containerActions";
+import { RemoveOldImageCheckbox, getRemoveOldImage, setRemoveOldImageDefault } from "../shared/RemoveOldImage";
 import type { ContainerSummary } from "../../types";
 
 export interface UpgradeTarget {
@@ -69,6 +70,7 @@ export const UpgradeContainerModal: Component<{
   const envKey = (id: string, key: string) => `${id}\u0000${key}`;
   const toggleEnv = (k: string) => setKeepEnv((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const envFromImage = (id: string) => (envCands()[id] ?? []).map((c) => c.key).filter((k) => !keepEnv().has(envKey(id, k)));
+  const [removeOld, setRemoveOld] = createSignal(getRemoveOldImage());
   const multi = () => (props.targets?.length ?? 0) > 1;
   const chosen = () => (props.targets ?? []).filter((t) => !skip().has(t.id));
   const toggle = (id: string) => setSkip((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -85,6 +87,7 @@ export const UpgradeContainerModal: Component<{
       confirmText: ts.length > 1 ? "仍然升级全部" : "仍然升级",
     })) return;
     const options = pull.payload();
+    setRemoveOldImageDefault(removeOld());
     for (const t of ts) {
       const env = envFromImage(t.id);
       // A local-newer tag already points at the newer image (possibly a local
@@ -97,13 +100,17 @@ export const UpgradeContainerModal: Component<{
           key: t.id,
           meta: {
             type: "browser-pull-action", action: "upgrade", containerId: t.id, workerUrl: pull.value.workerUrl ?? "",
-            envFromImage: env.length ? env : undefined,
+            envFromImage: env.length ? env : undefined, removeOldImage: removeOld() || undefined,
           },
           secret: browserSecret(pull.value),
         });
         continue;
       }
-      const body = { ...(localOnly ? { pull_policy: "never" } : options), ...(env.length ? { env_from_image: env } : {}) };
+      const body = {
+        ...(localOnly ? { pull_policy: "never" } : options),
+        ...(env.length ? { env_from_image: env } : {}),
+        ...(removeOld() ? { remove_old_image: true } : {}),
+      };
       enqueue({
         title: `升级 — ${t.name}`,
         url: `/api/containers/${t.id}/upgrade`,
@@ -173,6 +180,7 @@ export const UpgradeContainerModal: Component<{
           </div>
         </Show>
         <PullOptions options={pull} allowBrowser />
+        <RemoveOldImageCheckbox checked={removeOld()} onChange={setRemoveOld} />
         <div class="mt-4 flex justify-end gap-2">
           <Button onClick={close}>取消</Button>
           <Button variant="primary" disabled={chosen().length === 0} onClick={() => void start()}>

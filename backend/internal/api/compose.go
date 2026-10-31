@@ -62,6 +62,7 @@ const (
 	labelConfigFiles     = composeapi.ConfigFilesLabel
 	labelWorkingDir      = composeapi.WorkingDirLabel
 	labelEnvironmentFile = composeapi.EnvironmentFileLabel
+	labelService         = composeapi.ServiceLabel
 )
 
 type composeLookupError struct {
@@ -1045,25 +1046,13 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 		s.auditFromCtx(r, "compose."+operation, resolved.display.Name, composeOperationResult(finalErr))
 		return
 	}
-	project, projectName, err := s.loadComposeForOperation(ctx, resolved, operation)
-	handedOff := false
-	if err == nil {
-		release, acquired := tryComposeOperation(projectName)
-		if !acquired {
-			writeError(w, http.StatusConflict, fmt.Sprintf("compose project %q already has an active operation", projectName))
-			s.auditFromCtx(r, "compose."+operation, projectName, "failed")
-			return
-		}
-		defer release()
-		err = validateComposeOperation(ctx, operation, project)
-	}
-	if err == nil {
-		if selfID := s.composeSelf(ctx, projectName, operation); selfID != "" {
-			handedOff = true
-			err = s.composeHandoff(ctx, w, output, selfID, operation, r.URL.Query().Get("id"), auditUser(r), project, request, options)
-		} else {
-			err = s.composeExec(ctx, operation, project, projectName, request, options, output)
-		}
+	handedOff, err := s.composeRun(ctx, resolved, composeTask{
+		operation: operation, id: r.URL.Query().Get("id"), user: auditUser(r), options: options, request: request,
+	}, w, output)
+	if errors.Is(err, errComposeBusy) {
+		writeError(w, http.StatusConflict, err.Error())
+		s.auditFromCtx(r, "compose."+operation, resolved.effective.Name, "failed")
+		return
 	}
 	finalErr := finishComposeOperation(w, output, ctx, err)
 	if handedOff && finalErr == nil {
@@ -1074,6 +1063,49 @@ func (s *Server) runComposeOperation(w http.ResponseWriter, r *http.Request, ope
 		auditTarget = resolved.effective.Name
 	}
 	s.auditFromCtx(r, "compose."+operation, auditTarget, composeOperationResult(finalErr))
+}
+
+var errComposeBusy = errors.New("compose project already has an active operation")
+
+type composeTask struct {
+	operation, id, user string
+	options             requestPullOptions
+	request             dockercompose.ServiceOptions
+	// services, when set, limits the operation to these services: exactly
+	// them for a pull, with their dependencies otherwise.
+	services []string
+}
+
+// composeRun is one Compose operation shared by the HTTP handler and
+// scheduled auto-updates: load, lock, validate, then run here or hand
+// phyless's own project to the helper (handedOff). errComposeBusy is
+// returned before anything is written.
+func (s *Server) composeRun(ctx context.Context, resolved composeResolution, c composeTask, w io.Writer, output *dockercompose.NDJSONWriter) (handedOff bool, err error) {
+	project, projectName, err := s.loadComposeForOperation(ctx, resolved, c.operation)
+	if err != nil {
+		return false, err
+	}
+	release, acquired := tryComposeOperation(projectName)
+	if !acquired {
+		return false, fmt.Errorf("%w: %q", errComposeBusy, projectName)
+	}
+	defer release()
+	if err := validateComposeOperation(ctx, c.operation, project); err != nil {
+		return false, err
+	}
+	if len(c.services) > 0 && project != nil {
+		var opts []composetypes.DependencyOption
+		if c.operation == "pull" {
+			opts = append(opts, composetypes.IgnoreDependencies)
+		}
+		if project, err = project.WithSelectedServices(c.services, opts...); err != nil {
+			return false, err
+		}
+	}
+	if selfID := s.composeSelf(ctx, projectName, c.operation); selfID != "" {
+		return true, s.composeHandoff(ctx, w, output, selfID, c.operation, c.id, c.user, project, c.request, c.options)
+	}
+	return false, s.composeExec(ctx, c.operation, project, projectName, c.request, c.options, output)
 }
 
 // loadComposeForOperation loads the project file and settles the Compose

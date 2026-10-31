@@ -10,7 +10,7 @@
   - `可升级 N`：有可升级容器时出现，点击只显示这些容器，再点一次恢复。
 - **容器行**：镜像名后显示状态标签，悬停可看本地和远端 digest、检查时间；可升级时 `↑` 按钮变为琥珀色。
 - **容器详情**：标题旁显示同一个标签；镜像名旁有 `↻ 检查升级`；可升级时 `↑ 升级` 按钮高亮。
-- **升级弹窗**：单个和批量共用。批量时列出每个容器的检查状态，已是最新的默认不勾选。
+- **升级弹窗**：单个和批量共用。批量时列出每个容器的检查状态，已是最新的默认不勾选。可勾选"升级后删除旧镜像"（记住上次的选择）：只在升级成功、且没有其他容器使用时删除，从不 force。
 - **Compose 管理的容器**（带有 `com.docker.compose.project` 标签）：点升级后会先二次确认，提示所属项目和服务，以及之后执行 `compose up` 时可能被 compose 定义覆盖。点取消会回到升级弹窗，已选内容保留。
 
 检查以任务形式出现在任务抽屉中，可以取消。结果保存在当前浏览器的 localStorage（`phyless_update_checks`）里，以容器 ID 和镜像 ID 作键：容器换了镜像（升级或重建）后，旧结果自动失效，保留 30 天。
@@ -47,7 +47,7 @@
 
 前端的 `matchesRemote`（`frontend/src/api/registryPull.ts`）和后端的 `RemoteImage.Matches` 是同一套规则，代理拉取前的"本地已是最新"判断也用它。
 
-同一 `ref|平台` 只请求一次，同一请求内镜像 inspect 结果复用，所有 registry 请求共用一个 transport（连接和 token 复用），最多 4 个并发，每个 20 秒超时。服务端模式取消检查任务会中断请求。registry 错误只返回 HTTP 状态码和错误码，不原样回显，避免泄露带凭据的代理地址。
+同一 `ref|平台` 的本地镜像都有 RepoDigests 时，先用 HEAD 取顶层 digest（不计入 Docker Hub 拉取配额），失败再走上表的完整查询。同一 `ref|平台` 只请求一次，同一请求内镜像 inspect 结果复用，所有 registry 请求共用一个 transport（连接和 token 复用），最多 4 个并发，每个 20 秒超时。服务端模式取消检查任务会中断请求。registry 错误只返回 HTTP 状态码和错误码，不原样回显，避免泄露带凭据的代理地址。
 
 ## 接口
 
@@ -60,7 +60,10 @@ POST /api/containers/check-updates      （operator）
 `ids` 为空时检查全部容器。升级仍使用 `POST /api/containers/{id}/upgrade`：
 
 - `pull_policy: "never"`：不拉取，直接用本地镜像；
-- `env_from_image: ["KEY", …]`：这些变量改用新镜像的值（见下文"旧版升级残留的 ENV"）。
+- `env_from_image: ["KEY", …]`：这些变量改用新镜像的值（见下文"旧版升级残留的 ENV"）；
+- `remove_old_image: true`：升级成功后删除不再被任何容器使用的旧镜像（phyless 自身升级交给 helper 时不清理）。
+
+定时自动检查与更新见 [auto-update.md](auto-update.md)。
 
 ## 代理导入的 tar 格式
 
@@ -112,6 +115,5 @@ POST /api/containers/check-updates      （operator）
 ## 已知限制
 
 - 在开启 containerd 镜像存储的 daemon 上，OCI 格式导入还需要实机验证，可运行 `PHYLESS_IMAGE_PULL_ACCEPTANCE=1 go test ./backend/internal/docker -run Acceptance`。本次修改前用服务端代理导入的镜像，ID 仍是合成 manifest 的 digest，需要重新拉取一次才能被正确识别。
-- 升级后不会清理旧镜像。
 - 用旧式 `--link` 链接到本容器的其他容器不会被处理。
 - Compose 容器的 `com.docker.compose.image` 标签仍是旧值，之后执行 `compose up` 会重建该容器。

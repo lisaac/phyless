@@ -525,6 +525,29 @@ func UpgradeImageRef(info container.InspectResponse) string {
 	return info.Config.Image
 }
 
+// NeedsEnvReview reports whether an older phyless upgrade may have frozen a
+// previous image's ENV into this container: it carries upgradeImageRefLabel
+// and sets a variable its image also sets, to another value. Such values look
+// exactly like deliberate overrides, so only a person can decide (the upgrade
+// dialog asks); unattended upgrades must not guess.
+func NeedsEnvReview(info container.InspectResponse, img image.InspectResponse) bool {
+	if info.Config == nil || info.Config.Labels[upgradeImageRefLabel] == "" || img.Config == nil {
+		return false
+	}
+	imageEnv := make(map[string]string, len(img.Config.Env))
+	for _, e := range img.Config.Env {
+		k, v, _ := strings.Cut(e, "=")
+		imageEnv[k] = v
+	}
+	for _, e := range info.Config.Env {
+		k, v, _ := strings.Cut(e, "=")
+		if iv, ok := imageEnv[k]; ok && iv != v {
+			return true
+		}
+	}
+	return false
+}
+
 // ImagePlatform is the image's platform as "os/arch[/variant]", "" if unknown.
 func ImagePlatform(img image.InspectResponse) string {
 	if img.Os == "" || img.Architecture == "" {
