@@ -1093,19 +1093,26 @@ func (s *Server) composeRun(ctx context.Context, resolved composeResolution, c c
 	if err := validateComposeOperation(ctx, c.operation, project); err != nil {
 		return false, err
 	}
-	if len(c.services) > 0 && project != nil {
-		var opts []composetypes.DependencyOption
-		if c.operation == "pull" {
-			opts = append(opts, composetypes.IgnoreDependencies)
-		}
-		if project, err = project.WithSelectedServices(c.services, opts...); err != nil {
-			return false, err
-		}
+	if project, err = selectComposeServices(project, c.operation, c.services); err != nil {
+		return false, err
 	}
 	if selfID := s.composeSelf(ctx, projectName, c.operation); selfID != "" {
-		return true, s.composeHandoff(ctx, w, output, selfID, c.operation, c.id, c.user, project, c.request, c.options)
+		return true, s.composeHandoff(ctx, w, output, selfID, project, c)
 	}
 	return false, s.composeExec(ctx, c.operation, project, projectName, c.request, c.options, output)
+}
+
+// selectComposeServices limits project to services (see composeTask); the
+// helper applies the same selection after a handoff.
+func selectComposeServices(project *composetypes.Project, operation string, services []string) (*composetypes.Project, error) {
+	if len(services) == 0 || project == nil {
+		return project, nil
+	}
+	var opts []composetypes.DependencyOption
+	if operation == "pull" {
+		opts = append(opts, composetypes.IgnoreDependencies)
+	}
+	return project.WithSelectedServices(services, opts...)
 }
 
 // loadComposeForOperation loads the project file and settles the Compose
@@ -1225,7 +1232,8 @@ func (s *Server) composeSelf(ctx context.Context, projectName, operation string)
 // composeHandoff runs an operation on phyless's own project in the helper
 // container. Image pulls stay here, where the request's registry credentials
 // and proxy live; the helper then deploys from local images only.
-func (s *Server) composeHandoff(ctx context.Context, w io.Writer, output *dockercompose.NDJSONWriter, selfID, operation, id, user string, project *composetypes.Project, request dockercompose.ServiceOptions, options requestPullOptions) error {
+func (s *Server) composeHandoff(ctx context.Context, w io.Writer, output *dockercompose.NDJSONWriter, selfID string, project *composetypes.Project, c composeTask) error {
+	operation, request, options := c.operation, c.request, c.options
 	if operation == "pause" {
 		return fmt.Errorf("不能暂停 phyless 自身所在的 Compose 项目：暂停后 phyless 无法自行恢复")
 	}
@@ -1250,7 +1258,8 @@ func (s *Server) composeHandoff(ctx context.Context, w io.Writer, output *docker
 	}
 	output.Flush()
 	stops := operation == "stop" || operation == "down"
-	return self.Launch(ctx, s.docker, selfID, s.dataDir, w, stops, "--user", user, "compose", operation, id)
+	args := append([]string{"--user", c.user, "compose", operation, c.id}, c.services...)
+	return self.Launch(ctx, s.docker, selfID, s.dataDir, w, stops, args...)
 }
 
 func (s *Server) composeRequest(ctx context.Context, r *http.Request, output io.Writer) (context.Context, requestPullOptions, dockercompose.ServiceOptions, error) {

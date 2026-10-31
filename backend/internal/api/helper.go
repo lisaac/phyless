@@ -23,7 +23,7 @@ import (
 // Returns the process exit code.
 //
 //	helper --user U container-upgrade <id> [ENV...]
-//	helper --user U compose <up|redeploy|restart|stop|down> <project id>
+//	helper --user U compose <up|redeploy|restart|stop|down> <project id> [service...]
 func RunHelper(dataDir string, args []string) int {
 	out := os.Stdout
 	user := "anonymous"
@@ -39,11 +39,11 @@ func RunHelper(dataDir string, args []string) int {
 		case len(args) >= 2 && args[0] == "container-upgrade":
 			_, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, args[1], out, dockercontainer.UpgradeOptions{EnvFromImage: args[2:]})
 			s.helperAudit(user, "container.upgrade", args[1], err)
-		case len(args) == 3 && args[0] == "compose":
-			err = s.helperCompose(ctx, out, args[1], args[2])
+		case len(args) >= 3 && args[0] == "compose":
+			err = s.helperCompose(ctx, out, args[1], args[2], args[3:])
 			s.helperAudit(user, "compose."+args[1], args[2], err)
 		default:
-			err = fmt.Errorf("usage: helper [--user U] container-upgrade <id> [ENV...] | compose <op> <project id>")
+			err = fmt.Errorf("usage: helper [--user U] container-upgrade <id> [ENV...] | compose <op> <project id> [service...]")
 		}
 	}
 	if err != nil {
@@ -77,7 +77,7 @@ func helperServer(dataDir string) (*Server, error) {
 
 // helperCompose deploys from local images only: the main process already
 // pulled with the request's credentials and proxy before handing off.
-func (s *Server) helperCompose(ctx context.Context, out io.Writer, operation, id string) error {
+func (s *Server) helperCompose(ctx context.Context, out io.Writer, operation, id string, services []string) error {
 	resolved, err := s.resolveCompose(ctx, id)
 	if err != nil {
 		return err
@@ -87,6 +87,9 @@ func (s *Server) helperCompose(ctx context.Context, out io.Writer, operation, id
 		return err
 	}
 	if err := validateComposeOperation(ctx, operation, project); err != nil {
+		return err
+	}
+	if project, err = selectComposeServices(project, operation, services); err != nil {
 		return err
 	}
 	output := dockercompose.NewNDJSONWriter(out)

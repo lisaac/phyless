@@ -610,7 +610,8 @@ func (s *Server) upgradeContainer(ctx context.Context, info container.InspectRes
 }
 
 // removeUnusedImages deletes replaced images no container still uses. Never
-// forced: an image with other tags or users stays, with a note.
+// forced, and an image that still has a tag stays: removing it by ID would
+// silently drop that tag (Docker only refuses with two or more).
 func (s *Server) removeUnusedImages(ctx context.Context, ids []string, w io.Writer) {
 	list, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
@@ -628,6 +629,15 @@ func (s *Server) removeUnusedImages(ctx context.Context, ids []string, w io.Writ
 		seen[id] = true
 		if used[id] {
 			dockercontainer.EmitStream(w, "旧镜像 %s 仍被其他容器使用，保留", shortImageID(id))
+			continue
+		}
+		img, err := s.docker.ImageInspect(ctx, id)
+		if err != nil {
+			dockercontainer.EmitStream(w, "旧镜像 %s 未删除：%v", shortImageID(id), err)
+			continue
+		}
+		if len(img.RepoTags) > 0 {
+			dockercontainer.EmitStream(w, "旧镜像 %s 仍有 tag %s，保留", shortImageID(id), strings.Join(img.RepoTags, ", "))
 			continue
 		}
 		if err := s.removeImage(ctx, id, false); err != nil {

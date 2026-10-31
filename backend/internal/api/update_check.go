@@ -115,7 +115,20 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	out, err := s.checkUpdates(ctx, body.IDs, body.RegistryIDs)
+	ids := body.IDs
+	if len(ids) == 0 {
+		list, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, c := range list {
+			if !docker.IsHelper(c.Labels) {
+				ids = append(ids, c.ID)
+			}
+		}
+	}
+	out, err := s.checkUpdates(ctx, ids, body.RegistryIDs)
 	if err != nil {
 		if ctx.Err() == nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -126,20 +139,8 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkUpdates is the check shared by the HTTP handler and scheduled
-// auto-updates. ctx carries the pull proxy (see pullContext); no ids means
-// every container.
+// auto-updates. ctx carries the pull proxy (see pullContext).
 func (s *Server) checkUpdates(ctx context.Context, ids, registryIDs []string) ([]updateCheckResult, error) {
-	if len(ids) == 0 {
-		list, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
-		if err != nil {
-			return nil, err
-		}
-		for _, c := range list {
-			if !docker.IsHelper(c.Labels) {
-				ids = append(ids, c.ID)
-			}
-		}
-	}
 	// Containers commonly share images and tags; inspect each once.
 	images := map[string]imageLookup{}
 	inspectImage := func(ref string) (image.InspectResponse, error) {

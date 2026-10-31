@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/client"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/docker"
 	"phyless/backend/internal/models"
@@ -68,8 +70,40 @@ func TestAutoUpdateLogKeepsTextTail(t *testing.T) {
 		t.Fatalf("tail not bounded: %d %q", len(l.lines), l.lines[0])
 	}
 	l = &autoUpdateLog{dst: io.Discard}
-	io.WriteString(l, `{"status":"Downloading","progress":"[==>  ]","id":"abc"}`+"\n"+`{"stream":"hello"}`+"\n"+`{"error":"boom"}`+"\n")
-	if strings.Join(l.lines, "|") != "hello|boom" {
+	io.WriteString(l, `{"status":"Downloading","progress":"[==>  ]","id":"abc"}`+"\n"+`{"status":"Pull complete","id":"abc"}`+"\n"+
+		`{"stream":"hello"}`+"\n"+`{"status":"Status: Downloaded newer image for a:1"}`+"\n"+`{"error":"boom"}`+"\n")
+	if strings.Join(l.lines, "|") != "hello|Status: Downloaded newer image for a:1|boom" {
 		t.Fatalf("got %q", l.lines)
+	}
+}
+
+type cleanupClient struct {
+	client.APIClient
+	removed []string
+}
+
+func (*cleanupClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
+	return []container.Summary{{ImageID: "sha256:used"}}, nil
+}
+
+func (*cleanupClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+	return image.InspectResponse{ID: id, RepoTags: map[string][]string{"sha256:tagged": {"app:v1"}}[id]}, nil
+}
+
+func (c *cleanupClient) ImageRemove(_ context.Context, id string, _ image.RemoveOptions) ([]image.DeleteResponse, error) {
+	c.removed = append(c.removed, id)
+	return nil, nil
+}
+
+// An old image that is still used or still tagged is never removed.
+func TestRemoveUnusedImagesKeepsUsedAndTagged(t *testing.T) {
+	c := &cleanupClient{}
+	var out strings.Builder
+	(&Server{docker: c}).removeUnusedImages(context.Background(), []string{"sha256:used", "sha256:tagged"}, &out)
+	if len(c.removed) != 0 {
+		t.Fatalf("removed %v\n%s", c.removed, out.String())
+	}
+	if !strings.Contains(out.String(), "app:v1") {
+		t.Errorf("missing note: %s", out.String())
 	}
 }

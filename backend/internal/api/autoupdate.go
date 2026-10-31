@@ -286,14 +286,20 @@ func (s *Server) autoUpdateCompose(ctx context.Context, p models.AutoUpdatePolic
 	if err != nil {
 		return "", err
 	}
+	notRunning := errors.New("项目未运行，没有可检查的容器")
 	if !resolved.running {
-		return autoSkipped, errors.New("项目未运行，没有可检查的容器")
+		return autoSkipped, notRunning
 	}
+	// Running containers only: `up` on a behind service would also start one
+	// that was stopped on purpose.
 	list, err := s.docker.ContainerList(ctx, container.ListOptions{
-		All: true, Filters: filters.NewArgs(filters.Arg("label", labelProject+"="+resolved.projectName)),
+		Filters: filters.NewArgs(filters.Arg("label", labelProject+"="+resolved.projectName)),
 	})
 	if err != nil {
 		return "", err
+	}
+	if len(list) == 0 {
+		return autoSkipped, notRunning
 	}
 	ids := make([]string, 0, len(list))
 	service := map[string]string{}
@@ -417,8 +423,8 @@ func (l *autoUpdateLog) add(line []byte) {
 	if text == "" {
 		text = m.Stream
 	}
-	if text == "" && m.Progress == "" { // skip per-layer progress bars
-		text = strings.TrimSpace(m.ID + " " + m.Status)
+	if text == "" && m.ID == "" && m.Progress == "" { // skip per-layer lines ("Pull complete", progress bars)
+		text = m.Status
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
