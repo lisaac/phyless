@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"phyless/backend/internal/auth"
 	"phyless/backend/internal/models"
@@ -96,5 +97,22 @@ func TestMiddlewareWithUserRevokesChangedAccount(t *testing.T) {
 	storageFailure.ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("storage failure status = %d", rr.Code)
+	}
+}
+
+func TestGenerateTokenTTL(t *testing.T) {
+	secret := []byte("s")
+	for _, ttl := range []time.Duration{auth.TokenTTL, auth.RememberTokenTTL} {
+		token, err := auth.GenerateTokenTTL("u1", "admin", models.RoleAdmin, 0, ttl, secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := auth.ValidateToken(token, secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := time.Until(c.ExpiresAt.Time) - ttl; d > time.Second || d < -2*time.Second {
+			t.Fatalf("ttl %v: expiry off by %v", ttl, d)
+		}
 	}
 }

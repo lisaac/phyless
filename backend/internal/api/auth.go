@@ -61,13 +61,14 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "store error")
 		return
 	}
-	s.issueToken(w, user)
+	s.issueToken(w, user, false)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Remember bool   `json:"remember"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -83,15 +84,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(body.Password)); err != nil {
 				break
 			}
-			s.issueToken(w, u)
+			s.issueToken(w, u, body.Remember)
 			return
 		}
 	}
 	writeError(w, http.StatusUnauthorized, "invalid credentials")
 }
 
-func (s *Server) issueToken(w http.ResponseWriter, user models.User) {
-	token, err := auth.GenerateTokenWithVersion(user.ID, user.Username, user.Role, user.TokenVersion, s.jwtSecret)
+func (s *Server) issueToken(w http.ResponseWriter, user models.User, remember bool) {
+	ttl := auth.TokenTTL
+	if remember {
+		ttl = auth.RememberTokenTTL
+	}
+	token, err := auth.GenerateTokenTTL(user.ID, user.Username, user.Role, user.TokenVersion, ttl, s.jwtSecret)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token error")
 		return

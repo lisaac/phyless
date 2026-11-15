@@ -33,7 +33,17 @@ func GenerateToken(userID, username string, role models.Role, secret []byte) (st
 	return GenerateTokenWithVersion(userID, username, role, 0, secret)
 }
 
+// Token lifetimes: a normal login lasts a day; 「记住我」 lasts 30 days.
+const (
+	TokenTTL         = 24 * time.Hour
+	RememberTokenTTL = 30 * 24 * time.Hour
+)
+
 func GenerateTokenWithVersion(userID, username string, role models.Role, version uint64, secret []byte) (string, error) {
+	return GenerateTokenTTL(userID, username, role, version, TokenTTL, secret)
+}
+
+func GenerateTokenTTL(userID, username string, role models.Role, version uint64, ttl time.Duration, secret []byte) (string, error) {
 	if len(secret) == 0 {
 		return "", errors.New("empty signing secret")
 	}
@@ -43,7 +53,7 @@ func GenerateTokenWithVersion(userID, username string, role models.Role, version
 		Role:         role,
 		TokenVersion: version,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
