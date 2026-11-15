@@ -421,6 +421,9 @@ export const ContainerDetailPage: Component = () => {
             <Sec noLine>标识</Sec>
             <EditableKV k="名称" value={name()} onSave={saveName} />
             <KV k="ID"><span class="select-all break-all">{id()}</span></KV>
+            <Show when={cfg().Labels?.[LABEL_PROJECT]}>
+              <KV k="Compose"><ComposeLink labels={cfg().Labels} /></KV>
+            </Show>
             <KV k="镜像">
               <ImageLink wrap id={inspect()?.Image} label={displayImage(cfg().Image, cfg().Labels)} />
             </KV>

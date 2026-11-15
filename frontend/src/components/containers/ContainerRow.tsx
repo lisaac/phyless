@@ -149,15 +149,17 @@ export const ContainerRow: Component<{
             {name() || <span class="text-zinc-400">(unnamed)</span>}
           </a>
         </div>
-        <div class="select-all font-mono text-[11px] text-zinc-500" title={c().Id} onClick={(e) => e.stopPropagation()}>{c().Id.slice(0, 12)}</div>
+        <div class="flex max-w-[12rem] items-center gap-2 text-[11px]">
+          <span class="select-all font-mono text-zinc-500" title={c().Id} onClick={(e) => e.stopPropagation()}>{c().Id.slice(0, 12)}</span>
+          <Show when={!p.noCompose}>
+            <ComposeLink labels={c().Labels} />
+          </Show>
+        </div>
         <div class="flex max-w-[12rem] items-center gap-1">
           <ImageLink class="text-[11px] text-zinc-400" id={c().ImageID} label={displayImage(c().Image, c().Labels)} />
           <UpdateBadge check={update()} />
           <AutoUpdateBadge kind="container" target={name()} />
         </div>
-        <Show when={!p.noCompose}>
-          <ComposeLink class="max-w-[12rem] text-[11px]" labels={c().Labels} />
-        </Show>
         <div class="mt-0.5 text-[11px] text-zinc-400">
           {fmtContainerStatus(c().State, c().Status)}
           {" · 创建 "}{fmtRelTime(c().Created)}

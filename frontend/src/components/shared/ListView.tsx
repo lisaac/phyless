@@ -141,12 +141,25 @@ export const FilterMenu: Component<{ view: FilterView; all: string; onChange?: (
   const toggleOption = (key: string) =>
     set(p.view.filter().includes(key) ? p.view.filter().filter((k) => k !== key) : [...p.view.filter().filter((k) => k !== p.all), key]);
   let root: HTMLDivElement | undefined;
+  let pop: HTMLDivElement | undefined;
+  // Keep the dropdown inside the viewport: shift left past the right edge,
+  // flip above when there's no room below. Measured each time it opens.
+  const [pos, setPos] = createSignal({ dx: 0, up: false });
+  const place = () => requestAnimationFrame(() => {
+    if (!root || !pop || !pop.offsetWidth) return;
+    const r = root.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight, m = 8;
+    const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+    setPos({
+      dx: Math.max(m - r.left, Math.min(0, vw - m - w - r.left)),
+      up: r.bottom + h > vh - m && r.top - h > m,
+    });
+  });
   const outside = (e: PointerEvent) => { if (root && !root.contains(e.target as Node)) setOpen(false); };
   document.addEventListener("pointerdown", outside);
   onCleanup(() => document.removeEventListener("pointerdown", outside));
   return (
     <Show when={on() || p.view.count(p.all) > 0}>
-      <div ref={root} class="group relative inline-flex">
+      <div ref={root} class="group relative inline-flex" onPointerEnter={place}>
         <button
           class={`border px-1.5 py-0.5 text-[11px] transition-colors ${TONE[head().tone][on() ? 1 : 0]}`}
           title={on() ? `取消筛选${head().label}` : head().title ?? `筛选${head().label}`}
@@ -158,11 +171,15 @@ export const FilterMenu: Component<{ view: FilterView; all: string; onChange?: (
           class={`border border-l-0 px-1 py-0.5 text-[11px] transition-colors ${TONE[head().tone][on() ? 1 : 0]}`}
           title={`选择具体${head().label}`}
           aria-expanded={open()}
-          onClick={() => setOpen(!open())}
+          onClick={() => { setOpen(!open()); place(); }}
         >▾</button>
-        {/* pt-1 bridges the gap so moving the pointer down keeps the hover. */}
-        <div class={`absolute left-0 top-full z-30 pt-1 ${open() ? "block" : "hidden group-hover:block"}`}>
-          <div class="flex max-h-44 w-max max-w-[16rem] flex-wrap gap-1 overflow-y-auto border border-zinc-700 bg-zinc-950 p-1 shadow-2xl">
+        {/* pt-1/pb-1 bridges the gap so moving the pointer onto it keeps the hover. */}
+        <div
+          ref={pop}
+          class={`absolute left-0 z-30 ${pos().up ? "bottom-full pb-1" : "top-full pt-1"} ${open() ? "block" : "hidden group-hover:block"}`}
+          style={{ transform: `translateX(${pos().dx}px)` }}
+        >
+          <div class="flex max-h-44 w-max max-w-[min(16rem,calc(100vw-1rem))] flex-wrap gap-1 overflow-y-auto border border-zinc-700 bg-zinc-950 p-1 shadow-2xl">
             <For each={options()} fallback={<span class="text-zinc-500">无</span>}>
               {(o) => (
                 <ToggleTag active={p.view.filter().includes(o.key)} colors={TONE[toneOf(o.label)]} title={o.title} onClick={() => toggleOption(o.key)}>
