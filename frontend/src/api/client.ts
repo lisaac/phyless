@@ -135,8 +135,8 @@ export const get = <T>(p: string, signal?: AbortSignal) => request<T>("GET", p, 
 // travels as a query param rather than a path segment — see server.go.
 export const imageInspectUrl = (id: string) => `/api/images/inspect?id=${encodeURIComponent(id)}`;
 
-export async function login(username: string, password: string, signal?: AbortSignal): Promise<string> {
-  const out = await request<{ token: string }>("POST", "/api/auth/login", { username, password }, signal);
+export async function login(username: string, password: string, signal?: AbortSignal, remember = false): Promise<string> {
+  const out = await request<{ token: string }>("POST", "/api/auth/login", { username, password, remember }, signal);
   signal?.throwIfAborted();
   setToken(out.token);
   return out.token;

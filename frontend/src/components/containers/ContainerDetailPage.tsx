@@ -32,7 +32,7 @@ import { Btn } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
 import { Tabs } from "../shared/Tabs";
 import { ContainerIcon } from "./ContainerIcon";
-import { ComposeIcon } from "../compose/composeShared";
+import { ComposeIcon, ComposeLink } from "../compose/composeShared";
 import type { NetworkSummary } from "../../types";
 import { JsonView } from "../shared/JsonView";
 import { ImageLink } from "../shared/Inspect";
@@ -351,6 +351,7 @@ export const ContainerDetailPage: Component = () => {
             </Show>
             <UpdateBadge check={update()} />
             <AutoUpdateBadge kind="container" target={name()} />
+            <ComposeLink class="text-xs" labels={cfg().Labels} />
           </div>
           <p class="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-[11px] text-zinc-400">
             <ImageLink wrap id={inspect()?.Image} label={cfg().Image ?? ""} />

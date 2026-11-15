@@ -3,7 +3,7 @@ import { displayImage } from "../../api/inspect";
 import { useNavigate } from "@solidjs/router";
 import { hasRole } from "../../stores/auth";
 import { IBtn, Ico } from "../shared/ActionButton";
-import { ComposeIcon } from "../compose/composeShared";
+import { ComposeIcon, ComposeLink } from "../compose/composeShared";
 import { Modal } from "../shared/Modal";
 import { confirmAction } from "../shared/ConfirmModal";
 import { SourceFileBrowser } from "../shared/SourceFileBrowser";
@@ -36,6 +36,8 @@ export const ContainerRow: Component<{
   onViewCmd: (target: { id: string; name: string }) => void;
   onConsole?: (target: { id: string; name: string }) => void;
   onUpgrade?: (target: UpgradeTarget) => void;
+  /** Inside a compose page the project link would point at itself. */
+  noCompose?: boolean;
 }> = (p) => {
   const navigate = useNavigate();
   const c = () => p.c;
@@ -153,6 +155,9 @@ export const ContainerRow: Component<{
           <UpdateBadge check={update()} />
           <AutoUpdateBadge kind="container" target={name()} />
         </div>
+        <Show when={!p.noCompose}>
+          <ComposeLink class="max-w-[12rem] text-[11px]" labels={c().Labels} />
+        </Show>
         <div class="mt-0.5 text-[11px] text-zinc-400">
           {fmtContainerStatus(c().State, c().Status)}
           {" · 创建 "}{fmtRelTime(c().Created)}

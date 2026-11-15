@@ -3,6 +3,7 @@ import {
   type Accessor, type Component, type JSX,
 } from "solid-js";
 import { createTabState } from "../../stores/tabs";
+import { ToggleTag } from "./ActionButton";
 
 const MIN_PAGE = 20;
 
@@ -15,14 +16,15 @@ export const by = <T,>(f: (t: T) => string | number | undefined): Cmp<T> => (a, 
 
 export type Tone = "emerald" | "amber" | "sky" | "zinc" | "red" | "violet" | "teal";
 /** Chips in the same `group` OR together; different groups AND (e.g. 运行中|暂停 ∧ 可升级). */
-export interface ListFilter<T> { key: string; label: string; tone: Tone; title?: string; group?: string; match: (t: T) => boolean; }
+/** `menu`: listed in a FilterMenu dropdown instead of as a FilterChips chip. */
+export interface ListFilter<T> { key: string; label: string; tone: Tone; title?: string; group?: string; menu?: boolean; match: (t: T) => boolean; }
 export interface SortState { key: string; desc: boolean; }
 
 /** Shared search + filter chip + header sort + lazy-load for every list page. */
 export function createListView<T>(
   items: Accessor<T[]>,
   text: (item: T) => string,
-  opts?: { rowHeight?: number; sort?: Record<string, Cmp<T>>; filters?: ListFilter<T>[] },
+  opts?: { rowHeight?: number; sort?: Record<string, Cmp<T>>; filters?: ListFilter<T>[] | Accessor<ListFilter<T>[]> },
 ) {
   // ponytail: page size fixed at init — a resize/rotate keeps the old page, which only
   // changes how many rows one loadMore adds. Recompute in an effect if that ever matters.
@@ -32,11 +34,16 @@ export function createListView<T>(
   const [sort, setSort] = createTabState<SortState | null>("listSort", null);
   const [limit, setLimit] = createSignal(page);
 
-  const filters = opts?.filters ?? [];
-  const count = (key: string) => items().filter(filters.find((f) => f.key === key)!.match).length;
+  // Dynamic filters (e.g. one per compose project) come as an accessor.
+  const given = opts?.filters ?? [];
+  const filters = typeof given === "function" ? given : () => given;
+  const count = (key: string) => {
+    const f = filters().find((x) => x.key === key);
+    return f ? items().filter(f.match).length : 0;
+  };
   const filtered = createMemo(() => {
     const groups = new Map<string, ListFilter<T>[]>();
-    for (const f of filters) if (filter().includes(f.key)) groups.set(f.group ?? "", [...(groups.get(f.group ?? "") ?? []), f]);
+    for (const f of filters()) if (filter().includes(f.key)) groups.set(f.group ?? "", [...(groups.get(f.group ?? "") ?? []), f]);
     const pool = groups.size ? items().filter((i) => [...groups.values()].every((fs) => fs.some((f) => f.match(i)))) : items();
     const q = query().trim().toLowerCase();
     const hits = q ? pool.filter((i) => text(i).toLowerCase().includes(q)) : pool;
@@ -90,12 +97,16 @@ const TONE: Record<Tone, [idle: string, active: string]> = {
   teal: ["border-teal-500/40 bg-teal-500/10 text-teal-400 hover:bg-teal-500/20", "border-teal-500 bg-teal-500/20 text-teal-400"],
 };
 
+// Stable per-name colour so a project keeps its tag colour across renders/pages.
+const TONES = Object.keys(TONE) as Tone[];
+const toneOf = (name: string) => TONES[[...name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % TONES.length];
+
 /** Multi-select filter chips for a list toolbar; a chip with no matches hides unless active. */
 export const FilterChips: Component<{
-  view: { filters: ListFilter<never>[]; filter: Accessor<string[]>; setFilter: (k: string[]) => void; count: (k: string) => number };
+  view: FilterView;
   onChange?: () => void;
 }> = (p) => (
-  <For each={p.view.filters}>
+  <For each={p.view.filters().filter((f) => !f.menu)}>
     {(f) => {
       const on = () => p.view.filter().includes(f.key);
       return (
@@ -112,6 +123,59 @@ export const FilterChips: Component<{
     }}
   </For>
 );
+
+type FilterView = { filters: Accessor<ListFilter<never>[]>; filter: Accessor<string[]>; setFilter: (k: string[]) => void; count: (k: string) => number };
+
+/** A chip with a dropdown of sub-filters. Clicking the chip toggles `all`
+ *  (filter key matching every option); hovering — or tapping ▾ on touch —
+ *  lists the `menu` filters of the same `group`, multi-selectable (OR). Picking
+ *  options replaces `all`, so the chip narrows to just those. */
+export const FilterMenu: Component<{ view: FilterView; all: string; onChange?: () => void }> = (p) => {
+  const [open, setOpen] = createSignal(false);
+  const head = () => p.view.filters().find((f) => f.key === p.all)!;
+  const options = () => p.view.filters().filter((f) => f.menu && f.group === head().group && f.key !== p.all);
+  const picked = () => p.view.filter().filter((k) => options().some((o) => o.key === k));
+  const on = () => p.view.filter().includes(p.all) || picked().length > 0;
+  const set = (keys: string[]) => { p.view.setFilter(keys); p.onChange?.(); };
+  const without = () => p.view.filter().filter((k) => k !== p.all && !options().some((o) => o.key === k));
+  const toggleOption = (key: string) =>
+    set(p.view.filter().includes(key) ? p.view.filter().filter((k) => k !== key) : [...p.view.filter().filter((k) => k !== p.all), key]);
+  let root: HTMLDivElement | undefined;
+  const outside = (e: PointerEvent) => { if (root && !root.contains(e.target as Node)) setOpen(false); };
+  document.addEventListener("pointerdown", outside);
+  onCleanup(() => document.removeEventListener("pointerdown", outside));
+  return (
+    <Show when={on() || p.view.count(p.all) > 0}>
+      <div ref={root} class="group relative inline-flex">
+        <button
+          class={`border px-1.5 py-0.5 text-[11px] transition-colors ${TONE[head().tone][on() ? 1 : 0]}`}
+          title={on() ? `取消筛选${head().label}` : head().title ?? `筛选${head().label}`}
+          onClick={() => set(on() ? without() : [...without(), p.all])}
+        >
+          {head().label} {picked().length ? `${picked().length} 项` : p.view.count(p.all)}{on() ? " ✕" : ""}
+        </button>
+        <button
+          class={`border border-l-0 px-1 py-0.5 text-[11px] transition-colors ${TONE[head().tone][on() ? 1 : 0]}`}
+          title={`选择具体${head().label}`}
+          aria-expanded={open()}
+          onClick={() => setOpen(!open())}
+        >▾</button>
+        {/* pt-1 bridges the gap so moving the pointer down keeps the hover. */}
+        <div class={`absolute left-0 top-full z-30 pt-1 ${open() ? "block" : "hidden group-hover:block"}`}>
+          <div class="flex max-h-44 w-max max-w-[16rem] flex-wrap gap-1 overflow-y-auto border border-zinc-700 bg-zinc-950 p-1 shadow-2xl">
+            <For each={options()} fallback={<span class="text-zinc-500">无</span>}>
+              {(o) => (
+                <ToggleTag active={p.view.filter().includes(o.key)} colors={TONE[toneOf(o.label)]} title={o.title} onClick={() => toggleOption(o.key)}>
+                  {p.view.filter().includes(o.key) ? "✓ " : ""}{o.label} <span class="opacity-60">{p.view.count(o.key)}</span>
+                </ToggleTag>
+              )}
+            </For>
+          </div>
+        </div>
+      </div>
+    </Show>
+  );
+};
 
 export const SearchBox: Component<{
   value: string;

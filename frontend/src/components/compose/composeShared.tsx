@@ -1,4 +1,6 @@
-import { Component, JSX, Show } from "solid-js";
+import { Component, JSX, Show, onCleanup, onMount } from "solid-js";
+import { useNavigate } from "@solidjs/router";
+import { createResourceStore } from "../../stores/resource";
 import { Btn } from "../shared/ActionButton";
 import { InfoBar, Info, ContainerLinks, cname, fmtWhen } from "../shared/Inspect";
 import type { ComposeProject, ContainerSummary } from "../../types";
@@ -102,5 +104,50 @@ export const ComposeInfo: Component<{ data: any; containers: ContainerSummary[] 
       <Show when={created()}><Info k="创建">{fmtWhen(created())}</Info></Show>
       <Show when={d().load_error}><Info k="错误" title={d().load_error}><span class="text-red-400">{d().load_error}</span></Info></Show>
     </InfoBar>
+  );
+};
+
+// One app-wide /api/compose poll shared by every ComposeLink (each container
+// row would otherwise poll on its own); runs while at least one link is mounted.
+const composeProjects = createResourceStore<ComposeProject>("/api/compose", "id");
+let composeUsers = 0;
+
+/** Link from a compose-managed container to its project page; hover shows
+ *  the project's basics. Renders nothing for standalone containers. */
+export const ComposeLink: Component<{ labels?: Record<string, string> | null; class?: string }> = (p) => {
+  const navigate = useNavigate();
+  onMount(() => { if (composeUsers++ === 0) composeProjects.startPolling(); });
+  onCleanup(() => { if (--composeUsers === 0) composeProjects.stopPolling(); });
+  const label = () => p.labels?.[LABEL_PROJECT];
+  const project = () => {
+    const me = [{ Labels: p.labels ?? {} } as ContainerSummary];
+    return composeProjects.items().find((x) => containersOf(x, me).length > 0);
+  };
+  // ponytail: before the list loads (or if it fails) fall back to the backend's discovered-project id.
+  const href = () => `/compose/${project()?.id ?? `auto:${label()}`}`;
+  const tip = () => {
+    const x = project();
+    if (!x) return `Compose 项目：${label()}`;
+    return [
+      `Compose 项目：${x.name}`,
+      x.project_name && x.project_name !== x.name ? `项目名：${x.project_name}` : "",
+      `容器：${x.running ?? 0}/${x.total ?? 0} 运行中`,
+      x.compose_file ? `文件：${x.compose_file}` : "",
+      x.base_dir ? `目录：${x.base_dir}` : "",
+      x.discovered ? "来源：运行中发现（未注册）" : "来源：已注册",
+    ].filter(Boolean).join("\n");
+  };
+  return (
+    <Show when={label()}>
+      <a
+        href={href()}
+        title={tip()}
+        class={`inline-flex min-w-0 items-center gap-1 text-indigo-400 transition-colors hover:text-indigo-300 hover:underline ${p.class ?? ""}`}
+        onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(href(), { replace: true }); }}
+      >
+        <ComposeIcon size={12} />
+        <span class="truncate">{project()?.name ?? label()}</span>
+      </a>
+    </Show>
   );
 };

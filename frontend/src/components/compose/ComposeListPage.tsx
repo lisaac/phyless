@@ -347,6 +347,7 @@ export const ComposeListPage: Component = () => {
                               <For each={cs()}>
                                 {(c) => (
                                   <ContainerRow
+                                    noCompose
                                     c={c}
                                     all={containers.items()}
                                     isP={isP}

@@ -23,6 +23,16 @@ export const Btn: Component<{
       </button>;
 };
 
+// Toggleable tag in a multi-select tag panel (Cap Add/Drop, compose filter).
+// `colors` = [idle, active] classes to override the default blue/red scheme.
+export const ToggleTag: Component<{ active: boolean; danger?: boolean; colors?: [string, string]; title?: string; onClick: () => void; children: JSX.Element }> = (p) => (
+  <button type="button" title={p.title} onClick={p.onClick}
+    class={`px-1.5 py-0.5 text-xs font-mono transition-colors ${
+      p.colors ? `border ${p.colors[p.active ? 1 : 0]}`
+        : p.active ? (p.danger ? "bg-red-700 text-white" : "bg-blue-600 text-white") : "border border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-200"
+    }`}>{p.children}</button>
+);
+
 // Square 24px text-icon button used in the action rows of every list.
 export const IBtn: Component<{
   title: string; onClick: () => void;

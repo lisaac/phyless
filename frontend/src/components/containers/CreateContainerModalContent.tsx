@@ -1,4 +1,5 @@
 import { Component, createSignal, createResource, createEffect, Show, For, onMount, onCleanup } from "solid-js";
+import { ToggleTag } from "../shared/ActionButton";
 import { Modal } from "../shared/Modal";
 import { PullOptions, createPullOptions, pullModeLabel, isBrowserDownload, browserPullSpec, browserWorkerReady } from "../shared/PullOptions";
 import { Button, Chip, fieldCls } from "../shared/Button";
@@ -528,15 +529,7 @@ export const CreateContainerModal: Component<{
                     <Show when={capAddOpen()}>
                       <div class="absolute z-20 left-0 top-full mt-0.5 w-72 border border-zinc-700 bg-zinc-950 shadow-2xl p-2 flex flex-wrap gap-1 max-h-44 overflow-y-auto">
                         <For each={CAP_LIST}>
-                          {(cap) => {
-                            const active = () => activeCaps("cap_add").includes(cap);
-                            return (
-                              <button type="button" onClick={() => toggleCap("cap_add", cap)}
-                                class={`px-1.5 py-0.5 text-xs font-mono transition-colors ${
-                                  active() ? "bg-blue-600 text-white" : "border border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-200"
-                                }`}>{cap}</button>
-                            );
-                          }}
+                          {(cap) => <ToggleTag active={activeCaps("cap_add").includes(cap)} onClick={() => toggleCap("cap_add", cap)}>{cap}</ToggleTag>}
                         </For>
                       </div>
                     </Show>
@@ -563,15 +556,7 @@ export const CreateContainerModal: Component<{
                     <Show when={capDropOpen()}>
                       <div class="absolute z-20 right-0 top-full mt-0.5 w-72 border border-zinc-700 bg-zinc-900 shadow-2xl p-2 flex flex-wrap gap-1 max-h-44 overflow-y-auto">
                         <For each={CAP_LIST}>
-                          {(cap) => {
-                            const active = () => activeCaps("cap_drop").includes(cap);
-                            return (
-                              <button type="button" onClick={() => toggleCap("cap_drop", cap)}
-                                class={`px-1.5 py-0.5 text-xs font-mono transition-colors ${
-                                  active() ? "bg-red-700 text-white" : "border border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-200"
-                                }`}>{cap}</button>
-                            );
-                          }}
+                          {(cap) => <ToggleTag danger active={activeCaps("cap_drop").includes(cap)} onClick={() => toggleCap("cap_drop", cap)}>{cap}</ToggleTag>}
                         </For>
                       </div>
                     </Show>

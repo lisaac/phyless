@@ -19,8 +19,8 @@ async function establishSession(authenticate: (signal: AbortSignal) => Promise<s
   setCurrentUser(me);
 }
 
-export const doLogin = (username: string, password: string): Promise<void> =>
-  establishSession((signal) => login(username, password, signal));
+export const doLogin = (username: string, password: string, remember = false): Promise<void> =>
+  establishSession((signal) => login(username, password, signal, remember));
 
 export const doSetup = (password: string): Promise<void> =>
   establishSession((signal) => setup(password, signal));

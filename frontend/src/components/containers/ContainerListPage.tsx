@@ -1,4 +1,4 @@
-import { Component, createSignal, onMount, onCleanup, Show, For } from "solid-js";
+import { Component, createMemo, createSignal, onMount, onCleanup, Show, For } from "solid-js";
 import { Button, PageHeader } from "../shared/Button";
 import { createResourceStore } from "../../stores/resource";
 import { get, imageInspectUrl } from "../../api/client";
@@ -15,8 +15,8 @@ import { updateCheckFor, isUpgradable } from "../../stores/updateCheck";
 import { ImportContainerModal } from "./ImportContainerModal";
 import { Btn } from "../shared/ActionButton";
 import { confirmAction } from "../shared/ConfirmModal";
-import { ComposeIcon } from "../compose/composeShared";
-import { createListView, SearchBox, LoadMore, FilterChips, type ListFilter } from "../shared/ListView";
+import { ComposeIcon, LABEL_PROJECT } from "../compose/composeShared";
+import { by, createListView, SearchBox, LoadMore, FilterChips, FilterMenu, type ListFilter } from "../shared/ListView";
 import type { ContainerSummary } from "../../types";
 
 const has = (...states: string[]) => (c: ContainerSummary) => states.includes(c.State);
@@ -35,9 +35,17 @@ export const ContainerListPage: Component = () => {
   const store = createResourceStore<ContainerSummary>("/api/containers");
   const { isP, act } = createContainerActions();
   const upgradable = (c: ContainerSummary) => isUpgradable(updateCheckFor(c.Id, c.ImageID));
+  const composeNames = createMemo(() =>
+    [...new Set(store.items().map((c) => c.Labels?.[LABEL_PROJECT]).filter((n): n is string => !!n))].sort(by((n) => n)));
   const view = createListView(store.items, (c) => `${c.Names.join(" ")} ${c.Image} ${c.Id} ${c.Status}`, {
     sort: containerSorts,
-    filters: [...STATUS_FILTERS, { key: "upgradable", label: "可升级", tone: "amber", group: "upgrade", title: "筛选可升级的容器", match: upgradable }],
+    filters: () => [
+      ...STATUS_FILTERS,
+      { key: "upgradable", label: "可升级", tone: "amber", group: "upgrade", title: "筛选可升级的容器", match: upgradable },
+      { key: "compose", label: "Compose", tone: "violet", group: "compose", menu: true, title: "筛选属于 Compose 的容器", match: (c) => !!c.Labels?.[LABEL_PROJECT] },
+      ...composeNames().map((name): ListFilter<ContainerSummary> => (
+        { key: `compose:${name}`, label: name, tone: "violet", group: "compose", menu: true, match: (c) => c.Labels?.[LABEL_PROJECT] === name })),
+    ],
   });
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [showCreate, setShowCreate] = createSignal(false);
@@ -133,6 +141,7 @@ export const ContainerListPage: Component = () => {
         </Show>
         <span class="text-zinc-400">│</span>
         <FilterChips view={view} onChange={() => setSelected(new Set<string>())} />
+        <FilterMenu view={view} all="compose" onChange={() => setSelected(new Set<string>())} />
 
         <Show when={n() > 0}>
           <button class="ml-auto text-zinc-400 hover:text-zinc-400" onClick={() => setSelected(new Set())}>

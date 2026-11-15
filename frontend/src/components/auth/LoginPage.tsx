@@ -9,6 +9,7 @@ export const LoginPage: Component = () => {
   const navigate = useNavigate();
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
+  const [remember, setRemember] = createSignal(false);
   const [confirmPassword, setConfirmPassword] = createSignal("");
   const [configured, setConfigured] = createSignal<boolean | null>(null);
   const [error, setError] = createSignal("");
@@ -30,7 +31,7 @@ export const LoginPage: Component = () => {
     setError("");
     try {
       if (configured() === false) await doSetup(password());
-      else await doLogin(username(), password());
+      else await doLogin(username(), password(), remember());
       navigate("/containers", { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? "用户名或密码错误" : String(err));
@@ -79,6 +80,12 @@ export const LoginPage: Component = () => {
             onInput={(e) => setPassword(e.currentTarget.value)}
           />
         </div>
+        <Show when={configured() !== false}>
+          <label class="-mt-2 mb-5 flex items-center gap-2 text-sm text-zinc-400">
+            <input type="checkbox" checked={remember()} onChange={(e) => setRemember(e.currentTarget.checked)} />
+            记住我（30 天内免登录）
+          </label>
+        </Show>
         <Show when={configured() === false}>
           <div class="mb-5">
             <label class="mb-1.5 block text-sm font-medium text-zinc-300">确认密码</label>

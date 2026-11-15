@@ -349,7 +349,7 @@ export const ComposeDetailPage: Component = () => {
                 <div class="divide-y divide-zinc-800">
                   <For each={cs()}>
                     {(c) => (
-                      <ContainerRow c={c} all={containers.items()} isP={isP} act={act} onViewCmd={setRunTarget} onConsole={setConsoleTarget} />
+                      <ContainerRow noCompose c={c} all={containers.items()} isP={isP} act={act} onViewCmd={setRunTarget} onConsole={setConsoleTarget} />
                     )}
                   </For>
                 </div>
