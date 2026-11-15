@@ -257,7 +257,7 @@ export const ComposeDetailPage: Component = () => {
       <h1 class="mb-3 flex min-w-0 items-center gap-2 break-all text-xl font-semibold">
         <ComposeIcon size={20} class="shrink-0" />
         {project()?.name ?? id()}
-        <AutoUpdateBadge kind="compose" target={id()} />
+        <AutoUpdateBadge kind="compose" target={id()} title={project()?.name ?? id()} />
       </h1>
 
       <Show when={hasRole("operator")}>

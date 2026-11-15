@@ -280,7 +280,7 @@ export const ComposeListPage: Component = () => {
                               class="break-all border-b border-dashed border-indigo-400/60 font-medium text-indigo-400 transition-colors hover:border-indigo-300 hover:text-indigo-300"
                               onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigate(`/compose/${p.id}`, { replace: true }); }}
                             >{p.name}</a>
-                            <AutoUpdateBadge kind="compose" target={p.id} />
+                            <AutoUpdateBadge kind="compose" target={p.id} title={p.name} />
                             <Show when={p.discovered}>
                               <Show when={fromDir()} fallback={
                                 <span class="border border-violet-500/40 bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300" title="根据运行中 Docker 容器的 Compose 标签发现；尚未手动注册，点击加号可注册">运行中发现</span>

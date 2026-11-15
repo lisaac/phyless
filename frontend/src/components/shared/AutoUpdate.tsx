@@ -6,6 +6,7 @@ import { PullOptions, createPullOptions } from "./PullOptions";
 import { RemoveOldImageCheckbox } from "./RemoveOldImage";
 import { confirmAction } from "./ConfirmModal";
 import { toast } from "./Toast";
+import { hasRole } from "../../stores/auth";
 import {
   AUTO_STATUS_LABEL, UPDATE_STATUS_LABEL, WEEKDAYS, autoUpdateFor, statusTone, deleteAutoUpdate, runAutoUpdate, saveAutoUpdate, scheduleLabel,
   type AutoUpdateKind, type AutoUpdatePolicy, type Schedule, type ScheduleKind,
@@ -67,13 +68,24 @@ export const AutoUpdateRecord: Component<{ policy: AutoUpdatePolicy; log?: boole
   </div>
 );
 
-/** Small marker next to a container/project name; nothing without a policy. */
-export const AutoUpdateBadge: Component<{ kind: AutoUpdateKind; target?: string }> = (props) => {
+/** Small marker next to a container/project name; nothing without a policy.
+ *  Operators can click it to open the settings dialog. */
+export const AutoUpdateBadge: Component<{ kind: AutoUpdateKind; target?: string; title?: string }> = (props) => {
   const p = () => autoUpdateFor(props.kind, props.target);
   const tone = () => (p()?.enabled ? toneCls(p()?.last_status) : "text-zinc-500");
+  const [open, setOpen] = createSignal(false);
+  const cls = () => `shrink-0 text-[10px] font-normal ${tone()}`;
   return (
     <Show when={p()}>
-      {(pol) => <span class={`shrink-0 cursor-help text-[10px] font-normal ${tone()}`} title={badgeTitle(pol())}>↻ 自动</span>}
+      {(pol) => (
+        <Show when={hasRole("operator")} fallback={<span class={`${cls()} cursor-help`} title={badgeTitle(pol())}>↻ 自动</span>}>
+          {/* Rows toggle selection on click; keep badge and dialog clicks inside. */}
+          <span class="contents" onClick={(e) => e.stopPropagation()}>
+            <button type="button" class={`${cls()} cursor-pointer hover:underline`} title={badgeTitle(pol())} onClick={() => setOpen(true)}>↻ 自动</button>
+            <AutoUpdateModal kind={props.kind} target={open() ? props.target! : null} title={props.title ?? props.target!} onClose={() => setOpen(false)} />
+          </span>
+        </Show>
+      )}
     </Show>
   );
 };
