@@ -7,26 +7,27 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+	"phyless/backend/internal/docker"
 )
 
 type netModeClient struct{ client.APIClient }
 
-func (netModeClient) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+func (netModeClient) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	mode := container.NetworkMode("bridge")
 	if id == "app" {
 		mode = "container:vpn-id"
 	}
-	return container.InspectResponse{
-		ContainerJSONBase: &container.ContainerJSONBase{ID: id, Name: "/" + id, HostConfig: &container.HostConfig{NetworkMode: mode}},
-		Config:            &container.Config{Image: "img"},
-	}, nil
+	return client.ContainerInspectResult{Container: container.InspectResponse{
+		ID: id, Name: "/" + id, HostConfig: &container.HostConfig{NetworkMode: mode},
+		Config: &container.Config{Image: "img"},
+	}}, nil
 }
 
 func TestContainerInspectAddsNetworkContainerName(t *testing.T) {
-	s := &Server{docker: netModeClient{}}
+	s := &Server{docker: &docker.Client{APIClient: netModeClient{}}}
 	for id, want := range map[string]string{"app": "vpn-id", "solo": ""} {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", id)

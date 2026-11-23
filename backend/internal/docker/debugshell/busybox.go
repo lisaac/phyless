@@ -13,13 +13,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"phyless/backend/internal/docker"
 )
@@ -90,7 +88,7 @@ func assetFor(ctx context.Context, cli client.APIClient) (asset, error) {
 	if a, ok := archCache.Load(cli); ok {
 		return a.(func() asset)(), nil
 	}
-	v, err := cli.ServerVersion(ctx)
+	v, err := cli.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
 		return asset{}, err
 	}
@@ -104,25 +102,26 @@ func assetFor(ctx context.Context, cli client.APIClient) (asset, error) {
 
 // createDebug runs ContainerCreate on the debug image, importing it on first
 // use (or after someone deleted it) — the hot path costs no extra round trip.
-func createDebug(ctx context.Context, cli client.APIClient, name string, cfg *container.Config, hc *container.HostConfig) (container.CreateResponse, error) {
+func createDebug(ctx context.Context, cli client.APIClient, name string, cfg *container.Config, hc *container.HostConfig) (client.ContainerCreateResult, error) {
 	a, err := assetFor(ctx, cli)
 	if err != nil {
-		return container.CreateResponse{}, err
+		return client.ContainerCreateResult{}, err
 	}
 	cfg.Image = a.image()
-	resp, err := cli.ContainerCreate(ctx, cfg, hc, nil, nil, name)
-	if !errdefs.IsNotFound(err) {
+	opts := client.ContainerCreateOptions{Name: name, Config: cfg, HostConfig: hc}
+	resp, err := cli.ContainerCreate(ctx, opts)
+	if !cerrdefs.IsNotFound(err) {
 		return resp, err
 	}
 	// NotFound may also be the target (pid=container:<gone>); only import when
 	// the image is what's missing.
-	if _, inspectErr := cli.ImageInspect(ctx, a.image()); !errdefs.IsNotFound(inspectErr) {
+	if _, inspectErr := cli.ImageInspect(ctx, a.image()); !cerrdefs.IsNotFound(inspectErr) {
 		return resp, err
 	}
 	if err := importImage(ctx, cli, a); err != nil {
-		return container.CreateResponse{}, err
+		return client.ContainerCreateResult{}, err
 	}
-	return cli.ContainerCreate(ctx, cfg, hc, nil, nil, name)
+	return cli.ContainerCreate(ctx, opts)
 }
 
 // importImage turns the embedded busybox into a local image — no registry,
@@ -140,8 +139,8 @@ func importImage(ctx context.Context, cli client.APIClient, a asset) error {
 	if err != nil {
 		return err
 	}
-	rc, err := cli.ImageImport(ctx, image.ImportSource{Source: bytes.NewReader(rootfs), SourceName: "-"}, a.image(),
-		image.ImportOptions{Platform: "linux/" + a.arch, Changes: []string{"LABEL " + docker.RoleLabel + "=" + Role}})
+	rc, err := cli.ImageImport(ctx, client.ImageImportSource{Source: bytes.NewReader(rootfs), SourceName: "-"}, a.image(),
+		client.ImageImportOptions{Platform: ocispec.Platform{OS: "linux", Architecture: a.arch}, Changes: []string{"LABEL " + docker.RoleLabel + "=" + Role}})
 	if err != nil {
 		return fmt.Errorf("导入调试镜像失败: %w", err)
 	}
@@ -165,9 +164,9 @@ func busyboxMount(ctx context.Context, cli client.APIClient) (mount.Mount, error
 		return mount.Mount{}, err
 	}
 	m := mount.Mount{Type: mount.TypeVolume, Source: a.volume(), Target: "/.phyless", ReadOnly: true}
-	if _, err := cli.VolumeInspect(ctx, a.volume()); err == nil {
+	if _, err := cli.VolumeInspect(ctx, a.volume(), client.VolumeInspectOptions{}); err == nil {
 		return m, nil
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		return mount.Mount{}, err
 	}
 	resp, err := createDebug(ctx, cli, HelperName("busybox-init", ""), &container.Config{
@@ -181,7 +180,7 @@ func busyboxMount(ctx context.Context, cli client.APIClient) (mount.Mount, error
 		return mount.Mount{}, fmt.Errorf("创建 busybox 卷失败: %w", err)
 	}
 	// Created, never started: the copy happens at create. Keep the volume.
-	if err := cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true}); err != nil {
+	if _, err := cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 		return mount.Mount{}, err
 	}
 	return m, nil
@@ -223,18 +222,18 @@ func Prune(ctx context.Context, cli client.APIClient) {
 	if err != nil {
 		return
 	}
-	role := filters.Arg("label", docker.RoleLabel+"="+Role)
-	if imgs, err := cli.ImageList(ctx, image.ListOptions{Filters: filters.NewArgs(role, filters.Arg("reference", imageRepo))}); err == nil {
-		for _, img := range imgs {
+	role := docker.RoleLabel + "=" + Role
+	if imgs, err := cli.ImageList(ctx, client.ImageListOptions{Filters: make(client.Filters).Add("label", role).Add("reference", imageRepo)}); err == nil {
+		for _, img := range imgs.Items {
 			if !slices.Contains(img.RepoTags, a.image()) {
-				_, _ = cli.ImageRemove(ctx, img.ID, image.RemoveOptions{})
+				_, _ = cli.ImageRemove(ctx, img.ID, client.ImageRemoveOptions{})
 			}
 		}
 	}
-	if vols, err := cli.VolumeList(ctx, volume.ListOptions{Filters: filters.NewArgs(role)}); err == nil {
-		for _, v := range vols.Volumes {
+	if vols, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", role)}); err == nil {
+		for _, v := range vols.Items {
 			if strings.HasPrefix(v.Name, volumePrefix) && v.Name != a.volume() {
-				_ = cli.VolumeRemove(ctx, v.Name, false)
+				_, _ = cli.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{})
 			}
 		}
 	}

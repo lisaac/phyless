@@ -11,15 +11,14 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/containerd/platforms"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/versions"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
-	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/versions"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/backend/internal/docker"
 )
@@ -41,8 +40,9 @@ type UpgradeOptions struct {
 	Handoff func() error
 }
 
-func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, skipPull bool, uopts UpgradeOptions) (string, error) {
-	info, err := cli.ContainerInspect(ctx, containerID)
+func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, registryAuth string, skipPull bool, uopts UpgradeOptions) (string, error) {
+	infoRes, err := cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	info := infoRes.Container
 	if err != nil {
 		return "", err
 	}
@@ -91,7 +91,8 @@ func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 		defer depRelease()
 	}
 
-	oldImage, err := cli.ImageInspect(ctx, info.Image)
+	oldImageRes, err := cli.ImageInspect(ctx, info.Image)
+	oldImage := oldImageRes.InspectResponse
 	if err != nil {
 		return "", fmt.Errorf("无法检查原镜像平台: %w", err)
 	}
@@ -102,9 +103,8 @@ func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 	if skipPull {
 		EmitStream(w, "使用已下载镜像 %s …", imageRef)
 	} else {
-		opts.Platform = ImagePlatform(oldImage)
 		EmitStream(w, "正在拉取镜像 %s …", imageRef)
-		rc, err := cli.ImagePull(ctx, imageRef, opts)
+		rc, err := cli.ImagePull(ctx, imageRef, client.ImagePullOptions{RegistryAuth: registryAuth, Platforms: []ocispec.Platform{platform}})
 		if err != nil {
 			return "", fmt.Errorf("pull 失败: %w", err)
 		}
@@ -116,7 +116,8 @@ func upgrade(ctx context.Context, cli client.APIClient, containerID string, w io
 		}
 	}
 
-	newImg, _, err := cli.ImageInspectWithRaw(ctx, imageRef)
+	newImgRes, err := cli.ImageInspect(ctx, imageRef)
+	newImg := newImgRes.InspectResponse
 	if err != nil {
 		return "", fmt.Errorf("无法检查新镜像: %w", err)
 	}
@@ -223,7 +224,7 @@ func replaceContainer(ctx context.Context, cli client.APIClient, w io.Writer, r 
 
 	newName := "phyless-upgrade-" + shortID(oldID)
 	oldRunning := r.info.State != nil && r.info.State.Running
-	resp, err := cli.ContainerCreate(ctx, &cfg, hostCfg, createNet, &r.platform, newName)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Name: newName, Config: &cfg, HostConfig: hostCfg, NetworkingConfig: createNet, Platform: &r.platform})
 	if err != nil {
 		if resp.ID != "" {
 			return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, nil, fmt.Errorf("创建容器失败: %w", err))
@@ -234,7 +235,7 @@ func replaceContainer(ctx context.Context, cli client.APIClient, w io.Writer, r 
 		return "", stopped, fmt.Errorf("创建容器失败: Docker returned an empty container ID")
 	}
 	for _, name := range slices.Sorted(maps.Keys(extraNets)) {
-		if err := cli.NetworkConnect(ctx, name, resp.ID, extraNets[name]); err != nil {
+		if _, err := cli.NetworkConnect(ctx, name, client.NetworkConnectOptions{Container: resp.ID, EndpointConfig: extraNets[name]}); err != nil {
 			return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, nil, fmt.Errorf("接入网络 %s 失败: %w", name, err))
 		}
 	}
@@ -243,7 +244,7 @@ func replaceContainer(ctx context.Context, cli client.APIClient, w io.Writer, r 
 		return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, nil, err)
 	}
 	if oldRunning {
-		if err := cli.ContainerStop(ctx, oldID, container.StopOptions{}); err != nil && !errdefs.IsNotModified(err) {
+		if _, err := cli.ContainerStop(ctx, oldID, client.ContainerStopOptions{}); err != nil && !cerrdefs.IsNotModified(err) {
 			return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, nil, fmt.Errorf("停止容器失败: %w", err))
 		}
 		stopped = true
@@ -251,7 +252,7 @@ func replaceContainer(ctx context.Context, cli client.APIClient, w io.Writer, r 
 		if err := ctx.Err(); err != nil {
 			return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, restoreNetworking, err)
 		}
-		if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 			return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, restoreNetworking, fmt.Errorf("启动容器失败: %w", err))
 		}
 	}
@@ -259,7 +260,7 @@ func replaceContainer(ctx context.Context, cli client.APIClient, w io.Writer, r 
 		return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, restoreNetworking, err)
 	}
 	backupName := newName + "-old"
-	if err := cli.ContainerRename(ctx, oldID, backupName); err != nil {
+	if _, err := cli.ContainerRename(ctx, oldID, client.ContainerRenameOptions{NewName: backupName}); err != nil {
 		return "", stopped, rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, restoreNetworking, fmt.Errorf("暂存原容器名称失败: %w", err))
 	}
 	if err := ctx.Err(); err != nil {
@@ -267,15 +268,15 @@ func replaceContainer(ctx context.Context, cli client.APIClient, w io.Writer, r 
 		cleanupErr := rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, restoreNetworking, err)
 		return "", stopped, errors.Join(cleanupErr, nameErr)
 	}
-	if err := cli.ContainerRename(ctx, resp.ID, r.name); err != nil {
+	if _, err := cli.ContainerRename(ctx, resp.ID, client.ContainerRenameOptions{NewName: r.name}); err != nil {
 		rollbackErr := restoreUpgradeName(ctx, cli, oldID, r.name)
 		cleanupErr := rollbackUpgrade(ctx, cli, oldID, resp.ID, oldRunning, restoreNetworking, fmt.Errorf("切换新容器名称失败: %w", err))
 		return "", stopped, errors.Join(cleanupErr, rollbackErr)
 	}
 	cleanupCtx, cancel := upgradeCleanupContext(ctx)
-	removeErr := cli.ContainerRemove(cleanupCtx, oldID, container.RemoveOptions{Force: true})
+	_, removeErr := cli.ContainerRemove(cleanupCtx, oldID, client.ContainerRemoveOptions{Force: true})
 	cancel()
-	if removeErr != nil && !errdefs.IsNotFound(removeErr) {
+	if removeErr != nil && !cerrdefs.IsNotFound(removeErr) {
 		EmitStream(w, "⚠ 升级已切换成功，但旧容器清理失败（备份名称: %s）：%v", backupName, removeErr)
 	}
 	return resp.ID, stopped, nil
@@ -337,13 +338,13 @@ func restoreConfig(info container.InspectResponse, oldImage image.InspectRespons
 		cfg.Env = slices.DeleteFunc(cfg.Env, func(e string) bool { return slices.Contains(img.Env, e) })
 		maps.DeleteFunc(cfg.Labels, func(k, v string) bool { iv, ok := img.Labels[k]; return ok && iv == v })
 		maps.DeleteFunc(cfg.Volumes, func(k string, _ struct{}) bool { _, ok := img.Volumes[k]; return ok })
-		maps.DeleteFunc(map[nat.Port]struct{}(cfg.ExposedPorts), func(p nat.Port, _ struct{}) bool { _, ok := img.ExposedPorts[string(p)]; return ok })
+		maps.DeleteFunc(cfg.ExposedPorts, func(p network.Port, _ struct{}) bool { _, ok := img.ExposedPorts[p.String()]; return ok })
 	}
 	// Published ports must stay exposed even if the new image stops declaring them.
 	if info.HostConfig != nil {
 		for p := range info.HostConfig.PortBindings {
 			if cfg.ExposedPorts == nil {
-				cfg.ExposedPorts = nat.PortSet{}
+				cfg.ExposedPorts = network.PortSet{}
 			}
 			cfg.ExposedPorts[p] = struct{}{}
 		}
@@ -377,17 +378,18 @@ func splitNetworking(cli client.APIClient, hostCfg *container.HostConfig, n *net
 func settleReplacement(ctx context.Context, cli client.APIClient, w io.Writer, id, imageID string, started bool) error {
 	deadline := time.Now().Add(upgradeSettleTime)
 	for {
-		st, err := cli.ContainerInspect(ctx, id)
+		stRes, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+		st := stRes.Container
 		if err != nil {
 			return fmt.Errorf("无法检查新容器: %w", err)
 		}
-		if st.ContainerJSONBase != nil && st.Image != "" && st.Image != imageID {
+		if st.Image != "" && st.Image != imageID {
 			return fmt.Errorf("新容器镜像 %s 与预期 %s 不符", shortID(st.Image), shortID(imageID))
 		}
 		if !started {
 			return nil
 		}
-		if s := st.State; st.ContainerJSONBase != nil && s != nil && (s.Restarting || s.OOMKilled || (!s.Running && s.ExitCode != 0)) {
+		if s := st.State; s != nil && (s.Restarting || s.OOMKilled || (!s.Running && s.ExitCode != 0)) {
 			emitTailLogs(ctx, cli, w, id)
 			return fmt.Errorf("新容器启动后异常退出（exit %d），已恢复原容器", s.ExitCode)
 		}
@@ -403,7 +405,7 @@ func settleReplacement(ctx context.Context, cli client.APIClient, w io.Writer, i
 }
 
 func emitTailLogs(ctx context.Context, cli client.APIClient, w io.Writer, id string) {
-	rc, err := cli.ContainerLogs(ctx, id, container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "20"})
+	rc, err := cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "20"})
 	if err != nil {
 		return
 	}
@@ -425,10 +427,11 @@ func emitTailLogs(ctx context.Context, cli client.APIClient, w io.Writer, id str
 // them in a dead namespace, so they are recreated right after the switch —
 // watchtower restarts linked containers for the same reason.
 func networkDependents(ctx context.Context, cli client.APIClient, info container.InspectResponse) ([]container.InspectResponse, error) {
-	list, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, fmt.Errorf("无法列出容器: %w", err)
 	}
+	list := res.Items
 	name := strings.TrimPrefix(info.Name, "/")
 	var deps []container.InspectResponse
 	for _, c := range list {
@@ -436,7 +439,8 @@ func networkDependents(ctx context.Context, cli client.APIClient, info container
 		if !ok || target == "" || c.ID == info.ID || (target != name && !strings.HasPrefix(info.ID, target)) {
 			continue
 		}
-		dep, err := cli.ContainerInspect(ctx, c.ID)
+		depRes, err := cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+		dep := depRes.Container
 		if err != nil {
 			return nil, fmt.Errorf("无法检查共享网络的容器: %w", err)
 		}
@@ -456,7 +460,7 @@ func restartDependents(ctx context.Context, cli client.APIClient, w io.Writer, d
 		if dep.State == nil || !dep.State.Running {
 			continue
 		}
-		if err := cli.ContainerRestart(cleanupCtx, dep.ID, container.StopOptions{}); err != nil {
+		if _, err := cli.ContainerRestart(cleanupCtx, dep.ID, client.ContainerRestartOptions{}); err != nil {
 			EmitStream(w, "⚠ 恢复 %s 的网络失败，请手动重启：%v", strings.TrimPrefix(dep.Name, "/"), err)
 		}
 	}
@@ -465,14 +469,16 @@ func restartDependents(ctx context.Context, cli client.APIClient, w io.Writer, d
 // recreateDependent re-points a dependent at the replacement. It re-inspects
 // first: the list taken before the pull may be stale. The caller holds its lock.
 func recreateDependent(ctx context.Context, cli client.APIClient, w io.Writer, depID, mainName, newMainID string, mainRunning bool) error {
-	dep, err := cli.ContainerInspect(ctx, depID)
+	depRes, err := cli.ContainerInspect(ctx, depID, client.ContainerInspectOptions{})
+	dep := depRes.Container
 	if err != nil {
 		return err
 	}
 	if dep.Config == nil || dep.HostConfig == nil || dep.State == nil {
 		return errors.New("容器信息不完整")
 	}
-	img, err := cli.ImageInspect(ctx, dep.Image)
+	imgRes, err := cli.ImageInspect(ctx, dep.Image)
+	img := imgRes.InspectResponse
 	if err != nil {
 		return fmt.Errorf("无法检查镜像: %w", err)
 	}
@@ -486,7 +492,7 @@ func recreateDependent(ctx context.Context, cli client.APIClient, w io.Writer, d
 		state := *dep.State
 		state.Running = false
 		dep.State = &state
-		if err := cli.ContainerStop(ctx, dep.ID, container.StopOptions{}); err != nil && !errdefs.IsNotModified(err) {
+		if _, err := cli.ContainerStop(ctx, dep.ID, client.ContainerStopOptions{}); err != nil && !cerrdefs.IsNotModified(err) {
 			return fmt.Errorf("停止容器失败: %w", err)
 		}
 		EmitStream(w, "主容器未运行，%s 将重建为停止状态", strings.TrimPrefix(dep.Name, "/"))

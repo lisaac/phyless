@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"phyless/backend/internal/docker"
 )
@@ -50,30 +50,31 @@ type updateCheckClient struct {
 	distCalls int
 }
 
-func (c *updateCheckClient) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+func (c *updateCheckClient) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	img := map[string]string{"a": "nginx:latest", "b": "nginx:latest", "c": "sha256:pinned"}[id]
-	return container.InspectResponse{
-		ContainerJSONBase: &container.ContainerJSONBase{ID: id, Image: "sha256:" + id},
-		Config:            &container.Config{Image: img},
-	}, nil
+	return client.ContainerInspectResult{Container: container.InspectResponse{
+		ID:     id,
+		Image:  "sha256:" + id,
+		Config: &container.Config{Image: img},
+	}}, nil
 }
 
-func (c *updateCheckClient) ImageInspect(_ context.Context, ref string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+func (c *updateCheckClient) ImageInspect(_ context.Context, ref string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
 	if ref == "nginx:latest" {
 		ref = "sha256:a"
 	}
 	switch ref {
 	case "sha256:a":
-		return image.InspectResponse{ID: ref, Os: "linux", Architecture: "amd64", RepoDigests: []string{"nginx@sha256:cur"}}, nil
+		return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: ref, Os: "linux", Architecture: "amd64", RepoDigests: []string{"nginx@sha256:cur"}}}, nil
 	case "sha256:b":
-		return image.InspectResponse{ID: ref, Os: "linux", Architecture: "amd64", RepoDigests: []string{"nginx@sha256:old"}}, nil
+		return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: ref, Os: "linux", Architecture: "amd64", RepoDigests: []string{"nginx@sha256:old"}}}, nil
 	}
-	return image.InspectResponse{}, errors.New("not found")
+	return client.ImageInspectResult{}, errors.New("not found")
 }
 
-func (c *updateCheckClient) DistributionInspect(context.Context, string, string) (registry.DistributionInspect, error) {
+func (c *updateCheckClient) DistributionInspect(context.Context, string, client.DistributionInspectOptions) (client.DistributionInspectResult, error) {
 	c.distCalls++
-	return registry.DistributionInspect{Descriptor: ocispec.Descriptor{Digest: "sha256:cur"}}, nil
+	return client.DistributionInspectResult{DistributionInspect: registry.DistributionInspect{Descriptor: ocispec.Descriptor{Digest: "sha256:cur"}}}, nil
 }
 
 func TestUpdateStatusDigestOnlyWithoutRepoDigests(t *testing.T) {
@@ -103,7 +104,7 @@ func TestCheckUpdatesPrefersHead(t *testing.T) {
 	}
 	t.Cleanup(func() { resolveRemoteDigest = prev })
 	c := &updateCheckClient{}
-	out, err := (&Server{docker: c}).checkUpdates(context.Background(), []string{"a", "b"}, nil)
+	out, err := (&Server{docker: &docker.Client{APIClient: c}}).checkUpdates(context.Background(), []string{"a", "b"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestCheckUpdatesPrefersHead(t *testing.T) {
 func TestHandleCheckUpdatesDirect(t *testing.T) {
 	offlineHead(t)
 	c := &updateCheckClient{}
-	s := &Server{docker: c}
+	s := &Server{docker: &docker.Client{APIClient: c}}
 	rec := httptest.NewRecorder()
 	s.handleCheckUpdates(rec, httptest.NewRequest(http.MethodPost, "/api/containers/check-updates", strings.NewReader(`{"ids":["a","b","c"]}`)))
 	if rec.Code != http.StatusOK {
@@ -146,13 +147,13 @@ func TestHandleCheckUpdatesDirect(t *testing.T) {
 
 type missingUpdateImageClient struct{ updateCheckClient }
 
-func (*missingUpdateImageClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
-	return image.InspectResponse{}, errors.New("image unavailable")
+func (*missingUpdateImageClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	return client.ImageInspectResult{}, errors.New("image unavailable")
 }
 
 func TestCheckUpdatesStopsAtMissingCurrentImage(t *testing.T) {
 	c := &missingUpdateImageClient{}
-	s := &Server{docker: c}
+	s := &Server{docker: &docker.Client{APIClient: c}}
 	rec := httptest.NewRecorder()
 	s.handleCheckUpdates(rec, httptest.NewRequest(http.MethodPost, "/api/containers/check-updates", strings.NewReader(`{"ids":["a"]}`)))
 	var out []updateCheckResult

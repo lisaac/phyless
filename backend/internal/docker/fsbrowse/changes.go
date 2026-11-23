@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	ctr "phyless/backend/internal/docker/container"
 )
@@ -85,8 +85,9 @@ func (c *changeCache) get(ctx context.Context, cli client.APIClient, id, finishe
 	// Detached from the caller: concurrent waiters share this fetch, and a
 	// dropped request should still leave the result cached for its retry.
 	diffCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), diffTimeout)
-	raw, err := cli.ContainerDiff(diffCtx, id)
+	diff, err := cli.ContainerDiff(diffCtx, id, client.ContainerDiffOptions{})
 	cancel()
+	raw := diff.Changes
 	if err == nil {
 		s.changes = make([]change, len(raw))
 		for i, r := range raw {
@@ -313,10 +314,11 @@ func (s *changeSet) stat(ctx context.Context, cli client.APIClient, id, dir stri
 		sem <- struct{}{}
 		go func(e *ctr.FileEntry) {
 			defer func() { <-sem; wg.Done() }()
-			st, err := cli.ContainerStatPath(ctx, id, full)
+			res, err := cli.ContainerStatPath(ctx, id, client.ContainerStatPathOptions{Path: full})
 			if err != nil {
 				return
 			}
+			st := res.Stat
 			*e = ctr.FileEntry{Name: e.Name, Size: st.Size, Mode: modeString(st.Mode), IsDir: st.Mode.IsDir(), Change: e.Change, Kinds: e.Kinds}
 			if st.Mode&fs.ModeSymlink != 0 {
 				e.Size = 0

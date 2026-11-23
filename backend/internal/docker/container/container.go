@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,14 +18,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
-	"github.com/docker/docker/pkg/stdcopy"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // ErrUploadTooLarge is returned before any Docker API call when an upload
@@ -160,7 +160,7 @@ func ExecCapture(ctx context.Context, cli client.APIClient, containerID string, 
 
 // execCapture is ExecCapture as user ("" = the container's own).
 func execCapture(ctx context.Context, cli client.APIClient, containerID, user string, cmd []string) (stdout, stderr *LsBuffer, code int, err error) {
-	exec, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	exec, err := cli.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
 		User:         user,
 		AttachStdout: true,
@@ -176,7 +176,7 @@ func execCapture(ctx context.Context, cli client.APIClient, containerID, user st
 	if strings.TrimSpace(exec.ID) == "" {
 		return nil, nil, 0, fmt.Errorf("Docker returned an empty exec ID")
 	}
-	resp, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
+	resp, err := cli.ExecAttach(ctx, exec.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -312,13 +312,14 @@ func filenameAfterFields(line string, n int) string {
 
 // DownloadFile streams a single file from a container. Caller must close the returned ReadCloser.
 func DownloadFile(ctx context.Context, cli client.APIClient, containerID, path string) (io.ReadCloser, error) {
-	rc, _, err := cli.CopyFromContainer(ctx, containerID, path)
-	return rc, err
+	res, err := cli.CopyFromContainer(ctx, containerID, client.CopyFromContainerOptions{SourcePath: path})
+	return res.Content, err
 }
 
 // UploadFile uploads content (as a tar stream) to destPath in the container.
 func UploadFile(ctx context.Context, cli client.APIClient, containerID, destPath string, content io.Reader) error {
-	return cli.CopyToContainer(ctx, containerID, destPath, content, container.CopyToContainerOptions{})
+	_, err := cli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{DestinationPath: destPath, Content: content})
+	return err
 }
 
 // UploadTarFile bounds the raw upload before making a Docker API call, then
@@ -456,7 +457,7 @@ func execExitCode(ctx context.Context, cli client.APIClient, execID string) (int
 		return 0, fmt.Errorf("Docker returned an empty exec ID")
 	}
 	for {
-		inspect, err := cli.ContainerExecInspect(ctx, execID)
+		inspect, err := cli.ExecInspect(ctx, execID, client.ExecInspectOptions{})
 		if err != nil {
 			return 0, err
 		}
@@ -489,7 +490,8 @@ func CopyBetweenContainers(ctx context.Context, cli client.APIClient, srcContain
 
 // Duplicate creates a new container using another as a config template.
 func Duplicate(ctx context.Context, cli client.APIClient, sourceID, newName string) (string, error) {
-	info, err := cli.ContainerInspect(ctx, sourceID)
+	infoRes, err := cli.ContainerInspect(ctx, sourceID, client.ContainerInspectOptions{})
+	info := infoRes.Container
 	if err != nil {
 		return "", err
 	}
@@ -502,7 +504,7 @@ func Duplicate(ctx context.Context, cli client.APIClient, sourceID, newName stri
 	cfg := restoreConfig(info, image.InspectResponse{}) // same image: only drop the source's default hostname
 	hostCfg := cloneHostConfig(info)
 	sanitizeContainerNetworkMode(&cfg, hostCfg)
-	resp, err := cli.ContainerCreate(ctx, &cfg, hostCfg, networkingConfig(info), nil, newName)
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Name: newName, Config: &cfg, HostConfig: hostCfg, NetworkingConfig: networkingConfig(info)})
 	if err != nil {
 		return "", err
 	}
@@ -570,14 +572,14 @@ func shortID(s string) string {
 // Upgrade pulls the latest image, compares it with the running container's image,
 // and recreates the container only when a newer image is available.
 // Returns the new container ID, or "" if already up to date.
-func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, opts image.PullOptions, uopts UpgradeOptions) (string, error) {
-	return upgrade(ctx, cli, containerID, w, opts, false, uopts)
+func Upgrade(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, registryAuth string, uopts UpgradeOptions) (string, error) {
+	return upgrade(ctx, cli, containerID, w, registryAuth, false, uopts)
 }
 
 // UpgradeWithoutPull performs the same guarded upgrade using an image that a
 // caller has already loaded into the daemon (for example browser-pull).
 func UpgradeWithoutPull(ctx context.Context, cli client.APIClient, containerID string, w io.Writer, uopts UpgradeOptions) (string, error) {
-	return upgrade(ctx, cli, containerID, w, image.PullOptions{}, true, uopts)
+	return upgrade(ctx, cli, containerID, w, "", true, uopts)
 }
 
 func cloneHostConfig(info container.InspectResponse) *container.HostConfig {
@@ -683,7 +685,8 @@ func upgradeNetworkingConfig(ctx context.Context, cli client.APIClient, info con
 			if endpoint == nil || !container.NetworkMode(name).IsUserDefined() {
 				continue
 			}
-			networkInfo, err := cli.NetworkInspect(ctx, name, network.InspectOptions{})
+			networkRes, err := cli.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+			networkInfo := networkRes.Network
 			if err != nil {
 				return nil, fmt.Errorf("无法检查网络 %s: %w", name, err)
 			}
@@ -708,13 +711,13 @@ func buildNetworkingConfig(info container.InspectResponse, drivers map[string]st
 		ep := endpoint.Copy()
 		ep.NetworkID = ""
 		ep.EndpointID = ""
-		ep.Gateway = ""
-		ep.IPAddress = ""
+		ep.Gateway = netip.Addr{}
+		ep.IPAddress = netip.Addr{}
 		ep.IPPrefixLen = 0
-		ep.IPv6Gateway = ""
-		ep.GlobalIPv6Address = ""
+		ep.IPv6Gateway = netip.Addr{}
+		ep.GlobalIPv6Address = netip.Addr{}
 		ep.GlobalIPv6PrefixLen = 0
-		ep.MacAddress = ""
+		ep.MacAddress = nil
 		ep.DNSNames = nil
 		if drivers[name] == "macvlan" {
 			ep.MacAddress = endpoint.MacAddress // DHCP reservations / ARP caches on the LAN key on it
@@ -726,13 +729,13 @@ func buildNetworkingConfig(info container.InspectResponse, drivers map[string]st
 			} else {
 				ipam = ipam.Copy()
 			}
-			if ipam.IPv4Address == "" {
+			if !ipam.IPv4Address.IsValid() {
 				ipam.IPv4Address = endpoint.IPAddress
 			}
-			if ipam.IPv6Address == "" {
+			if !ipam.IPv6Address.IsValid() {
 				ipam.IPv6Address = endpoint.GlobalIPv6Address
 			}
-			if ipam.IPv4Address != "" || ipam.IPv6Address != "" || len(ipam.LinkLocalIPs) > 0 {
+			if ipam.IPv4Address.IsValid() || ipam.IPv6Address.IsValid() || len(ipam.LinkLocalIPs) > 0 {
 				ep.IPAMConfig = ipam
 			}
 		}
@@ -748,7 +751,7 @@ func buildNetworkingConfig(info container.InspectResponse, drivers map[string]st
 }
 
 func endpointHasConfiguredAddress(endpoint *network.EndpointSettings) bool {
-	return endpoint != nil && endpoint.IPAMConfig != nil && (endpoint.IPAMConfig.IPv4Address != "" || endpoint.IPAMConfig.IPv6Address != "" || len(endpoint.IPAMConfig.LinkLocalIPs) > 0)
+	return endpoint != nil && endpoint.IPAMConfig != nil && (endpoint.IPAMConfig.IPv4Address.IsValid() || endpoint.IPAMConfig.IPv6Address.IsValid() || len(endpoint.IPAMConfig.LinkLocalIPs) > 0)
 }
 
 func hasStaticNetworkAddress(info container.InspectResponse) bool {
@@ -759,7 +762,7 @@ func hasStaticNetworkAddress(info container.InspectResponse) bool {
 		if endpoint == nil || endpoint.IPAMConfig == nil {
 			continue
 		}
-		if endpoint.IPAMConfig.IPv4Address != "" || endpoint.IPAMConfig.IPv6Address != "" || len(endpoint.IPAMConfig.LinkLocalIPs) > 0 {
+		if endpoint.IPAMConfig.IPv4Address.IsValid() || endpoint.IPAMConfig.IPv6Address.IsValid() || len(endpoint.IPAMConfig.LinkLocalIPs) > 0 {
 			return true
 		}
 	}
@@ -774,7 +777,7 @@ func hasUnsupportedStaticNetworkAddress(info container.InspectResponse) bool {
 		if container.NetworkMode(name).IsUserDefined() || endpoint == nil || endpoint.IPAMConfig == nil {
 			continue
 		}
-		if endpoint.IPAMConfig.IPv4Address != "" || endpoint.IPAMConfig.IPv6Address != "" || len(endpoint.IPAMConfig.LinkLocalIPs) > 0 {
+		if endpoint.IPAMConfig.IPv4Address.IsValid() || endpoint.IPAMConfig.IPv6Address.IsValid() || len(endpoint.IPAMConfig.LinkLocalIPs) > 0 {
 			return true
 		}
 	}
@@ -787,7 +790,6 @@ func sanitizeContainerNetworkMode(cfg *container.Config, hostCfg *container.Host
 	}
 	cfg.Hostname = ""
 	cfg.ExposedPorts = nil
-	cfg.MacAddress = ""
 	hostCfg.DNS = nil
 	hostCfg.DNSSearch = nil
 	hostCfg.DNSOptions = nil
@@ -822,7 +824,7 @@ func rollbackUpgrade(ctx context.Context, cli client.APIClient, oldID, replaceme
 	defer cancel()
 	var rollbackErrs []error
 	if replacementID != "" {
-		if err := cli.ContainerRemove(cleanupCtx, replacementID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := cli.ContainerRemove(cleanupCtx, replacementID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("清理替代容器失败: %w", err))
 		}
 	}
@@ -830,7 +832,7 @@ func rollbackUpgrade(ctx context.Context, cli client.APIClient, oldID, replaceme
 		if err := restoreUpgradeNetworking(cleanupCtx, cli, oldID, restoreNetworking); err != nil {
 			rollbackErrs = append(rollbackErrs, err)
 		}
-		if err := cli.ContainerStart(cleanupCtx, oldID, container.StartOptions{}); err != nil && !errdefs.IsNotModified(err) {
+		if _, err := cli.ContainerStart(cleanupCtx, oldID, client.ContainerStartOptions{}); err != nil && !cerrdefs.IsNotModified(err) {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("恢复原容器运行状态失败: %w", err))
 		}
 	}
@@ -846,11 +848,11 @@ func restoreUpgradeNetworking(ctx context.Context, cli client.APIClient, contain
 		if endpoint == nil || !endpointHasConfiguredAddress(endpoint) {
 			continue
 		}
-		if err := cli.NetworkDisconnect(ctx, name, containerID, true); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := cli.NetworkDisconnect(ctx, name, client.NetworkDisconnectOptions{Container: containerID, Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			restoreErrs = append(restoreErrs, fmt.Errorf("恢复网络 %s 前断开旧端点失败: %w", name, err))
 			continue
 		}
-		if err := cli.NetworkConnect(ctx, name, containerID, endpoint); err != nil {
+		if _, err := cli.NetworkConnect(ctx, name, client.NetworkConnectOptions{Container: containerID, EndpointConfig: endpoint}); err != nil {
 			restoreErrs = append(restoreErrs, fmt.Errorf("恢复网络 %s 端点失败: %w", name, err))
 		}
 	}
@@ -860,10 +862,6 @@ func restoreUpgradeNetworking(ctx context.Context, cli client.APIClient, contain
 func restoreUpgradeName(ctx context.Context, cli client.APIClient, oldID, originalName string) error {
 	cleanupCtx, cancel := upgradeCleanupContext(ctx)
 	defer cancel()
-	return cli.ContainerRename(cleanupCtx, oldID, originalName)
-}
-
-// GetByFilters returns containers matching given label/name filters.
-func GetByFilters(ctx context.Context, cli client.APIClient, args filters.Args) ([]container.Summary, error) {
-	return cli.ContainerList(ctx, container.ListOptions{All: true, Filters: args})
+	_, err := cli.ContainerRename(cleanupCtx, oldID, client.ContainerRenameOptions{NewName: originalName})
+	return err
 }

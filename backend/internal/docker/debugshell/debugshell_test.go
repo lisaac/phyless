@@ -16,14 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 type fakeClient struct {
@@ -44,26 +41,26 @@ type fakeClient struct {
 	startedIDs []string
 }
 
-func (f *fakeClient) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
-	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+func (f *fakeClient) ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+	return client.ContainerInspectResult{Container: container.InspectResponse{
 		ID: "target", State: &container.State{Running: true, Pid: 42}, HostConfig: &container.HostConfig{},
 	}}, nil
 }
 
-func (f *fakeClient) ServerVersion(context.Context) (types.Version, error) {
-	return types.Version{Arch: "arm64"}, nil
+func (f *fakeClient) ServerVersion(context.Context, client.ServerVersionOptions) (client.ServerVersionResult, error) {
+	return client.ServerVersionResult{Arch: "arm64"}, nil
 }
 
-func (f *fakeClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
+func (f *fakeClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.imported {
-		return image.InspectResponse{}, errdefs.NotFound(errors.New("no such image"))
+		return client.ImageInspectResult{}, cerrdefs.ErrNotFound.WithMessage("no such image")
 	}
-	return image.InspectResponse{}, nil
+	return client.ImageInspectResult{}, nil
 }
 
-func (f *fakeClient) ImageImport(_ context.Context, src image.ImportSource, _ string, o image.ImportOptions) (io.ReadCloser, error) {
+func (f *fakeClient) ImageImport(_ context.Context, src client.ImageImportSource, _ string, o client.ImageImportOptions) (client.ImageImportResult, error) {
 	files := map[string]int64{}
 	tr := tar.NewReader(src.Source)
 	for {
@@ -74,26 +71,27 @@ func (f *fakeClient) ImageImport(_ context.Context, src image.ImportSource, _ st
 		files[h.Name] = h.Mode
 	}
 	f.mu.Lock()
-	f.platform, f.files, f.imported = o.Platform, files, true
+	f.platform, f.files, f.imported = o.Platform.OS+"/"+o.Platform.Architecture, files, true
 	f.mu.Unlock()
 	return io.NopCloser(strings.NewReader("{}")), nil
 }
 
-func (f *fakeClient) VolumeInspect(context.Context, string) (volume.Volume, error) {
+func (f *fakeClient) VolumeInspect(context.Context, string, client.VolumeInspectOptions) (client.VolumeInspectResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.volume {
-		return volume.Volume{}, errdefs.NotFound(errors.New("no such volume"))
+		return client.VolumeInspectResult{}, cerrdefs.ErrNotFound.WithMessage("no such volume")
 	}
-	return volume.Volume{}, nil
+	return client.VolumeInspectResult{}, nil
 }
 
-func (f *fakeClient) ContainerCreate(_ context.Context, c *container.Config, h *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, name string) (container.CreateResponse, error) {
+func (f *fakeClient) ContainerCreate(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	c, h := o.Config, o.HostConfig
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.names = append(f.names, name)
+	f.names = append(f.names, o.Name)
 	if strings.HasPrefix(c.Image, "phyless-debug:") && !f.imported {
-		return container.CreateResponse{}, errdefs.NotFound(errors.New("No such image"))
+		return client.ContainerCreateResult{}, cerrdefs.ErrNotFound.WithMessage("No such image")
 	}
 	for _, m := range h.Mounts {
 		if m.Target == "/bin" { // populating the busybox volume
@@ -101,65 +99,65 @@ func (f *fakeClient) ContainerCreate(_ context.Context, c *container.Config, h *
 		}
 	}
 	f.creates, f.hosts = append(f.creates, c), append(f.hosts, h)
-	return container.CreateResponse{ID: "c" + string(rune('0'+len(f.creates)))}, nil
+	return client.ContainerCreateResult{ID: "c" + string(rune('0'+len(f.creates)))}, nil
 }
 
-func (f *fakeClient) ContainerAttach(context.Context, string, container.AttachOptions) (types.HijackedResponse, error) {
+func (f *fakeClient) ContainerAttach(context.Context, string, client.ContainerAttachOptions) (client.ContainerAttachResult, error) {
 	a, _ := net.Pipe()
-	return types.HijackedResponse{Conn: a}, nil
+	return client.ContainerAttachResult{HijackedResponse: client.HijackedResponse{Conn: a}}, nil
 }
 
-func (f *fakeClient) ContainerStart(_ context.Context, id string, _ container.StartOptions) error {
+func (f *fakeClient) ContainerStart(_ context.Context, id string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
 	f.mu.Lock()
 	f.startedIDs = append(f.startedIDs, id)
 	f.mu.Unlock()
-	return nil
+	return client.ContainerStartResult{}, nil
 }
 
-func (f *fakeClient) ContainerRemove(_ context.Context, id string, _ container.RemoveOptions) error {
+func (f *fakeClient) ContainerRemove(_ context.Context, id string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	f.mu.Lock()
 	f.removed = append(f.removed, id)
 	f.mu.Unlock()
-	return nil
+	return client.ContainerRemoveResult{}, nil
 }
 
-func (f *fakeClient) ContainerExecCreate(_ context.Context, id string, _ container.ExecOptions) (container.ExecCreateResponse, error) {
+func (f *fakeClient) ExecCreate(_ context.Context, id string, _ client.ExecCreateOptions) (client.ExecCreateResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.execGoneN > 0 {
 		f.execGoneN--
-		return container.ExecCreateResponse{}, errdefs.NotFound(errors.New("No such container: " + id))
+		return client.ExecCreateResult{}, cerrdefs.ErrNotFound.WithMessage("No such container: " + id)
 	}
 	f.execs++
-	return container.ExecCreateResponse{ID: "exec"}, nil
+	return client.ExecCreateResult{ID: "exec"}, nil
 }
 
-func (f *fakeClient) ContainerExecAttach(context.Context, string, container.ExecAttachOptions) (types.HijackedResponse, error) {
+func (f *fakeClient) ExecAttach(context.Context, string, client.ExecAttachOptions) (client.ExecAttachResult, error) {
 	a, b := net.Pipe()
 	go func() {
 		payload := []byte("drwxr-xr-x    2 root     root          4096 Oct 14 03:15 sub\n")
 		_, _ = b.Write(append([]byte{1, 0, 0, 0, 0, 0, 0, byte(len(payload))}, payload...))
 		_ = b.Close()
 	}()
-	return types.HijackedResponse{Conn: a, Reader: bufio.NewReader(a)}, nil
+	return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: a, Reader: bufio.NewReader(a)}}, nil
 }
 
-func (f *fakeClient) ContainerExecInspect(context.Context, string) (container.ExecInspect, error) {
+func (f *fakeClient) ExecInspect(context.Context, string, client.ExecInspectOptions) (client.ExecInspectResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.execMissN > 0 {
 		f.execMissN--
-		return container.ExecInspect{ExitCode: 126}, nil
+		return client.ExecInspectResult{ExitCode: 126}, nil
 	}
-	return container.ExecInspect{}, nil
+	return client.ExecInspectResult{}, nil
 }
 
-func (f *fakeClient) VolumeRemove(context.Context, string, bool) error {
+func (f *fakeClient) VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error) {
 	f.mu.Lock()
 	f.volRemoved++
 	f.volume = false
 	f.mu.Unlock()
-	return nil
+	return client.VolumeRemoveResult{}, nil
 }
 
 func TestStartImportsBusyboxAndJoinsTargetNamespaces(t *testing.T) {
@@ -312,23 +310,23 @@ func TestHelperNamesAreReadableAndDockerSafe(t *testing.T) {
 type pruneClient struct {
 	fakeClient
 	imgs         []image.Summary
-	vols         []*volume.Volume
+	vols         []volume.Volume
 	rmImg, rmVol []string
 }
 
-func (c *pruneClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
-	return c.imgs, nil
+func (c *pruneClient) ImageList(context.Context, client.ImageListOptions) (client.ImageListResult, error) {
+	return client.ImageListResult{Items: c.imgs}, nil
 }
-func (c *pruneClient) ImageRemove(_ context.Context, id string, _ image.RemoveOptions) ([]image.DeleteResponse, error) {
+func (c *pruneClient) ImageRemove(_ context.Context, id string, _ client.ImageRemoveOptions) (client.ImageRemoveResult, error) {
 	c.rmImg = append(c.rmImg, id)
-	return nil, nil
+	return client.ImageRemoveResult{}, nil
 }
-func (c *pruneClient) VolumeList(context.Context, volume.ListOptions) (volume.ListResponse, error) {
-	return volume.ListResponse{Volumes: c.vols}, nil
+func (c *pruneClient) VolumeList(context.Context, client.VolumeListOptions) (client.VolumeListResult, error) {
+	return client.VolumeListResult{Items: c.vols}, nil
 }
-func (c *pruneClient) VolumeRemove(_ context.Context, name string, _ bool) error {
+func (c *pruneClient) VolumeRemove(_ context.Context, name string, _ client.VolumeRemoveOptions) (client.VolumeRemoveResult, error) {
 	c.rmVol = append(c.rmVol, name)
-	return nil
+	return client.VolumeRemoveResult{}, nil
 }
 
 func TestPruneKeepsOnlyTheCurrentDebugImageAndVolume(t *testing.T) {
@@ -338,7 +336,7 @@ func TestPruneKeepsOnlyTheCurrentDebugImageAndVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.imgs = []image.Summary{{ID: "cur", RepoTags: []string{a.image()}}, {ID: "old", RepoTags: []string{"phyless-debug:arm64-000000000000"}}}
-	c.vols = []*volume.Volume{{Name: a.volume()}, {Name: "phyless-busybox-arm64-000000000000"}, {Name: "users-own-volume"}}
+	c.vols = []volume.Volume{{Name: a.volume()}, {Name: "phyless-busybox-arm64-000000000000"}, {Name: "users-own-volume"}}
 	Prune(context.Background(), c)
 	if !slices.Equal(c.rmImg, []string{"old"}) || !slices.Equal(c.rmVol, []string{"phyless-busybox-arm64-000000000000"}) {
 		t.Fatalf("removed images=%v volumes=%v", c.rmImg, c.rmVol)

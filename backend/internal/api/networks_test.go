@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/go-chi/chi/v5"
+	"github.com/moby/moby/client"
+	"phyless/backend/internal/docker"
 )
 
 type networkActionClient struct {
@@ -17,14 +17,14 @@ type networkActionClient struct {
 	connected, disconnected string
 }
 
-func (c *networkActionClient) NetworkConnect(context.Context, string, string, *network.EndpointSettings) error {
+func (c *networkActionClient) NetworkConnect(context.Context, string, client.NetworkConnectOptions) (client.NetworkConnectResult, error) {
 	c.connected = "called"
-	return nil
+	return client.NetworkConnectResult{}, nil
 }
 
-func (c *networkActionClient) NetworkDisconnect(context.Context, string, string, bool) error {
+func (c *networkActionClient) NetworkDisconnect(context.Context, string, client.NetworkDisconnectOptions) (client.NetworkDisconnectResult, error) {
 	c.disconnected = "called"
-	return nil
+	return client.NetworkDisconnectResult{}, nil
 }
 
 func networkRequest(method, path, id, body string) *http.Request {
@@ -37,7 +37,7 @@ func networkRequest(method, path, id, body string) *http.Request {
 
 func TestNetworkActionsRequireContainerJSON(t *testing.T) {
 	client := &networkActionClient{}
-	server := &Server{docker: client}
+	server := &Server{docker: &docker.Client{APIClient: client}}
 	for _, method := range []string{http.MethodPost} {
 		for _, body := range []string{"", "{}", `{"container":"   "}`, "not-json"} {
 			response := httptest.NewRecorder()

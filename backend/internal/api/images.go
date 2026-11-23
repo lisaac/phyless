@@ -12,9 +12,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
 	"phyless/backend/internal/docker/debugshell"
@@ -26,7 +23,7 @@ type containerRef struct {
 }
 
 type imageWithUsage struct {
-	image.Summary
+	docker.ImageSummary
 	UsedBy   []containerRef `json:"UsedBy"`
 	Platform string         `json:"Platform,omitempty"`
 }
@@ -40,7 +37,7 @@ func (s *Server) imagePlatform(ctx context.Context, id string) string {
 	if v, ok := imagePlatforms.Load(id); ok {
 		return v.(string)
 	}
-	info, err := s.docker.ImageInspect(ctx, id)
+	info, err := s.docker.InspectImage(ctx, id)
 	if err != nil {
 		return ""
 	}
@@ -56,12 +53,12 @@ func (s *Server) imagePlatform(ctx context.Context, id string) string {
 }
 
 func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
-	imgs, err := s.docker.ImageList(r.Context(), image.ListOptions{All: true})
+	imgs, err := s.docker.ListImages(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	containers, err := s.docker.ListContainers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -77,7 +74,7 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		}
 		usedBy[c.ImageID] = append(usedBy[c.ImageID], containerRef{ID: c.ID, Name: name})
 	}
-	imgs = slices.DeleteFunc(imgs, func(img image.Summary) bool { return docker.IsHelper(img.Labels) })
+	imgs = slices.DeleteFunc(imgs, func(img docker.ImageSummary) bool { return docker.IsHelper(img.Labels) })
 	out := make([]imageWithUsage, len(imgs))
 	for i, img := range imgs {
 		// RepoTags/RepoDigests come from the daemon's internal reference
@@ -85,14 +82,14 @@ func (s *Server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		// call to call — same instability class as Mounts/Ports.
 		sort.Strings(img.RepoTags)
 		sort.Strings(img.RepoDigests)
-		out[i] = imageWithUsage{Summary: img, UsedBy: usedBy[img.ID], Platform: s.imagePlatform(r.Context(), img.ID)}
+		out[i] = imageWithUsage{ImageSummary: img, UsedBy: usedBy[img.ID], Platform: s.imagePlatform(r.Context(), img.ID)}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	info, _, err := s.docker.ImageInspectWithRaw(r.Context(), id)
+	info, err := s.docker.InspectImage(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -120,8 +117,7 @@ func (s *Server) removeImage(ctx context.Context, id string, force bool) error {
 	if err := s.fs.ReleaseImage(ctx, id); err != nil {
 		return fmt.Errorf("释放镜像文件浏览容器失败: %w", err)
 	}
-	_, err := s.docker.ImageRemove(ctx, id, image.RemoveOptions{Force: force})
-	return err
+	return s.docker.RemoveImage(ctx, id, force)
 }
 
 func flushImageProgress(w http.ResponseWriter) {
@@ -207,7 +203,7 @@ func (s *Server) handleImageInspect(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleImageHistory(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	hist, err := s.docker.ImageHistory(r.Context(), id)
+	hist, err := s.docker.ListImageHistory(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -241,8 +237,7 @@ func (s *Server) handleImagePull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	opts := image.PullOptions{RegistryAuth: encoded, Platform: body.Platform}
-	rc, err := s.docker.ImagePull(ctx, body.Image, opts)
+	rc, err := s.docker.PullImage(ctx, body.Image, encoded, body.Platform)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -266,7 +261,7 @@ func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Tag = strings.TrimSpace(body.Tag)
-	if err := s.docker.ImageTag(r.Context(), id, body.Tag); err != nil {
+	if err := s.docker.TagImage(r.Context(), id, body.Tag); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -278,8 +273,7 @@ func (s *Server) handleImageTag(w http.ResponseWriter, r *http.Request) {
 // unrelated to the image's content digest/ID.
 func (s *Server) handleImageDeleteTag(w http.ResponseWriter, r *http.Request) {
 	ref := r.URL.Query().Get("ref")
-	_, err := s.docker.ImageRemove(r.Context(), ref, image.RemoveOptions{})
-	if err != nil {
+	if err := s.docker.RemoveImage(r.Context(), ref, false); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -288,7 +282,7 @@ func (s *Server) handleImageDeleteTag(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleImageSave(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	rc, err := s.docker.ImageSave(r.Context(), []string{id})
+	rc, err := s.docker.SaveImage(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -301,19 +295,20 @@ func (s *Server) handleImageSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageLoad(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.docker.ImageLoad(r.Context(), r.Body)
+	resp, err := s.docker.LoadImage(r.Context(), r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Close()
 	w.Header().Set("Content-Type", "text/plain")
-	io.Copy(w, resp.Body) //nolint:errcheck
+	io.Copy(w, resp) //nolint:errcheck
 }
 
 func (s *Server) handleImageImport(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
-	source := image.ImportSource{}
+	var resp io.ReadCloser
+	var err error
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if !strings.HasPrefix(contentType, "application/x-tar") && !strings.HasPrefix(contentType, "application/octet-stream") {
 		var body struct {
@@ -330,13 +325,11 @@ func (s *Server) handleImageImport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "source must be an http(s) URL")
 			return
 		}
-		ref = strings.TrimSpace(body.Ref)
-		source = image.ImportSource{SourceName: remote}
+		resp, err = s.docker.ImportImageURL(r.Context(), remote, strings.TrimSpace(body.Ref))
 	} else {
 		// A raw tar body is a container-exported rootfs, not an image archive.
-		source = image.ImportSource{Source: r.Body, SourceName: "-"}
+		resp, err = s.docker.ImportImage(r.Context(), r.Body, ref)
 	}
-	resp, err := s.docker.ImageImport(r.Context(), source, ref, image.ImportOptions{})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -354,7 +347,7 @@ func (s *Server) handleImagePrune(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	dockercontainer.EmitStream(w, "开始清理未使用镜像")
 	flushImageProgress(w)
-	report, err := s.docker.ImagesPrune(r.Context(), filters.NewArgs(filters.Arg("dangling", "false")))
+	report, err := s.docker.PruneUnusedImages(r.Context())
 	if err != nil {
 		dockercontainer.EmitError(w, err)
 		flushImageProgress(w)

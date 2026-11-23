@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/docker/docker/api/types/registry"
 	"phyless/backend/internal/docker"
 	"phyless/backend/internal/models"
 	"phyless/backend/internal/store"
@@ -24,7 +23,7 @@ func TestRegistryAuthSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err := registry.DecodeAuthConfig(encoded)
+	auth, err := docker.DecodeAuth(encoded)
 	if err != nil || auth.Password != password || auth.ServerAddress != "docker.io" {
 		t.Fatalf("auth roundtrip failed: %v", err)
 	}

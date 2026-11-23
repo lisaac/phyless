@@ -12,15 +12,11 @@ import (
 	"testing"
 	"time"
 
-	composeapi "github.com/docker/compose/v2/pkg/api"
-	containertypes "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	imageTypes "github.com/docker/docker/api/types/image"
-	networkTypes "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
-	"github.com/docker/docker/pkg/jsonmessage"
+	cerrdefs "github.com/containerd/errdefs"
+	composeapi "github.com/docker/compose/v5/pkg/api"
+	containertypes "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/jsonmessage"
 	"phyless/backend/internal/audit"
 	phyDocker "phyless/backend/internal/docker"
 	dockercompose "phyless/backend/internal/docker/compose"
@@ -44,8 +40,6 @@ func TestComposeAPIHandlerRealAcceptance(t *testing.T) {
 	if imageRef == "" {
 		imageRef = defaultComposeAPIAcceptanceImage
 	}
-	t.Setenv("COMPOSE_BAKE", "false")
-	t.Setenv("BUILDX_BUILDER", "default")
 	t.Setenv("DOCKER_AUTH_CONFIG", "")
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv("BUILDX_CONFIG", t.TempDir())
@@ -66,7 +60,7 @@ func TestComposeAPIHandlerRealAcceptance(t *testing.T) {
 
 	operationCtx, operationCancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer operationCancel()
-	if _, err := raw.Info(operationCtx); err != nil {
+	if _, err := raw.Info(operationCtx, client.InfoOptions{}); err != nil {
 		t.Fatal("Docker daemon is unavailable:", err)
 	}
 
@@ -145,7 +139,7 @@ volumes:
 	callComposeAPIAcceptanceOperation(t, server.handleComposeDown, registered.ID)
 	waitComposeAPIAcceptanceGone(t, operationCtx, dc, projectName)
 
-	if _, err := dc.VolumeInspect(operationCtx, projectName+"_data"); err != nil {
+	if _, err := dc.VolumeInspect(operationCtx, projectName+"_data", client.VolumeInspectOptions{}); err != nil {
 		t.Fatalf("compose down removed named volume %q: %v", projectName+"_data", err)
 	}
 }
@@ -155,12 +149,12 @@ func composeAPIAcceptanceProjectName() string {
 }
 
 func ensureComposeAPIAcceptanceImage(ctx context.Context, dc client.APIClient, imageRef string) error {
-	if _, _, err := dc.ImageInspectWithRaw(ctx, imageRef); err == nil {
+	if _, err := dc.ImageInspect(ctx, imageRef); err == nil {
 		return nil
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		return err
 	}
-	stream, err := dc.ImagePull(ctx, imageRef, imageTypes.PullOptions{})
+	stream, err := dc.ImagePull(ctx, imageRef, client.ImagePullOptions{})
 	if err != nil {
 		return err
 	}
@@ -170,11 +164,11 @@ func ensureComposeAPIAcceptanceImage(ctx context.Context, dc client.APIClient, i
 
 func assertComposeAPIAcceptanceResourcesUnused(t *testing.T, ctx context.Context, dc client.APIClient, projectName string) {
 	t.Helper()
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{All: true})
+	containers, err := dc.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal("list acceptance containers:", err)
 	}
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		if c.Labels[composeapi.ProjectLabel] == projectName {
 			t.Fatalf("acceptance project %q already owns container %s", projectName, c.ID)
 		}
@@ -184,14 +178,14 @@ func assertComposeAPIAcceptanceResourcesUnused(t *testing.T, ctx context.Context
 			}
 		}
 	}
-	if _, err := dc.NetworkInspect(ctx, projectName+"_default", networkTypes.InspectOptions{}); err == nil {
+	if _, err := dc.NetworkInspect(ctx, projectName+"_default", client.NetworkInspectOptions{}); err == nil {
 		t.Fatalf("acceptance network %q already exists", projectName+"_default")
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		t.Fatalf("inspect acceptance network: %v", err)
 	}
-	if _, err := dc.VolumeInspect(ctx, projectName+"_data"); err == nil {
+	if _, err := dc.VolumeInspect(ctx, projectName+"_data", client.VolumeInspectOptions{}); err == nil {
 		t.Fatalf("acceptance volume %q already exists", projectName+"_data")
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		t.Fatalf("inspect acceptance volume: %v", err)
 	}
 }
@@ -254,13 +248,14 @@ func waitComposeAPIAcceptanceGone(t *testing.T, ctx context.Context, dc client.A
 }
 
 func composeAPIAcceptanceContainers(ctx context.Context, dc client.APIClient, projectName string) ([]containertypes.Summary, error) {
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{
+	res, err := dc.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("label", composeapi.ProjectLabel+"="+projectName)),
+		Filters: make(client.Filters).Add("label", composeapi.ProjectLabel+"="+projectName),
 	})
 	if err != nil {
 		return nil, err
 	}
+	containers := res.Items
 	for _, c := range containers {
 		if c.Labels[composeapi.ProjectLabel] != projectName {
 			return nil, fmt.Errorf("container %s has unexpected Compose project label %q", c.ID, c.Labels[composeapi.ProjectLabel])
@@ -271,35 +266,35 @@ func composeAPIAcceptanceContainers(ctx context.Context, dc client.APIClient, pr
 
 func cleanupComposeAPIAcceptanceResources(t *testing.T, ctx context.Context, dc client.APIClient, projectName string) {
 	t.Helper()
-	label := filters.NewArgs(filters.Arg("label", composeapi.ProjectLabel+"="+projectName))
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: label})
+	label := make(client.Filters).Add("label", composeapi.ProjectLabel+"="+projectName)
+	containers, err := dc.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: label})
 	if err != nil {
 		t.Errorf("list acceptance containers during cleanup: %v", err)
 	} else {
-		for _, c := range containers {
-			if err := dc.ContainerRemove(ctx, c.ID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !errdefs.IsNotFound(err) {
+		for _, c := range containers.Items {
+			if _, err := dc.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				t.Errorf("remove acceptance container %s: %v", c.ID, err)
 			}
 		}
 	}
 
-	networks, err := dc.NetworkList(ctx, networkTypes.ListOptions{Filters: label})
+	networks, err := dc.NetworkList(ctx, client.NetworkListOptions{Filters: label})
 	if err != nil {
 		t.Errorf("list acceptance networks during cleanup: %v", err)
 	} else {
-		for _, network := range networks {
-			if err := dc.NetworkRemove(ctx, network.ID); err != nil && !errdefs.IsNotFound(err) {
+		for _, network := range networks.Items {
+			if _, err := dc.NetworkRemove(ctx, network.ID, client.NetworkRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 				t.Errorf("remove acceptance network %s: %v", network.ID, err)
 			}
 		}
 	}
 
-	volumes, err := dc.VolumeList(ctx, volume.ListOptions{Filters: label})
+	volumes, err := dc.VolumeList(ctx, client.VolumeListOptions{Filters: label})
 	if err != nil {
 		t.Errorf("list acceptance volumes during cleanup: %v", err)
 	} else {
-		for _, volume := range volumes.Volumes {
-			if err := dc.VolumeRemove(ctx, volume.Name, true); err != nil && !errdefs.IsNotFound(err) {
+		for _, volume := range volumes.Items {
+			if _, err := dc.VolumeRemove(ctx, volume.Name, client.VolumeRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				t.Errorf("remove acceptance volume %s: %v", volume.Name, err)
 			}
 		}

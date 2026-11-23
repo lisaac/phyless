@@ -17,18 +17,13 @@ import (
 	"time"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	composeapi "github.com/docker/compose/v2/pkg/api"
-	containertypes "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	imageTypes "github.com/docker/docker/api/types/image"
-	networkTypes "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	composeapi "github.com/docker/compose/v5/pkg/api"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/moby/moby/client"
 	"phyless/backend/internal/docker"
 )
 
@@ -40,7 +35,6 @@ func TestComposeAPIRealAcceptance(t *testing.T) {
 		t.Skip("set PHYLESS_ACCEPTANCE=1 to run against a real Docker daemon")
 	}
 
-	t.Setenv("COMPOSE_BAKE", "false")
 	t.Setenv("DOCKER_AUTH_CONFIG", "")
 
 	raw, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -55,7 +49,8 @@ func TestComposeAPIRealAcceptance(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	info, err := raw.Info(ctx)
+	infoRes, err := raw.Info(ctx, client.InfoOptions{})
+	info := infoRes.Info
 	if err != nil {
 		t.Fatal("Docker daemon is unavailable:", err)
 	}
@@ -113,7 +108,6 @@ func TestComposeAPIRealAcceptance(t *testing.T) {
 		assertAcceptanceState(t, context.Background(), raw, protected)
 	})
 
-	service.MaxConcurrency(1)
 	if err := service.Compose().Up(ctx, project, composeapi.UpOptions{
 		Create: composeapi.CreateOptions{
 			Build: &composeapi.BuildOptions{
@@ -176,17 +170,17 @@ func TestComposeAPIRealAcceptance(t *testing.T) {
 		t.Fatal("compose down:", err)
 	}
 	owned := acceptanceLabelFilter(projectName)
-	containers, err := raw.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: owned})
+	containers, err := raw.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: owned})
 	if err != nil {
 		t.Fatal("list containers after down:", err)
 	}
-	if len(containers) != 0 {
-		t.Fatalf("compose down left %d project containers", len(containers))
+	if len(containers.Items) != 0 {
+		t.Fatalf("compose down left %d project containers", len(containers.Items))
 	}
-	if _, err := raw.VolumeInspect(ctx, projectName+"_data"); err != nil {
+	if _, err := raw.VolumeInspect(ctx, projectName+"_data", client.VolumeInspectOptions{}); err != nil {
 		t.Fatalf("compose down removed named volume: %v", err)
 	}
-	if _, _, err := raw.ImageInspectWithRaw(ctx, builtRef); err != nil {
+	if _, err := raw.ImageInspect(ctx, builtRef); err != nil {
 		t.Fatalf("compose down removed built image: %v", err)
 	}
 }
@@ -212,7 +206,8 @@ func TestComposeAPIProxyPullAcceptance(t *testing.T) {
 			t.Errorf("close Docker client: %v", err)
 		}
 	})
-	info, err := raw.Info(ctx)
+	infoRes, err := raw.Info(ctx, client.InfoOptions{})
+	info := infoRes.Info
 	if err != nil {
 		t.Fatal("Docker daemon is unavailable:", err)
 	}
@@ -380,7 +375,7 @@ type acceptanceCountingClient struct {
 	pulls []string
 }
 
-func (c *acceptanceCountingClient) ImagePull(ctx context.Context, ref string, opts imageTypes.PullOptions) (io.ReadCloser, error) {
+func (c *acceptanceCountingClient) ImagePull(ctx context.Context, ref string, opts client.ImagePullOptions) (client.ImagePullResponse, error) {
 	c.mu.Lock()
 	c.pulls = append(c.pulls, ref)
 	c.mu.Unlock()
@@ -440,17 +435,17 @@ type protectedAcceptanceContainer struct {
 func snapshotAcceptanceState(t *testing.T, ctx context.Context, dc client.APIClient) protectedAcceptanceState {
 	t.Helper()
 	state := protectedAcceptanceState{containers: make(map[string]protectedAcceptanceContainer)}
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{All: true})
+	containers, err := dc.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal("list protected containers:", err)
 	}
-	for _, c := range containers {
-		state.containers[c.ID] = protectedAcceptanceContainer{id: c.ID, image: c.Image, state: c.State, names: strings.Join(c.Names, ",")}
+	for _, c := range containers.Items {
+		state.containers[c.ID] = protectedAcceptanceContainer{id: c.ID, image: c.Image, state: string(c.State), names: strings.Join(c.Names, ",")}
 	}
-	inspect, _, err := dc.ImageInspectWithRaw(ctx, "phyless:latest")
+	inspect, err := dc.ImageInspect(ctx, "phyless:latest")
 	if err == nil {
 		state.imageID, state.imageFound = inspect.ID, true
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		t.Fatal("inspect protected image phyless:latest:", err)
 	}
 	return state
@@ -458,14 +453,14 @@ func snapshotAcceptanceState(t *testing.T, ctx context.Context, dc client.APICli
 
 func assertAcceptanceState(t *testing.T, ctx context.Context, dc client.APIClient, want protectedAcceptanceState) {
 	t.Helper()
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{All: true})
+	containers, err := dc.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Errorf("list protected containers after acceptance: %v", err)
 		return
 	}
-	got := make(map[string]protectedAcceptanceContainer, len(containers))
-	for _, c := range containers {
-		got[c.ID] = protectedAcceptanceContainer{id: c.ID, image: c.Image, state: c.State, names: strings.Join(c.Names, ",")}
+	got := make(map[string]protectedAcceptanceContainer, len(containers.Items))
+	for _, c := range containers.Items {
+		got[c.ID] = protectedAcceptanceContainer{id: c.ID, image: c.Image, state: string(c.State), names: strings.Join(c.Names, ",")}
 	}
 	for id, expected := range want.containers {
 		actual, ok := got[id]
@@ -477,11 +472,11 @@ func assertAcceptanceState(t *testing.T, ctx context.Context, dc client.APIClien
 			t.Errorf("protected container %s changed: got image=%s state=%s names=%s, want image=%s state=%s names=%s", id, actual.image, actual.state, actual.names, expected.image, expected.state, expected.names)
 		}
 	}
-	inspect, _, err := dc.ImageInspectWithRaw(ctx, "phyless:latest")
+	inspect, err := dc.ImageInspect(ctx, "phyless:latest")
 	if !want.imageFound {
 		if err == nil {
 			t.Errorf("protected image phyless:latest was unexpectedly created")
-		} else if !errdefs.IsNotFound(err) {
+		} else if !cerrdefs.IsNotFound(err) {
 			t.Errorf("inspect protected image phyless:latest after acceptance: %v", err)
 		}
 	} else if err != nil {
@@ -512,11 +507,11 @@ func acceptanceNameIsSafe(name string) bool {
 
 func assertAcceptanceProjectUnused(t *testing.T, ctx context.Context, dc client.APIClient, projectName, builtRef string) {
 	t.Helper()
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{All: true})
+	containers, err := dc.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal("list containers before acceptance:", err)
 	}
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		if c.Labels[composeapi.ProjectLabel] == projectName {
 			t.Fatalf("acceptance project %q already owns container %s", projectName, c.ID)
 		}
@@ -526,33 +521,33 @@ func assertAcceptanceProjectUnused(t *testing.T, ctx context.Context, dc client.
 			}
 		}
 	}
-	networks, err := dc.NetworkList(ctx, networkTypes.ListOptions{Filters: acceptanceLabelFilter(projectName)})
+	networks, err := dc.NetworkList(ctx, client.NetworkListOptions{Filters: acceptanceLabelFilter(projectName)})
 	if err != nil {
 		t.Fatal("list networks before acceptance:", err)
 	}
-	if len(networks) > 0 {
-		t.Fatalf("acceptance project %q already owns %d networks", projectName, len(networks))
+	if len(networks.Items) > 0 {
+		t.Fatalf("acceptance project %q already owns %d networks", projectName, len(networks.Items))
 	}
-	if _, err := dc.NetworkInspect(ctx, projectName+"_default", networkTypes.InspectOptions{}); err == nil {
+	if _, err := dc.NetworkInspect(ctx, projectName+"_default", client.NetworkInspectOptions{}); err == nil {
 		t.Fatalf("acceptance project network %q already exists", projectName+"_default")
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		t.Fatal("inspect acceptance network:", err)
 	}
-	volumes, err := dc.VolumeList(ctx, volume.ListOptions{Filters: acceptanceLabelFilter(projectName)})
+	volumes, err := dc.VolumeList(ctx, client.VolumeListOptions{Filters: acceptanceLabelFilter(projectName)})
 	if err != nil {
 		t.Fatal("list volumes before acceptance:", err)
 	}
-	if len(volumes.Volumes) > 0 {
-		t.Fatalf("acceptance project %q already owns %d volumes", projectName, len(volumes.Volumes))
+	if len(volumes.Items) > 0 {
+		t.Fatalf("acceptance project %q already owns %d volumes", projectName, len(volumes.Items))
 	}
-	if _, err := dc.VolumeInspect(ctx, projectName+"_data"); err == nil {
+	if _, err := dc.VolumeInspect(ctx, projectName+"_data", client.VolumeInspectOptions{}); err == nil {
 		t.Fatalf("acceptance project volume %q already exists", projectName+"_data")
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		t.Fatal("inspect acceptance volume:", err)
 	}
-	if _, _, err := dc.ImageInspectWithRaw(ctx, builtRef); err == nil {
+	if _, err := dc.ImageInspect(ctx, builtRef); err == nil {
 		t.Fatalf("acceptance image %q already exists", builtRef)
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		t.Fatal("inspect acceptance image:", err)
 	}
 }
@@ -631,7 +626,7 @@ services:
 
 func assertImportedAcceptanceImage(t *testing.T, ctx context.Context, dc client.APIClient, imageName string) {
 	t.Helper()
-	inspect, _, err := dc.ImageInspectWithRaw(ctx, imageName)
+	inspect, err := dc.ImageInspect(ctx, imageName)
 	if err != nil {
 		t.Fatalf("inspect imported image %s: %v", imageName, err)
 	}
@@ -685,26 +680,26 @@ func acceptanceStatesMatch(ps []composeapi.ContainerSummary, running bool) bool 
 	return true
 }
 
-func acceptanceLabelFilter(projectName string) filters.Args {
-	return filters.NewArgs(filters.Arg("label", composeapi.ProjectLabel+"="+projectName))
+func acceptanceLabelFilter(projectName string) client.Filters {
+	return make(client.Filters).Add("label", composeapi.ProjectLabel+"="+projectName)
 }
 
 func assertAcceptanceResources(t *testing.T, ctx context.Context, dc client.APIClient, projectName string) {
 	t.Helper()
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: acceptanceLabelFilter(projectName)})
+	containers, err := dc.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: acceptanceLabelFilter(projectName)})
 	if err != nil {
 		t.Fatal("list acceptance containers:", err)
 	}
-	if len(containers) != 3 {
-		t.Fatalf("acceptance project owns %d containers, want 3", len(containers))
+	if len(containers.Items) != 3 {
+		t.Fatalf("acceptance project owns %d containers, want 3", len(containers.Items))
 	}
-	volumes, err := dc.VolumeList(ctx, volume.ListOptions{Filters: acceptanceLabelFilter(projectName)})
-	if err != nil || len(volumes.Volumes) != 1 {
-		t.Fatalf("acceptance project volumes = %d, err=%v", len(volumes.Volumes), err)
+	volumes, err := dc.VolumeList(ctx, client.VolumeListOptions{Filters: acceptanceLabelFilter(projectName)})
+	if err != nil || len(volumes.Items) != 1 {
+		t.Fatalf("acceptance project volumes = %d, err=%v", len(volumes.Items), err)
 	}
-	networks, err := dc.NetworkList(ctx, networkTypes.ListOptions{Filters: acceptanceLabelFilter(projectName)})
-	if err != nil || len(networks) == 0 {
-		t.Fatalf("acceptance project networks = %d, err=%v", len(networks), err)
+	networks, err := dc.NetworkList(ctx, client.NetworkListOptions{Filters: acceptanceLabelFilter(projectName)})
+	if err != nil || len(networks.Items) == 0 {
+		t.Fatalf("acceptance project networks = %d, err=%v", len(networks.Items), err)
 	}
 }
 
@@ -713,39 +708,39 @@ func cleanupAcceptanceProject(t *testing.T, dc client.APIClient, composeService 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if composeService != nil && project != nil {
-		if err := composeService.Down(ctx, project.Name, composeapi.DownOptions{Project: project}); err != nil && !errdefs.IsNotFound(err) {
+		if err := composeService.Down(ctx, project.Name, composeapi.DownOptions{Project: project}); err != nil && !cerrdefs.IsNotFound(err) {
 			t.Errorf("acceptance compose down cleanup: %v", err)
 		}
 	}
 	label := acceptanceLabelFilter(project.Name)
-	containers, err := dc.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: label})
+	containers, err := dc.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: label})
 	if err != nil {
 		t.Errorf("list acceptance containers during cleanup: %v", err)
 	}
-	for _, c := range containers {
-		if err := dc.ContainerRemove(ctx, c.ID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !errdefs.IsNotFound(err) {
+	for _, c := range containers.Items {
+		if _, err := dc.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			t.Errorf("remove acceptance container %s: %v", c.ID, err)
 		}
 	}
-	networks, err := dc.NetworkList(ctx, networkTypes.ListOptions{Filters: label})
+	networks, err := dc.NetworkList(ctx, client.NetworkListOptions{Filters: label})
 	if err != nil {
 		t.Errorf("list acceptance networks during cleanup: %v", err)
 	}
-	for _, n := range networks {
-		if err := dc.NetworkRemove(ctx, n.ID); err != nil && !errdefs.IsNotFound(err) {
+	for _, n := range networks.Items {
+		if _, err := dc.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 			t.Errorf("remove acceptance network %s: %v", n.ID, err)
 		}
 	}
-	volumes, err := dc.VolumeList(ctx, volume.ListOptions{Filters: label})
+	volumes, err := dc.VolumeList(ctx, client.VolumeListOptions{Filters: label})
 	if err != nil {
 		t.Errorf("list acceptance volumes during cleanup: %v", err)
 	}
-	for _, v := range volumes.Volumes {
-		if err := dc.VolumeRemove(ctx, v.Name, true); err != nil && !errdefs.IsNotFound(err) {
+	for _, v := range volumes.Items {
+		if _, err := dc.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			t.Errorf("remove acceptance volume %s: %v", v.Name, err)
 		}
 	}
-	if _, err := dc.ImageRemove(ctx, builtRef, imageTypes.RemoveOptions{Force: false, PruneChildren: false}); err != nil && !errdefs.IsNotFound(err) {
+	if _, err := dc.ImageRemove(ctx, builtRef, client.ImageRemoveOptions{Force: false, PruneChildren: false}); err != nil && !cerrdefs.IsNotFound(err) {
 		t.Errorf("remove acceptance image %s: %v", builtRef, err)
 	}
 }

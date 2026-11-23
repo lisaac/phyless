@@ -30,5 +30,4 @@ COPY --from=builder /rootfs/ /
 WORKDIR /app
 VOLUME /data
 EXPOSE 8080
-ENV COMPOSE_BAKE=false
 CMD ["./phyless", "-C", "/data"]

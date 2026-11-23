@@ -17,11 +17,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
-	"github.com/docker/docker/pkg/stdcopy"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"phyless/backend/internal/docker"
 )
@@ -76,20 +76,21 @@ func ID(ctx context.Context, cli client.APIClient) (string, error) {
 	if marker == "" {
 		return "", nil
 	}
-	list, err := cli.ContainerList(ctx, container.ListOptions{})
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return "", err
 	}
+	list := res.Items
 	host, _ := os.Hostname()
 	slices.SortStableFunc(list, func(a, b container.Summary) int {
 		return rank(a.ID, host) - rank(b.ID, host)
 	})
 	for _, c := range list {
-		_, err := cli.ContainerStatPath(ctx, c.ID, marker)
+		_, err := cli.ContainerStatPath(ctx, c.ID, client.ContainerStatPathOptions{Path: marker})
 		if err == nil {
 			return c.ID, nil
 		}
-		if !errdefs.IsNotFound(err) {
+		if !cerrdefs.IsNotFound(err) {
 			return "", err
 		}
 	}
@@ -120,21 +121,23 @@ func handoffEvent(w io.Writer, stops bool) {
 // relays its NDJSON output to w until the helper exits — or until this process
 // is stopped by it, which is the expected end of a successful self-upgrade.
 func Launch(ctx context.Context, cli client.APIClient, selfID, dataDir string, w io.Writer, stops bool, args ...string) error {
-	me, err := cli.ContainerInspect(ctx, selfID)
+	meRes, err := cli.ContainerInspect(ctx, selfID, client.ContainerInspectOptions{})
 	if err != nil {
 		return err
 	}
+	me := meRes.Container
 	if me.Config == nil || me.HostConfig == nil {
 		return fmt.Errorf("cannot inspect own container")
 	}
-	if old, err := cli.ContainerInspect(ctx, HelperName); err == nil {
+	if oldRes, err := cli.ContainerInspect(ctx, HelperName, client.ContainerInspectOptions{}); err == nil {
+		old := oldRes.Container
 		if old.State != nil && old.State.Running {
 			return fmt.Errorf("已有 phyless 自身操作正在进行，请稍后再试")
 		}
-		if err := cli.ContainerRemove(ctx, old.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := cli.ContainerRemove(ctx, old.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 			return fmt.Errorf("清理旧 helper 失败: %w", err)
 		}
-	} else if !errdefs.IsNotFound(err) {
+	} else if !cerrdefs.IsNotFound(err) {
 		return err
 	}
 	_ = os.Remove(resultPath(dataDir))
@@ -162,7 +165,7 @@ func Launch(ctx context.Context, cli client.APIClient, selfID, dataDir string, w
 			}}
 		}
 	}
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Name: HelperName, NetworkingConfig: netCfg, Config: &container.Config{
 		Image:      me.Image,
 		Entrypoint: []string{exe},
 		Cmd:        append([]string{"-C", absData, "helper"}, args...),
@@ -170,22 +173,22 @@ func Launch(ctx context.Context, cli client.APIClient, selfID, dataDir string, w
 		User:       me.Config.User,
 		WorkingDir: me.Config.WorkingDir,
 		Labels:     map[string]string{docker.RoleLabel: HelperRole},
-	}, &container.HostConfig{
+	}, HostConfig: &container.HostConfig{
 		VolumesFrom:   []string{me.ID},
 		NetworkMode:   netMode,
 		GroupAdd:      me.HostConfig.GroupAdd,
 		SecurityOpt:   me.HostConfig.SecurityOpt,
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
-	}, netCfg, nil, HelperName)
+	}})
 	if err != nil {
 		return fmt.Errorf("创建 helper 失败: %w", err)
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		_ = cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true})
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		_, _ = cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, client.ContainerRemoveOptions{Force: true})
 		return fmt.Errorf("启动 helper 失败: %w", err)
 	}
 	handoffEvent(w, stops)
-	logs, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
+	logs, err := cli.ContainerLogs(ctx, resp.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
 	if err != nil {
 		return err
 	}
@@ -206,8 +209,8 @@ func Launch(ctx context.Context, cli client.APIClient, selfID, dataDir string, w
 	_ = sc.Err() // a broken log stream only ends the relay; the helper's outcome is read below
 	// Still alive: the helper finished without stopping us (failed early, or
 	// nothing needed recreating).
-	st, err := cli.ContainerInspect(context.WithoutCancel(ctx), resp.ID)
-	if err == nil && st.State != nil && !st.State.Running && st.State.ExitCode != 0 {
+	stRes, err := cli.ContainerInspect(context.WithoutCancel(ctx), resp.ID, client.ContainerInspectOptions{})
+	if st := stRes.Container; err == nil && st.State != nil && !st.State.Running && st.State.ExitCode != 0 {
 		return fmt.Errorf("helper 退出码 %d", st.State.ExitCode)
 	}
 	return nil
@@ -225,8 +228,9 @@ type Result struct {
 // once, its result saved to the data dir and the container removed, so it
 // stops pinning the previous phyless image; later calls read the saved file.
 func LastResult(ctx context.Context, cli client.APIClient, dataDir string) (Result, error) {
-	info, err := cli.ContainerInspect(ctx, HelperName)
-	if errdefs.IsNotFound(err) {
+	infoRes, err := cli.ContainerInspect(ctx, HelperName, client.ContainerInspectOptions{})
+	info := infoRes.Container
+	if cerrdefs.IsNotFound(err) {
 		var res Result
 		if data, err := os.ReadFile(resultPath(dataDir)); err != nil || json.Unmarshal(data, &res) != nil {
 			return Result{State: "none"}, nil
@@ -244,7 +248,7 @@ func LastResult(ctx context.Context, cli client.APIClient, dataDir string) (Resu
 	if data, err := json.Marshal(res); err == nil {
 		tmp := resultPath(dataDir) + ".tmp"
 		if os.WriteFile(tmp, data, 0o600) == nil && os.Rename(tmp, resultPath(dataDir)) == nil {
-			if err := cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			if _, err := cli.ContainerRemove(ctx, info.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				log.Printf("self: remove finished helper: %v", err)
 			}
 		}
@@ -263,7 +267,7 @@ func readResult(ctx context.Context, cli client.APIClient, info container.Inspec
 			res.Error = fmt.Sprintf("helper 退出码 %d", info.State.ExitCode)
 		}
 	}
-	rc, err := cli.ContainerLogs(ctx, info.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "50"})
+	rc, err := cli.ContainerLogs(ctx, info.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "50"})
 	if err != nil {
 		return res
 	}

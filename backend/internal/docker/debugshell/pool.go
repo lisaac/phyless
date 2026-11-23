@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"phyless/backend/internal/docker"
 	ctr "phyless/backend/internal/docker/container"
@@ -139,7 +139,7 @@ func (p *Pool) do(ctx context.Context, key string, spec Spec, timeout time.Durat
 		}
 		err = op(ctx, b.id)
 		broken := errors.Is(err, ctr.ErrExecNotFound)
-		if err == nil || retried || !(broken || errdefs.IsNotFound(err) || errdefs.IsConflict(err)) {
+		if err == nil || retried || !(broken || cerrdefs.IsNotFound(err) || cerrdefs.IsConflict(err)) {
 			return err
 		}
 		if !broken {
@@ -150,7 +150,7 @@ func (p *Pool) do(ctx context.Context, key string, spec Spec, timeout time.Durat
 			return err
 		}
 		if a, err := assetFor(ctx, p.cli); err == nil {
-			_ = p.cli.VolumeRemove(ctx, a.volume(), false) // in use elsewhere: leave it
+			_, _ = p.cli.VolumeRemove(ctx, a.volume(), client.VolumeRemoveOptions{}) // in use elsewhere: leave it
 		}
 	}
 }
@@ -182,8 +182,8 @@ func (p *Pool) Remove(ctx context.Context, key string) error {
 	if b.err != nil {
 		return nil
 	}
-	err := p.cli.ContainerRemove(ctx, b.id, container.RemoveOptions{Force: true})
-	if errdefs.IsNotFound(err) {
+	_, err := p.cli.ContainerRemove(ctx, b.id, client.ContainerRemoveOptions{Force: true})
+	if cerrdefs.IsNotFound(err) {
 		return nil
 	}
 	return err
@@ -267,18 +267,18 @@ func (p *Pool) start(ctx context.Context, spec Spec) (string, string, error) {
 		Healthcheck: &container.HealthConfig{Test: []string{"NONE"}},
 		Labels:      labels,
 	}
-	var resp container.CreateResponse
+	var resp client.ContainerCreateResult
 	name := HelperName("browse", spec.Name)
 	if spec.Image == "" {
 		resp, err = createDebug(ctx, p.cli, name, cfg, &hc)
 	} else {
-		resp, err = p.cli.ContainerCreate(ctx, cfg, &hc, nil, nil, name)
+		resp, err = p.cli.ContainerCreate(ctx, client.ContainerCreateOptions{Name: name, Config: cfg, HostConfig: &hc})
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("%w（创建）: %w", ErrBoxStart, err)
 	}
-	if err := p.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		_ = p.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+	if _, err := p.cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		_, _ = p.cli.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		return "", "", fmt.Errorf("%w（启动）: %w", ErrBoxStart, err)
 	}
 	return resp.ID, name, nil
@@ -303,12 +303,12 @@ func CreateIdle(ctx context.Context, cli client.APIClient, purpose string, spec 
 	hc := spec.Host
 	hc.NetworkMode = "none"
 	name := HelperName(purpose, spec.Name)
-	var resp container.CreateResponse
+	var resp client.ContainerCreateResult
 	var err error
 	if spec.Image == "" {
 		resp, err = createDebug(ctx, cli, name, cfg, &hc)
 	} else {
-		resp, err = cli.ContainerCreate(ctx, cfg, &hc, nil, nil, name)
+		resp, err = cli.ContainerCreate(ctx, client.ContainerCreateOptions{Name: name, Config: cfg, HostConfig: &hc})
 	}
 	return resp.ID, err
 }

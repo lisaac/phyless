@@ -4,18 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	volumetypes "github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/docker"
 	"phyless/backend/internal/docker/fsbrowse"
@@ -23,9 +21,9 @@ import (
 
 type imageActionClient struct {
 	client.APIClient
-	source        image.ImportSource
+	source        client.ImageImportSource
 	ref           string
-	pruneFilters  filters.Args
+	pruneFilters  client.Filters
 	deleted       []string
 	deleteForce   bool
 	tag           string
@@ -34,44 +32,44 @@ type imageActionClient struct {
 	volumeListErr error
 }
 
-func (c *imageActionClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
-	return image.InspectResponse{ID: id}, nil
+func (c *imageActionClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: id}}, nil
 }
 
-func (c *imageActionClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
-	return []image.Summary{{ID: "sha256:image"}}, c.imageListErr
+func (c *imageActionClient) ImageList(context.Context, client.ImageListOptions) (client.ImageListResult, error) {
+	return client.ImageListResult{Items: []image.Summary{{ID: "sha256:image"}}}, c.imageListErr
 }
 
-func (c *imageActionClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
-	return nil, c.containerErr
+func (c *imageActionClient) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{}, c.containerErr
 }
 
-func (c *imageActionClient) VolumeList(context.Context, volumetypes.ListOptions) (volumetypes.ListResponse, error) {
-	return volumetypes.ListResponse{}, c.volumeListErr
+func (c *imageActionClient) VolumeList(context.Context, client.VolumeListOptions) (client.VolumeListResult, error) {
+	return client.VolumeListResult{}, c.volumeListErr
 }
 
-func (c *imageActionClient) ImageImport(_ context.Context, source image.ImportSource, ref string, _ image.ImportOptions) (io.ReadCloser, error) {
+func (c *imageActionClient) ImageImport(_ context.Context, source client.ImageImportSource, ref string, _ client.ImageImportOptions) (client.ImageImportResult, error) {
 	c.source, c.ref = source, ref
 	return io.NopCloser(strings.NewReader(`{"status":"imported"}`)), nil
 }
 
-func (c *imageActionClient) ImagesPrune(_ context.Context, pruneFilters filters.Args) (image.PruneReport, error) {
-	c.pruneFilters = pruneFilters
-	return image.PruneReport{
+func (c *imageActionClient) ImagePrune(_ context.Context, opts client.ImagePruneOptions) (client.ImagePruneResult, error) {
+	c.pruneFilters = opts.Filters
+	return client.ImagePruneResult{Report: image.PruneReport{
 		ImagesDeleted:  []image.DeleteResponse{{Deleted: "sha256:unused"}},
 		SpaceReclaimed: 42,
-	}, nil
+	}}, nil
 }
 
-func (c *imageActionClient) ImageRemove(_ context.Context, id string, options image.RemoveOptions) ([]image.DeleteResponse, error) {
+func (c *imageActionClient) ImageRemove(_ context.Context, id string, options client.ImageRemoveOptions) (client.ImageRemoveResult, error) {
 	c.deleted = append(c.deleted, id)
 	c.deleteForce = options.Force
-	return nil, nil
+	return client.ImageRemoveResult{}, nil
 }
 
 func TestImageImportAndPruneUseRemoteSourceAndUnusedFilter(t *testing.T) {
 	client := &imageActionClient{}
-	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), fs: fsbrowse.New(client)}
+	s := &Server{docker: &docker.Client{APIClient: client}, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), fs: fsbrowse.New(client)}
 
 	importResponse := httptest.NewRecorder()
 	s.handleImageImport(importResponse, httptest.NewRequest(
@@ -84,7 +82,7 @@ func TestImageImportAndPruneUseRemoteSourceAndUnusedFilter(t *testing.T) {
 
 	pruneResponse := httptest.NewRecorder()
 	s.handleImagePrune(pruneResponse, httptest.NewRequest("POST", "/api/images/prune", nil))
-	if pruneResponse.Code != 200 || len(client.pruneFilters.Get("dangling")) != 1 || client.pruneFilters.Get("dangling")[0] != "false" {
+	if pruneResponse.Code != 200 || !maps.Equal(client.pruneFilters["dangling"], map[string]bool{"false": true}) {
 		t.Fatalf("prune response=%d filters=%v", pruneResponse.Code, client.pruneFilters)
 	}
 
@@ -105,14 +103,14 @@ func TestImageImportAndPruneUseRemoteSourceAndUnusedFilter(t *testing.T) {
 	}
 }
 
-func (c *imageActionClient) ImageTag(_ context.Context, _ string, tag string) error {
-	c.tag = tag
-	return nil
+func (c *imageActionClient) ImageTag(_ context.Context, opts client.ImageTagOptions) (client.ImageTagResult, error) {
+	c.tag = opts.Target
+	return client.ImageTagResult{}, nil
 }
 
 func TestImageTagRequiresValidJSONAndTag(t *testing.T) {
 	client := &imageActionClient{}
-	server := &Server{docker: client}
+	server := &Server{docker: &docker.Client{APIClient: client}}
 	for _, body := range []string{"", "{}", `{"tag":"   "}`, "not-json"} {
 		response := httptest.NewRecorder()
 		server.handleImageTag(response, httptest.NewRequest(http.MethodPost, "/api/images/tag?id=image", strings.NewReader(body)))
@@ -134,34 +132,34 @@ type imageHelperClient struct {
 	calls []string
 }
 
-func (c *imageHelperClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
-	return image.InspectResponse{ID: id}, nil
+func (c *imageHelperClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: id}}, nil
 }
 
-func (c *imageHelperClient) ContainerList(_ context.Context, opts container.ListOptions) ([]container.Summary, error) {
+func (c *imageHelperClient) ContainerList(_ context.Context, opts client.ContainerListOptions) (client.ContainerListResult, error) {
 	// ReleaseImage finds an image's helpers by their image label.
-	if slices.Contains(opts.Filters.Get("label"), fsbrowse.ImageLabel+"=sha256:image") {
-		return []container.Summary{{
+	if opts.Filters["label"][fsbrowse.ImageLabel+"=sha256:image"] {
+		return client.ContainerListResult{Items: []container.Summary{{
 			ID:     "helper1",
 			Labels: map[string]string{docker.RoleLabel: "debug", fsbrowse.ImageLabel: "sha256:image"},
-		}}, nil
+		}}}, nil
 	}
-	return nil, nil
+	return client.ContainerListResult{}, nil
 }
 
-func (c *imageHelperClient) ContainerRemove(_ context.Context, id string, _ container.RemoveOptions) error {
+func (c *imageHelperClient) ContainerRemove(_ context.Context, id string, _ client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	c.calls = append(c.calls, "ContainerRemove:"+id)
-	return nil
+	return client.ContainerRemoveResult{}, nil
 }
 
-func (c *imageHelperClient) ImageRemove(_ context.Context, id string, _ image.RemoveOptions) ([]image.DeleteResponse, error) {
+func (c *imageHelperClient) ImageRemove(_ context.Context, id string, _ client.ImageRemoveOptions) (client.ImageRemoveResult, error) {
 	c.calls = append(c.calls, "ImageRemove:"+id)
-	return nil, nil
+	return client.ImageRemoveResult{}, nil
 }
 
 func TestDeleteImageReleasesHelperContainerBeforeRemovingImage(t *testing.T) {
 	client := &imageHelperClient{}
-	s := &Server{docker: client, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), fs: fsbrowse.New(client)}
+	s := &Server{docker: &docker.Client{APIClient: client}, audit: audit.New(filepath.Join(t.TempDir(), "audit.log")), fs: fsbrowse.New(client)}
 
 	response := httptest.NewRecorder()
 	s.handleDeleteImage(response, httptest.NewRequest(http.MethodDelete, "/api/images?id=sha256:image", nil))
@@ -175,7 +173,7 @@ func TestDeleteImageReleasesHelperContainerBeforeRemovingImage(t *testing.T) {
 }
 
 func TestListContainersHidesFileBrowsingHelper(t *testing.T) {
-	s := &Server{docker: &imageHelperClientList{}}
+	s := &Server{docker: &docker.Client{APIClient: &imageHelperClientList{}}}
 	response := httptest.NewRecorder()
 	s.handleListContainers(response, httptest.NewRequest(http.MethodGet, "/api/containers", nil))
 	if response.Code != http.StatusOK {
@@ -190,24 +188,24 @@ type imageHelperClientList struct {
 	client.APIClient
 }
 
-func (c *imageHelperClientList) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
-	return []container.Summary{
+func (c *imageHelperClientList) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{Items: []container.Summary{
 		{ID: "app1", Names: []string{"/app"}},
 		{ID: "helper1", Labels: map[string]string{docker.RoleLabel: "debug", fsbrowse.ImageLabel: "sha256:image"}},
-	}, nil
+	}}, nil
 }
 
 func TestResourceUsageDiscoveryErrorsAreReported(t *testing.T) {
 	client := &imageActionClient{containerErr: context.Canceled}
 	response := httptest.NewRecorder()
-	(&Server{docker: client}).handleListImages(response, httptest.NewRequest("GET", "/api/images", nil))
+	(&Server{docker: &docker.Client{APIClient: client}}).handleListImages(response, httptest.NewRequest("GET", "/api/images", nil))
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("image discovery status = %d", response.Code)
 	}
 
 	client = &imageActionClient{containerErr: context.Canceled}
 	response = httptest.NewRecorder()
-	(&Server{docker: client}).handleListVolumes(response, httptest.NewRequest("GET", "/api/volumes", nil))
+	(&Server{docker: &docker.Client{APIClient: client}}).handleListVolumes(response, httptest.NewRequest("GET", "/api/volumes", nil))
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("volume discovery status = %d", response.Code)
 	}
@@ -218,20 +216,20 @@ type platformClient struct {
 	inspects int
 }
 
-func (c *platformClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
+func (c *platformClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
 	c.inspects++
-	return image.InspectResponse{ID: id, Os: "linux", Architecture: "arm64", Variant: "v8"}, nil
+	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: id, Os: "linux", Architecture: "arm64", Variant: "v8"}}, nil
 }
 
-func (c *platformClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
-	return []image.Summary{{ID: "sha256:platform-test"}}, nil
+func (c *platformClient) ImageList(context.Context, client.ImageListOptions) (client.ImageListResult, error) {
+	return client.ImageListResult{Items: []image.Summary{{ID: "sha256:platform-test"}}}, nil
 }
 
 func TestListImagesReportsCachedPlatform(t *testing.T) {
 	c := &platformClient{}
 	for range 2 {
 		response := httptest.NewRecorder()
-		(&Server{docker: c}).handleListImages(response, httptest.NewRequest("GET", "/api/images", nil))
+		(&Server{docker: &docker.Client{APIClient: c}}).handleListImages(response, httptest.NewRequest("GET", "/api/images", nil))
 		var out []imageWithUsage
 		if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil || len(out) != 1 || out[0].Platform != "linux/arm64/v8" {
 			t.Fatalf("list = %s (%v)", response.Body.String(), err)

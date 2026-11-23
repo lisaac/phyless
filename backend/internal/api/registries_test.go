@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/registry"
 	"github.com/go-chi/chi/v5"
 	"phyless/backend/internal/audit"
+	"phyless/backend/internal/docker"
 	"phyless/backend/internal/store"
 )
 
@@ -127,7 +127,7 @@ func TestRequestRegistryAuthPicksOneAccountPerRegistry(t *testing.T) {
 		}
 		got := ""
 		if encoded != "" {
-			auth, _ := registry.DecodeAuthConfig(encoded)
+			auth, _ := docker.DecodeAuth(encoded)
 			got = auth.Username
 		}
 		if got != want {

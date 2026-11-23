@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 
 	ctr "phyless/backend/internal/docker/container"
 	"phyless/backend/internal/docker/debugshell"

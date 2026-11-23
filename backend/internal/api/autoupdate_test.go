@@ -2,17 +2,16 @@ package api
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/docker"
 	"phyless/backend/internal/models"
@@ -21,17 +20,17 @@ import (
 
 type autoUpdateClient struct{ updateCheckClient }
 
-func (c *autoUpdateClient) ContainerInspect(ctx context.Context, id string) (container.InspectResponse, error) {
+func (c *autoUpdateClient) ContainerInspect(ctx context.Context, id string, opts client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	if id == "gone" {
-		return container.InspectResponse{}, errdefs.NotFound(errors.New("no such container"))
+		return client.ContainerInspectResult{}, cerrdefs.ErrNotFound.WithMessage("no such container")
 	}
 	ref := id
 	if id == "web" || id == "svc" {
 		ref = "a"
 	}
-	info, err := c.updateCheckClient.ContainerInspect(ctx, ref)
+	info, err := c.updateCheckClient.ContainerInspect(ctx, ref, opts)
 	if id == "svc" {
-		info.Config.Labels = map[string]string{labelProject: "stack"}
+		info.Container.Config.Labels = map[string]string{labelProject: "stack"}
 	}
 	return info, err
 }
@@ -43,7 +42,7 @@ func TestRunAutoUpdateRecordsOutcome(t *testing.T) {
 	}
 	t.Cleanup(func() { resolveRemoteDigest = prev })
 	dir := t.TempDir()
-	s := &Server{docker: &autoUpdateClient{}, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(filepath.Join(dir, "audit.log"))}
+	s := &Server{docker: &docker.Client{APIClient: &autoUpdateClient{}}, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(filepath.Join(dir, "audit.log"))}
 	policies := []models.AutoUpdatePolicy{
 		{ID: "1", Kind: "container", Target: "web", Mode: "update"},
 		{ID: "2", Kind: "container", Target: "svc", Mode: "update"},
@@ -87,24 +86,24 @@ type cleanupClient struct {
 	removed []string
 }
 
-func (*cleanupClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
-	return []container.Summary{{ImageID: "sha256:used"}}, nil
+func (*cleanupClient) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{Items: []container.Summary{{ImageID: "sha256:used"}}}, nil
 }
 
-func (*cleanupClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
-	return image.InspectResponse{ID: id, RepoTags: map[string][]string{"sha256:tagged": {"app:v1"}}[id]}, nil
+func (*cleanupClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: id, RepoTags: map[string][]string{"sha256:tagged": {"app:v1"}}[id]}}, nil
 }
 
-func (c *cleanupClient) ImageRemove(_ context.Context, id string, _ image.RemoveOptions) ([]image.DeleteResponse, error) {
+func (c *cleanupClient) ImageRemove(_ context.Context, id string, _ client.ImageRemoveOptions) (client.ImageRemoveResult, error) {
 	c.removed = append(c.removed, id)
-	return nil, nil
+	return client.ImageRemoveResult{}, nil
 }
 
 // An old image that is still used or still tagged is never removed.
 func TestRemoveUnusedImagesKeepsUsedAndTagged(t *testing.T) {
 	c := &cleanupClient{}
 	var out strings.Builder
-	(&Server{docker: c}).removeUnusedImages(context.Background(), []string{"sha256:used", "sha256:tagged"}, &out)
+	(&Server{docker: &docker.Client{APIClient: c}}).removeUnusedImages(context.Background(), []string{"sha256:used", "sha256:tagged"}, &out)
 	if len(c.removed) != 0 {
 		t.Fatalf("removed %v\n%s", c.removed, out.String())
 	}
@@ -115,7 +114,7 @@ func TestRemoveUnusedImagesKeepsUsedAndTagged(t *testing.T) {
 
 func TestAutoUpdateMissingFollowAndInterrupted(t *testing.T) {
 	dir := t.TempDir()
-	s := &Server{docker: &autoUpdateClient{}, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(filepath.Join(dir, "audit.log")), serverID: "srv"}
+	s := &Server{docker: &docker.Client{APIClient: &autoUpdateClient{}}, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(filepath.Join(dir, "audit.log")), serverID: "srv"}
 	policies := []models.AutoUpdatePolicy{
 		{ID: "1", ServerID: "srv", Kind: "container", Target: "gone", Mode: "update"},
 		{ID: "2", ServerID: "srv", Kind: "container", Target: "old", Mode: "update", LastStatus: autoRunning, LastUpdateStatus: autoRunning, LastUpdateMessage: "x"},
@@ -176,7 +175,7 @@ func TestAutoUpdateRecordsUpdateAttempt(t *testing.T) {
 	}
 	t.Cleanup(func() { resolveRemoteDigest = prev })
 	dir := t.TempDir()
-	s := &Server{docker: &autoUpdateClient{}, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(filepath.Join(dir, "audit.log"))}
+	s := &Server{docker: &docker.Client{APIClient: &autoUpdateClient{}}, store: store.New(filepath.Join(dir, "config.json")), audit: audit.New(filepath.Join(dir, "audit.log"))}
 	p := models.AutoUpdatePolicy{ID: "1", Kind: "container", Target: "web", Mode: "update"}
 	if err := s.store.Update(func(c *store.Config) error { c.AutoUpdates = []models.AutoUpdatePolicy{p}; return nil }); err != nil {
 		t.Fatal(err)

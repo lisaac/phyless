@@ -15,10 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"phyless/backend/internal/docker"
 	ctr "phyless/backend/internal/docker/container"
@@ -73,12 +72,12 @@ func (f *FS) Run(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	defer debugshell.Prune(ctx, f.cli)
-	list, err := f.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: filters.NewArgs(
-		filters.Arg("label", docker.RoleLabel), filters.Arg("status", "created"))})
+	list, err := f.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: make(client.Filters).
+		Add("label", docker.RoleLabel).Add("status", "created")})
 	if err != nil {
 		return
 	}
-	for _, c := range list {
+	for _, c := range list.Items {
 		role := c.Labels[docker.RoleLabel]
 		if (role == debugshell.Role || role == "image-fs") && time.Since(time.Unix(c.Created, 0)) > staleHelper {
 			_ = f.remove(ctx, c.ID)
@@ -124,11 +123,12 @@ func imageView(p string, ls func() ([]ctr.FileEntry, error)) ([]ctr.FileEntry, e
 
 // ListContainer lists p inside a container in any state.
 func (f *FS) ListContainer(ctx context.Context, ref, p string) ([]ctr.FileEntry, error) {
-	t, err := f.cli.ContainerInspect(ctx, ref)
+	tRes, err := f.cli.ContainerInspect(ctx, ref, client.ContainerInspectOptions{})
+	t := tRes.Container
 	if err != nil {
 		return nil, err
 	}
-	if t.ContainerJSONBase == nil || t.State == nil {
+	if t.State == nil {
 		return nil, fmt.Errorf("容器状态未知: %s", ref)
 	}
 	p = path.Clean("/" + p)
@@ -174,11 +174,12 @@ func (f *FS) listContainer(ctx context.Context, t container.InspectResponse, p s
 // beneath it changed. Without stat it returns names and change kinds only,
 // enough to mark a normal listing.
 func (f *FS) ListContainerDiff(ctx context.Context, ref, p string, stat bool) ([]ctr.FileEntry, error) {
-	t, err := f.cli.ContainerInspect(ctx, ref)
+	tRes, err := f.cli.ContainerInspect(ctx, ref, client.ContainerInspectOptions{})
+	t := tRes.Container
 	if err != nil {
 		return nil, err
 	}
-	if t.ContainerJSONBase == nil || t.State == nil {
+	if t.State == nil {
 		return nil, fmt.Errorf("容器状态未知: %s", ref)
 	}
 	p = path.Clean("/" + p)
@@ -288,12 +289,12 @@ func (f *FS) open(ctx context.Context, spec debugshell.Spec, p string) (io.ReadC
 	if err != nil {
 		return nil, err
 	}
-	rc, _, err := f.cli.CopyFromContainer(ctx, id, p)
+	res, err := f.cli.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: p})
 	if err != nil {
 		_ = f.remove(context.WithoutCancel(ctx), id)
 		return nil, err
 	}
-	return &removeOnClose{ReadCloser: rc, done: func() { _ = f.remove(context.WithoutCancel(ctx), id) }}, nil
+	return &removeOnClose{ReadCloser: res.Content, done: func() { _ = f.remove(context.WithoutCancel(ctx), id) }}, nil
 }
 
 // ReleaseImage removes every helper pinning an image so it can be deleted.
@@ -311,8 +312,9 @@ func (f *FS) ReleaseImage(ctx context.Context, ref string) error {
 // ReleaseContainer drops a container's browse helpers before it is deleted, so
 // none keeps its volumes in use.
 func (f *FS) ReleaseContainer(ctx context.Context, ref string) error {
-	t, err := f.cli.ContainerInspect(ctx, ref)
-	if errdefs.IsNotFound(err) || err == nil && t.ContainerJSONBase == nil {
+	tRes, err := f.cli.ContainerInspect(ctx, ref, client.ContainerInspectOptions{})
+	t := tRes.Container
+	if cerrdefs.IsNotFound(err) {
 		return nil // nothing of ours can pin what does not exist
 	}
 	if err != nil {
@@ -330,11 +332,11 @@ func (f *FS) ReleaseContainer(ctx context.Context, ref string) error {
 // removeLabeled removes every helper carrying label, other phyless
 // instances' included.
 func (f *FS) removeLabeled(ctx context.Context, label string) error {
-	list, err := f.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: filters.NewArgs(filters.Arg("label", label))})
+	list, err := f.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: make(client.Filters).Add("label", label)})
 	if err != nil {
 		return err
 	}
-	for _, c := range list {
+	for _, c := range list.Items {
 		if err := f.remove(ctx, c.ID); err != nil {
 			return err
 		}
@@ -358,8 +360,8 @@ func (f *FS) imageID(ctx context.Context, ref string) (string, error) {
 }
 
 func (f *FS) remove(ctx context.Context, id string) error {
-	err := f.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: true, RemoveVolumes: true})
-	if errdefs.IsNotFound(err) {
+	_, err := f.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	if cerrdefs.IsNotFound(err) {
 		return nil
 	}
 	return err

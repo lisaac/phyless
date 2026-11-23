@@ -5,11 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-
 	"phyless/backend/internal/docker"
 )
 
@@ -43,12 +38,12 @@ type dockerInfoResponse struct {
 // metadata that is useful on the overview. Keep this separate from /platform:
 // that endpoint is deliberately minimal because it is also used by image pull.
 func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
-	version, err := s.docker.ServerVersion(r.Context())
+	version, err := s.docker.Version(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "无法获取 Docker 版本信息")
 		return
 	}
-	info, err := s.docker.Info(r.Context())
+	info, err := s.docker.SystemInfo(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "无法获取 Docker 信息")
 		return
@@ -96,7 +91,7 @@ func driverStatusValue(status [][2]string, label string) string {
 // so without this it would fall back to linux/amd64 and load the wrong image on
 // an arm64 daemon.
 func (s *Server) handleSystemPlatform(w http.ResponseWriter, r *http.Request) {
-	info, err := s.docker.Info(r.Context())
+	info, err := s.docker.SystemInfo(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "无法获取 Docker 平台信息")
 		return
@@ -113,22 +108,22 @@ func (s *Server) handleSystemSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	containers, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
+	containers, err := s.docker.ListContainers(ctx)
 	if err != nil {
 		writeError(w, 503, "cannot list containers")
 		return
 	}
-	images, err := s.docker.ImageList(ctx, image.ListOptions{All: true})
+	images, err := s.docker.ListImages(ctx)
 	if err != nil {
 		writeError(w, 503, "cannot list images")
 		return
 	}
-	volumes, err := s.docker.VolumeList(ctx, volume.ListOptions{})
+	volumes, err := s.docker.ListVolumes(ctx)
 	if err != nil {
 		writeError(w, 503, "cannot list volumes")
 		return
 	}
-	networks, err := s.docker.NetworkList(ctx, network.ListOptions{})
+	networks, err := s.docker.ListNetworks(ctx)
 	if err != nil {
 		writeError(w, 503, "cannot list networks")
 		return
@@ -143,11 +138,11 @@ func (s *Server) handleSystemSummary(w http.ResponseWriter, r *http.Request) {
 			running++
 		}
 	}
-	images = slices.DeleteFunc(images, func(img image.Summary) bool { return docker.IsHelper(img.Labels) })
-	volumes.Volumes = slices.DeleteFunc(volumes.Volumes, func(v *volume.Volume) bool { return docker.IsHelper(v.Labels) })
+	images = slices.DeleteFunc(images, func(img docker.ImageSummary) bool { return docker.IsHelper(img.Labels) })
+	volumes = slices.DeleteFunc(volumes, func(v docker.Volume) bool { return docker.IsHelper(v.Labels) })
 	writeJSON(w, 200, map[string]int{
 		"containers": total, "running": running, "images": len(images),
 		"compose": len(mergeFilesystemCompose(mergeComposeProjects(cfg.ComposeProjects, groupComposeContainers(containers)), cfg.ComposeDirs)),
-		"volumes": len(volumes.Volumes), "networks": len(networks),
+		"volumes": len(volumes), "networks": len(networks),
 	})
 }

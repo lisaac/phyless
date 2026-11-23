@@ -9,11 +9,14 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"phyless/backend/internal/models"
 )
 
-// Client keeps every Docker API operation native except request-scoped ImagePull.
+// Client is the only owner of the Docker SDK client. It embeds the raw
+// APIClient for the docker/* subpackages and Compose (which need the SDK
+// interface), keeps request-scoped ImagePull, and adds the SDK-neutral
+// operations in engine.go that api/ws call instead of importing the SDK.
 type Client struct {
 	client.APIClient
 }
@@ -22,20 +25,21 @@ var _ client.APIClient = (*Client)(nil)
 
 // NewClient creates either the configured remote client or preserves the
 // existing Docker environment-variable behavior when no endpoint is saved.
+// The SDK negotiates the API version with the daemon on first use.
 func NewClient(endpoint models.DockerEndpoint) (*Client, error) {
 	endpoint, err := NormalizeEndpoint(endpoint)
 	if err != nil {
 		return nil, err
 	}
 	if endpoint.Host == "" {
-		c, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+		c, err := client.New(client.FromEnv)
 		if err != nil {
 			return nil, err
 		}
 		return &Client{APIClient: c}, nil
 	}
 
-	opts := []client.Opt{client.WithHost(endpoint.Host), client.WithAPIVersionNegotiation()}
+	opts := []client.Opt{client.WithHost(endpoint.Host)}
 	if endpoint.TLS {
 		config, err := tlsConfig(endpoint)
 		if err != nil {
@@ -44,7 +48,7 @@ func NewClient(endpoint models.DockerEndpoint) (*Client, error) {
 		// WithHost must configure this transport for the TCP endpoint.
 		opts = append([]client.Opt{client.WithHTTPClient(&http.Client{Transport: &http.Transport{TLSClientConfig: config}})}, opts...)
 	}
-	c, err := client.NewClientWithOpts(opts...)
+	c, err := client.New(opts...)
 	if err != nil {
 		return nil, err
 	}

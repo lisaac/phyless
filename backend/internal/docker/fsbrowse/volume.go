@@ -3,11 +3,12 @@ package fsbrowse
 import (
 	"archive/tar"
 	"context"
+	"github.com/moby/moby/client"
 	"io"
 	"path"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 
 	ctr "phyless/backend/internal/docker/container"
 	"phyless/backend/internal/docker/debugshell"
@@ -35,7 +36,7 @@ func volumeSpec(name string) debugshell.Spec {
 
 // volume checks name exists: mounting a missing named volume would create it.
 func (f *FS) volume(ctx context.Context, name string) error {
-	_, err := f.cli.VolumeInspect(ctx, name)
+	_, err := f.cli.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
 	return err
 }
 

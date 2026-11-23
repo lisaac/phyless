@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/moby/moby/client"
 	"path"
 	"regexp"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 
 	ctr "phyless/backend/internal/docker/container"
 	"phyless/backend/internal/docker/debugshell"
@@ -119,11 +120,12 @@ func (f *FS) write(ctx context.Context, target Target, paths []string, moves boo
 		}
 		return f.writeBox(ctx, volumeKey(target.volume), volumeSpec(target.volume), volRoot, o)
 	}
-	t, err := f.cli.ContainerInspect(ctx, target.container)
+	tRes, err := f.cli.ContainerInspect(ctx, target.container, client.ContainerInspectOptions{})
+	t := tRes.Container
 	if err != nil {
 		return err
 	}
-	if t.ContainerJSONBase == nil || t.State == nil {
+	if t.State == nil {
 		return fmt.Errorf("容器状态未知: %s", target.container)
 	}
 	if o.moves {

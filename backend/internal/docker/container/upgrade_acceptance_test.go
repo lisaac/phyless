@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,11 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	phyDocker "phyless/backend/internal/docker"
 )
 
@@ -28,17 +27,12 @@ func TestUpgradeRealAcceptance(t *testing.T) {
 	if os.Getenv("PHYLESS_UPGRADE_ACCEPTANCE") != "1" {
 		t.Skip("set PHYLESS_UPGRADE_ACCEPTANCE=1 to run Docker acceptance")
 	}
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cli.Close() })
+	cli, meter := meteredAcceptanceClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	if _, err := cli.Info(ctx); err != nil {
+	if _, err := cli.Info(ctx, client.InfoOptions{}); err != nil {
 		t.Fatal("Docker daemon is unavailable:", err)
 	}
-	meter := meterAcceptanceClient(t, cli)
 	var before, after syscall.Rusage
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &before); err != nil {
 		t.Fatal(err)
@@ -64,18 +58,18 @@ func TestUpgradeRealAcceptance(t *testing.T) {
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 45*time.Second)
 		defer stop()
-		cs, err := cli.ContainerList(cleanup, container.ListOptions{All: true, Filters: filters.NewArgs(filters.Arg("label", "phyless.acceptance="+fixture))})
+		cs, err := cli.ContainerList(cleanup, client.ContainerListOptions{All: true, Filters: make(client.Filters).Add("label", "phyless.acceptance="+fixture)})
 		if err != nil {
 			t.Error("list fixture containers:", err)
 			return
 		}
-		for _, c := range cs {
-			if err := cli.ContainerRemove(cleanup, c.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !errdefs.IsNotFound(err) {
+		for _, c := range cs.Items {
+			if _, err := cli.ContainerRemove(cleanup, c.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !cerrdefs.IsNotFound(err) {
 				t.Error(err)
 			}
 		}
 		for _, id := range append([]string{ref}, images...) {
-			if _, err := cli.ImageRemove(cleanup, id, image.RemoveOptions{PruneChildren: false}); err != nil && !errdefs.IsNotFound(err) {
+			if _, err := cli.ImageRemove(cleanup, id, client.ImageRemoveOptions{PruneChildren: false}); err != nil && !cerrdefs.IsNotFound(err) {
 				t.Error(err)
 			}
 		}
@@ -84,7 +78,7 @@ func TestUpgradeRealAcceptance(t *testing.T) {
 	if base == "" {
 		base = "busybox@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d"
 	}
-	pull, err := cli.ImagePull(ctx, base, image.PullOptions{})
+	pull, err := cli.ImagePull(ctx, base, client.ImagePullOptions{})
 	if err != nil {
 		t.Fatal("pull fixture base:", err)
 	}
@@ -92,13 +86,13 @@ func TestUpgradeRealAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	labels := map[string]string{"phyless.acceptance": fixture}
-	seed, err := cli.ContainerCreate(ctx, &container.Config{Image: base, Labels: labels}, &container.HostConfig{NetworkMode: "none"}, nil, nil, fixture+"-seed")
+	seed, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Name: fixture + "-seed", Config: &container.Config{Image: base, Labels: labels}, HostConfig: &container.HostConfig{NetworkMode: "none"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	makeImage := func(version string, cmd []string) string {
 		t.Helper()
-		committed, err := cli.ContainerCommit(ctx, seed.ID, container.CommitOptions{Config: &container.Config{
+		committed, err := cli.ContainerCommit(ctx, seed.ID, client.ContainerCommitOptions{Config: &container.Config{
 			Cmd: cmd, Labels: map[string]string{"phyless.acceptance": fixture, "phyless.version": version},
 		}})
 		if err != nil {
@@ -110,39 +104,41 @@ func TestUpgradeRealAcceptance(t *testing.T) {
 	oldImage := makeImage("old", []string{"sh", "-c", "sleep 600"})
 	newImage := makeImage("new", []string{"sh", "-c", "sleep 600"})
 	badImage := makeImage("bad", []string{"/phyless-acceptance-nonexistent"})
-	if err := cli.ImageTag(ctx, oldImage, ref); err != nil {
+	if _, err := cli.ImageTag(ctx, client.ImageTagOptions{Source: oldImage, Target: ref}); err != nil {
 		t.Fatal(err)
 	}
-	original, err := cli.ContainerCreate(ctx, &container.Config{Image: ref, Labels: labels}, &container.HostConfig{NetworkMode: "none"}, nil, nil, fixture)
+	original, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{Name: fixture, Config: &container.Config{Image: ref, Labels: labels}, HostConfig: &container.HostConfig{NetworkMode: "none"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.ContainerStart(ctx, original.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, original.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.ImageTag(ctx, newImage, ref); err != nil {
+	if _, err := cli.ImageTag(ctx, client.ImageTagOptions{Source: newImage, Target: ref}); err != nil {
 		t.Fatal(err)
 	}
 	replacement, err := UpgradeWithoutPull(ctx, cli, original.ID, io.Discard, UpgradeOptions{})
 	if err != nil {
 		t.Fatal("upgrade:", err)
 	}
-	current, err := cli.ContainerInspect(ctx, replacement)
+	currentRes, err := cli.ContainerInspect(ctx, replacement, client.ContainerInspectOptions{})
+	current := currentRes.Container
 	if err != nil || current.State == nil || !current.State.Running || current.Image != newImage || strings.TrimPrefix(current.Name, "/") != fixture {
-		t.Fatalf("upgrade state=%+v err=%v", current.ContainerJSONBase, err)
+		t.Fatalf("upgrade state=%+v err=%v", current, err)
 	}
-	if _, err := cli.ContainerInspect(ctx, original.ID); !errdefs.IsNotFound(err) {
+	if _, err := cli.ContainerInspect(ctx, original.ID, client.ContainerInspectOptions{}); !cerrdefs.IsNotFound(err) {
 		t.Fatalf("old container not removed: %v", err)
 	}
-	if err := cli.ImageTag(ctx, badImage, ref); err != nil {
+	if _, err := cli.ImageTag(ctx, client.ImageTagOptions{Source: badImage, Target: ref}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := UpgradeWithoutPull(ctx, cli, replacement, io.Discard, UpgradeOptions{}); err == nil {
 		t.Fatal("expected invalid replacement startup to fail")
 	}
-	restored, err := cli.ContainerInspect(ctx, replacement)
+	restoredRes, err := cli.ContainerInspect(ctx, replacement, client.ContainerInspectOptions{})
+	restored := restoredRes.Container
 	if err != nil || restored.State == nil || !restored.State.Running || restored.Image != newImage || strings.TrimPrefix(restored.Name, "/") != fixture {
-		t.Fatalf("rollback state=%+v err=%v", restored.ContainerJSONBase, err)
+		t.Fatalf("rollback state=%+v err=%v", restored, err)
 	}
 }
 
@@ -175,15 +171,24 @@ func (r *acceptanceReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func meterAcceptanceClient(t *testing.T, cli *client.Client) *acceptanceTransport {
+// meteredAcceptanceClient talks to the daemon from the environment through a
+// metering transport. The SDK no longer exposes or rewraps a client's HTTP
+// client, so a probe client resolves host/TLS and supplies the dialer.
+func meteredAcceptanceClient(t *testing.T) (*client.Client, *acceptanceTransport) {
 	t.Helper()
-	httpClient := cli.HTTPClient()
-	meter := &acceptanceTransport{base: httpClient.Transport}
-	httpClient.Transport = meter
-	if err := client.WithHTTPClient(httpClient)(cli); err != nil {
+	probe, err := client.New(client.FromEnv)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return meter
+	t.Cleanup(func() { probe.Close() })
+	dial := probe.Dialer()
+	meter := &acceptanceTransport{base: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) }}}
+	cli, err := client.New(client.WithHTTPClient(&http.Client{Transport: meter}), client.WithAPIVersionFromEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cli.Close() })
+	return cli, meter
 }
 
 func TestAcceptanceMeterCountsTransferredBodies(t *testing.T) {
@@ -192,13 +197,8 @@ func TestAcceptanceMeterCountsTransferredBodies(t *testing.T) {
 		io.WriteString(w, "response")
 	}))
 	defer server.Close()
-	cli, err := client.NewClientWithOpts(client.WithHost(server.URL), client.WithVersion("1.50"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cli.Close()
-	meter := meterAcceptanceClient(t, cli)
-	response, err := cli.HTTPClient().Post(server.URL, "text/plain", strings.NewReader("request"))
+	meter := &acceptanceTransport{base: http.DefaultTransport}
+	response, err := (&http.Client{Transport: meter}).Post(server.URL, "text/plain", strings.NewReader("request"))
 	if err != nil {
 		t.Fatal(err)
 	}

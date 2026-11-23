@@ -12,14 +12,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
 
 	ctr "phyless/backend/internal/docker/container"
 )
@@ -44,46 +40,47 @@ type fakeDocker struct {
 	badVols bool           // creating with VolumesFrom fails (bind source gone)
 }
 
-func (f *fakeDocker) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
-	return f.target, nil
+func (f *fakeDocker) ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+	return client.ContainerInspectResult{Container: f.target}, nil
 }
-func (f *fakeDocker) ServerVersion(context.Context) (types.Version, error) {
-	return types.Version{Arch: "amd64"}, nil
+func (f *fakeDocker) ServerVersion(context.Context, client.ServerVersionOptions) (client.ServerVersionResult, error) {
+	return client.ServerVersionResult{Arch: "amd64"}, nil
 }
-func (f *fakeDocker) ImageInspect(_ context.Context, ref string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
-	return image.InspectResponse{ID: ref}, nil
+func (f *fakeDocker) ImageInspect(_ context.Context, ref string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: ref}}, nil
 }
-func (f *fakeDocker) VolumeInspect(_ context.Context, name string) (volume.Volume, error) {
+func (f *fakeDocker) VolumeInspect(_ context.Context, name string, _ client.VolumeInspectOptions) (client.VolumeInspectResult, error) {
 	if f.noVol && name != "" && !strings.HasPrefix(name, "phyless-busybox") {
-		return volume.Volume{}, errdefs.NotFound(errors.New("no such volume"))
+		return client.VolumeInspectResult{}, cerrdefs.ErrNotFound.WithMessage("no such volume")
 	}
-	return volume.Volume{}, nil
+	return client.VolumeInspectResult{}, nil
 }
-func (f *fakeDocker) ContainerCreate(_ context.Context, _ *container.Config, h *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, _ string) (container.CreateResponse, error) {
+func (f *fakeDocker) ContainerCreate(_ context.Context, o client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	h := o.HostConfig
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.badVols && len(h.VolumesFrom) > 0 {
-		return container.CreateResponse{}, errors.New("invalid mount config: bind source path does not exist")
+		return client.ContainerCreateResult{}, errors.New("invalid mount config: bind source path does not exist")
 	}
 	f.creates = append(f.creates, h)
-	return container.CreateResponse{ID: fmt.Sprintf("box%d", len(f.creates))}, nil
+	return client.ContainerCreateResult{ID: fmt.Sprintf("box%d", len(f.creates))}, nil
 }
-func (f *fakeDocker) ContainerStart(context.Context, string, container.StartOptions) error {
-	return nil
+func (f *fakeDocker) ContainerStart(context.Context, string, client.ContainerStartOptions) (client.ContainerStartResult, error) {
+	return client.ContainerStartResult{}, nil
 }
-func (f *fakeDocker) ContainerDiff(context.Context, string) ([]container.FilesystemChange, error) {
+func (f *fakeDocker) ContainerDiff(context.Context, string, client.ContainerDiffOptions) (client.ContainerDiffResult, error) {
 	f.mu.Lock()
 	f.diffs++
 	f.mu.Unlock()
-	return f.diff, nil
+	return client.ContainerDiffResult{Changes: f.diff}, nil
 }
-func (f *fakeDocker) ContainerStatPath(_ context.Context, _ string, p string) (container.PathStat, error) {
-	if p == "/app" {
-		return container.PathStat{Name: "app", Mode: os.ModeDir | 0o755}, nil
+func (f *fakeDocker) ContainerStatPath(_ context.Context, _ string, o client.ContainerStatPathOptions) (client.ContainerStatPathResult, error) {
+	if p := o.Path; p == "/app" {
+		return client.ContainerStatPathResult{Stat: container.PathStat{Name: "app", Mode: os.ModeDir | 0o755}}, nil
 	}
-	return container.PathStat{Name: p, Size: int64(len(p)), Mode: 0o600}, nil
+	return client.ContainerStatPathResult{Stat: container.PathStat{Name: o.Path, Size: int64(len(o.Path)), Mode: 0o600}}, nil
 }
-func (f *fakeDocker) ContainerExecCreate(_ context.Context, id string, o container.ExecOptions) (container.ExecCreateResponse, error) {
+func (f *fakeDocker) ExecCreate(_ context.Context, id string, o client.ExecCreateOptions) (client.ExecCreateResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p := o.Cmd[len(o.Cmd)-1]
@@ -99,9 +96,9 @@ func (f *fakeDocker) ContainerExecCreate(_ context.Context, id string, o contain
 	if c, ok := f.exitFor[p]; ok && id == "target" {
 		f.exit[eid] = c
 	}
-	return container.ExecCreateResponse{ID: eid + "|" + p}, nil
+	return client.ExecCreateResult{ID: eid + "|" + p}, nil
 }
-func (f *fakeDocker) ContainerExecAttach(_ context.Context, eid string, _ container.ExecAttachOptions) (types.HijackedResponse, error) {
+func (f *fakeDocker) ExecAttach(_ context.Context, eid string, _ client.ExecAttachOptions) (client.ExecAttachResult, error) {
 	_, p, _ := strings.Cut(eid, "|")
 	out := f.ls[strings.TrimSuffix(strings.TrimPrefix(p, "/proc/1/root"), "/")]
 	a, b := net.Pipe()
@@ -112,13 +109,13 @@ func (f *fakeDocker) ContainerExecAttach(_ context.Context, eid string, _ contai
 		}
 		_ = b.Close()
 	}()
-	return types.HijackedResponse{Conn: a, Reader: bufio.NewReader(a)}, nil
+	return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: a, Reader: bufio.NewReader(a)}}, nil
 }
-func (f *fakeDocker) ContainerExecInspect(_ context.Context, eid string) (container.ExecInspect, error) {
+func (f *fakeDocker) ExecInspect(_ context.Context, eid string, _ client.ExecInspectOptions) (client.ExecInspectResult, error) {
 	id, _, _ := strings.Cut(eid, "|")
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return container.ExecInspect{ExitCode: f.exit[id]}, nil
+	return client.ExecInspectResult{ExitCode: f.exit[id]}, nil
 }
 
 func lsLines(entries ...string) string {
@@ -148,8 +145,8 @@ func names(entries []ctr.FileEntry) string {
 
 func running(noLs bool) *fakeDocker {
 	return &fakeDocker{noLs: noLs, ls: map[string]string{"/etc": lsLines("hosts")},
-		target: container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
-			ID: "target", Image: imgID, State: &container.State{Running: true}, HostConfig: &container.HostConfig{}}}}
+		target: container.InspectResponse{
+			ID: "target", Image: imgID, State: &container.State{Running: true}, HostConfig: &container.HostConfig{}}}
 }
 
 func TestListRunningContainerUsesItsOwnLs(t *testing.T) {
@@ -232,8 +229,8 @@ func stopped() *fakeDocker {
 			{Kind: container.ChangeAdd, Path: "/etc/new.conf"},
 		},
 		target: container.InspectResponse{
-			ContainerJSONBase: &container.ContainerJSONBase{ID: "target", Image: imgID, State: &container.State{FinishedAt: "t1"}},
-			Mounts:            []container.MountPoint{{Destination: "/data"}},
+			ID: "target", Image: imgID, State: &container.State{FinishedAt: "t1"},
+			Mounts: []container.MountPoint{{Destination: "/data"}},
 		},
 	}
 }

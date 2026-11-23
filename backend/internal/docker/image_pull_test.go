@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,36 +23,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/image"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/moby/moby/api/types/image"
+	dockerclient "github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 type pipelineAPIClient struct {
 	dockerclient.APIClient
-	load    func(context.Context, io.Reader) (image.LoadResponse, error)
-	pull    func(context.Context, string, image.PullOptions) (io.ReadCloser, error)
+	load    func(context.Context, io.Reader) (dockerclient.ImageLoadResult, error)
+	pull    func(context.Context, string, dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error)
 	inspect func(context.Context, string) (image.InspectResponse, error)
 }
 
-func (c *pipelineAPIClient) ImageLoad(ctx context.Context, input io.Reader, _ ...dockerclient.ImageLoadOption) (image.LoadResponse, error) {
+func (c *pipelineAPIClient) ImageLoad(ctx context.Context, input io.Reader, _ ...dockerclient.ImageLoadOption) (dockerclient.ImageLoadResult, error) {
 	return c.load(ctx, input)
 }
 
-func (c *pipelineAPIClient) ImagePull(ctx context.Context, ref string, options image.PullOptions) (io.ReadCloser, error) {
+func (c *pipelineAPIClient) ImagePull(ctx context.Context, ref string, options dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error) {
 	if c.pull == nil {
 		return nil, errors.New("test native ImagePull was not configured")
 	}
 	return c.pull(ctx, ref, options)
 }
 
-func (c *pipelineAPIClient) ImageInspect(ctx context.Context, ref string, _ ...dockerclient.ImageInspectOption) (image.InspectResponse, error) {
+func (c *pipelineAPIClient) ImageInspect(ctx context.Context, ref string, _ ...dockerclient.ImageInspectOption) (dockerclient.ImageInspectResult, error) {
 	if c.inspect == nil {
-		return image.InspectResponse{}, errors.New("test ImageInspect was not configured")
+		return dockerclient.ImageInspectResult{}, errors.New("test ImageInspect was not configured")
 	}
-	return c.inspect(ctx, ref)
+	res, err := c.inspect(ctx, ref)
+	return dockerclient.ImageInspectResult{InspectResponse: res}, err
 }
 
 type staticTestImage struct {
@@ -346,9 +349,9 @@ func TestWithPullProxyAndRedaction(t *testing.T) {
 func TestImagePullWithoutProxyPassesSDKArgumentsUnchanged(t *testing.T) {
 	ctx := context.WithValue(context.Background(), struct{}{}, "request")
 	privilegeCalled := false
-	options := image.PullOptions{
+	options := dockerclient.ImagePullOptions{
 		RegistryAuth: "encoded",
-		Platform:     "linux/amd64",
+		Platforms:    []ocispec.Platform{{OS: "linux", Architecture: "amd64"}},
 		All:          true,
 		PrivilegeFunc: func(_ context.Context) (string, error) {
 			privilegeCalled = true
@@ -356,12 +359,12 @@ func TestImagePullWithoutProxyPassesSDKArgumentsUnchanged(t *testing.T) {
 		},
 	}
 	called := false
-	api := &pipelineAPIClient{pull: func(gotCtx context.Context, gotRef string, gotOptions image.PullOptions) (io.ReadCloser, error) {
+	api := &pipelineAPIClient{pull: func(gotCtx context.Context, gotRef string, gotOptions dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error) {
 		called = true
-		if gotCtx != ctx || gotRef != "example.test/repo:tag" || gotOptions.RegistryAuth != options.RegistryAuth || gotOptions.Platform != options.Platform || !gotOptions.All || gotOptions.PrivilegeFunc == nil {
+		if gotCtx != ctx || gotRef != "example.test/repo:tag" || gotOptions.RegistryAuth != options.RegistryAuth || !reflect.DeepEqual(gotOptions.Platforms, options.Platforms) || !gotOptions.All || gotOptions.PrivilegeFunc == nil {
 			t.Fatalf("native ImagePull arguments changed: ctx=%v ref=%q options=%+v", gotCtx, gotRef, gotOptions)
 		}
-		return io.NopCloser(strings.NewReader("ok")), nil
+		return newPullStream(io.NopCloser(strings.NewReader("ok"))), nil
 	}}
 	rc, err := (&Client{APIClient: api}).ImagePull(ctx, "example.test/repo:tag", options)
 	if err != nil {
@@ -384,7 +387,7 @@ func TestProxyImagePullRejectsDigestReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	api := &pipelineAPIClient{}
-	_, err = (&Client{APIClient: api}).ImagePull(ctx, "example.test/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", image.PullOptions{Platform: "linux/amd64"})
+	_, err = (&Client{APIClient: api}).ImagePull(ctx, "example.test/repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", dockerclient.ImagePullOptions{Platforms: []ocispec.Platform{{OS: "linux", Architecture: "amd64"}}})
 	if err == nil || !strings.Contains(err.Error(), "requires a tag") {
 		t.Fatalf("digest ImagePull error = %v", err)
 	}
@@ -842,14 +845,11 @@ func TestPullPipelineDaemonErrorFinishesAfterErrorEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := &pipelineAPIClient{load: func(_ context.Context, input io.Reader) (image.LoadResponse, error) {
+	api := &pipelineAPIClient{load: func(_ context.Context, input io.Reader) (dockerclient.ImageLoadResult, error) {
 		if _, err := io.Copy(io.Discard, input); err != nil {
-			return image.LoadResponse{}, err
+			return nil, err
 		}
-		return image.LoadResponse{
-			Body: io.NopCloser(strings.NewReader(`{"errorDetail":{"message":"denied"}}` + "\n")),
-			JSON: true,
-		}, nil
+		return io.NopCloser(strings.NewReader(`{"errorDetail":{"message":"denied"}}` + "\n")), nil
 	}}
 	transport := (&http.Transport{}).Clone()
 	rc, err := startPullPipeline(ctx, pullCtx, pullCancel, api, tag, img, expectedImage{config: expected}, v1.Platform{OS: "linux", Architecture: "amd64"}, transport)
@@ -912,12 +912,12 @@ func TestPullPipelineCloseCancelsHangingHTTPBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 	copyDone := make(chan struct{})
-	api := &pipelineAPIClient{load: func(_ context.Context, input io.Reader) (image.LoadResponse, error) {
+	api := &pipelineAPIClient{load: func(_ context.Context, input io.Reader) (dockerclient.ImageLoadResult, error) {
 		go func() {
 			_, _ = io.Copy(io.Discard, input)
 			close(copyDone)
 		}()
-		return image.LoadResponse{Body: io.NopCloser(strings.NewReader(`{"status":"loaded"}` + "\n"))}, nil
+		return io.NopCloser(strings.NewReader(`{"status":"loaded"}` + "\n")), nil
 	}}
 	transport := (&http.Transport{}).Clone()
 	rc, err := startPullPipeline(ctx, pullCtx, pullCancel, api, tag, img, expectedImage{config: expected}, v1.Platform{OS: "linux", Architecture: "amd64"}, transport)
@@ -986,14 +986,14 @@ func TestPullPipelineEarlyLoadEOFCancelsProducer(t *testing.T) {
 		t.Fatal(err)
 	}
 	copyDone := make(chan struct{})
-	api := &pipelineAPIClient{load: func(_ context.Context, input io.Reader) (image.LoadResponse, error) {
+	api := &pipelineAPIClient{load: func(_ context.Context, input io.Reader) (dockerclient.ImageLoadResult, error) {
 		go func() {
 			_, _ = io.Copy(io.Discard, input)
 			close(copyDone)
 		}()
 		// This response is intentionally returned before the tar producer has
 		// fetched the blob; the coordinator must reject that early EOF itself.
-		return image.LoadResponse{Body: io.NopCloser(strings.NewReader(`{"status":"loaded"}` + "\n"))}, nil
+		return io.NopCloser(strings.NewReader(`{"status":"loaded"}` + "\n")), nil
 	}}
 	transport := (&http.Transport{}).Clone()
 	rc, err := startPullPipeline(ctx, pullCtx, pullCancel, api, tag, img, expectedImage{config: expected}, v1.Platform{OS: "linux", Architecture: "amd64"}, transport)
@@ -1045,9 +1045,9 @@ func TestPullPipelineParentCancelWithoutReaderCloseConverges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := &pipelineAPIClient{load: func(ctx context.Context, _ io.Reader) (image.LoadResponse, error) {
+	api := &pipelineAPIClient{load: func(ctx context.Context, _ io.Reader) (dockerclient.ImageLoadResult, error) {
 		<-ctx.Done()
-		return image.LoadResponse{}, ctx.Err()
+		return nil, ctx.Err()
 	}}
 	transport := (&http.Transport{}).Clone()
 	rc, err := startPullPipeline(parent, pullCtx, pullCancel, api, tag, img, expectedImage{config: expected}, v1.Platform{OS: "linux", Architecture: "amd64"}, transport)

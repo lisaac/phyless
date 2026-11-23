@@ -3,14 +3,13 @@ package self
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 type statClient struct {
@@ -21,23 +20,23 @@ type statClient struct {
 	stats int
 }
 
-func (c *statClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
+func (c *statClient) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
 	out := make([]container.Summary, len(c.ids))
 	for i, id := range c.ids {
 		out[i] = container.Summary{ID: id}
 	}
-	return out, nil
+	return client.ContainerListResult{Items: out}, nil
 }
 
-func (c *statClient) ContainerStatPath(_ context.Context, id, path string) (container.PathStat, error) {
+func (c *statClient) ContainerStatPath(_ context.Context, id string, opts client.ContainerStatPathOptions) (client.ContainerStatPathResult, error) {
 	c.stats++
 	if id == c.fail {
-		return container.PathStat{}, errors.New("daemon busy")
+		return client.ContainerStatPathResult{}, errors.New("daemon busy")
 	}
-	if c.fs[id] == path {
-		return container.PathStat{Name: filepath.Base(path)}, nil
+	if c.fs[id] == opts.Path {
+		return client.ContainerStatPathResult{Stat: container.PathStat{Name: filepath.Base(opts.Path)}}, nil
 	}
-	return container.PathStat{}, errdefs.NotFound(os.ErrNotExist)
+	return client.ContainerStatPathResult{}, cerrdefs.ErrNotFound
 }
 
 func TestInitAndID(t *testing.T) {
@@ -85,22 +84,22 @@ type helperClient struct {
 	gone bool
 }
 
-func (c *helperClient) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
+func (c *helperClient) ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	if c.gone {
-		return container.InspectResponse{}, errdefs.NotFound(os.ErrNotExist)
+		return client.ContainerInspectResult{}, cerrdefs.ErrNotFound
 	}
-	return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+	return client.ContainerInspectResult{Container: container.InspectResponse{
 		ID: "h", State: &container.State{ExitCode: 1, FinishedAt: "t"},
 	}}, nil
 }
 
-func (c *helperClient) ContainerLogs(context.Context, string, container.LogsOptions) (io.ReadCloser, error) {
+func (c *helperClient) ContainerLogs(context.Context, string, client.ContainerLogsOptions) (client.ContainerLogsResult, error) {
 	return nil, errors.New("no logs")
 }
 
-func (c *helperClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
+func (c *helperClient) ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	c.gone = true
-	return nil
+	return client.ContainerRemoveResult{}, nil
 }
 
 func TestLastResultSavesAndRemoves(t *testing.T) {

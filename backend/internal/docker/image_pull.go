@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,13 +18,13 @@ import (
 
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/registry"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/moby/moby/api/pkg/authconfig"
+	"github.com/moby/moby/api/types/jsonstream"
+	dockerclient "github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	xproxy "golang.org/x/net/proxy"
 )
@@ -201,7 +202,7 @@ func (r *limitedReadCloser) Read(p []byte) (int, error) {
 // ImagePull keeps the Docker SDK contract. Without a request proxy it is a
 // transparent pass-through; with one it streams a Docker-load tarball from a
 // registry into the daemon.
-func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOptions) (io.ReadCloser, error) {
+func (c *Client) ImagePull(ctx context.Context, ref string, options dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error) {
 	proxyCfg, proxied := pullProxyFromContext(ctx)
 	if !proxied {
 		if c == nil || c.APIClient == nil {
@@ -240,7 +241,14 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 		return nil, errors.New("proxied image pull requires a tag reference")
 	}
 
-	platform, err := c.pullPlatform(pullCtx, options.Platform)
+	if len(options.Platforms) > 1 {
+		return nil, errors.New("proxied image pull supports one platform")
+	}
+	rawPlatform := ""
+	if len(options.Platforms) == 1 {
+		rawPlatform = platforms.FormatAll(options.Platforms[0])
+	}
+	platform, err := c.pullPlatform(pullCtx, rawPlatform)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +263,7 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 	metadataTransport := &metadataLimitTransport{inner: transport}
 	// A 32-bit ARM fallback (e.g. v7 → v6) is verified against what was chosen.
 	// A user-chosen platform is exact; only the daemon's own may fall back.
-	desc, img, platform, err := getImage(pullCtx, parsed, platform, strings.TrimSpace(options.Platform) == "", authnConfig, metadataTransport)
+	desc, img, platform, err := getImage(pullCtx, parsed, platform, rawPlatform == "", authnConfig, metadataTransport)
 	if err != nil {
 		transport.CloseIdleConnections()
 		if desc == nil {
@@ -290,11 +298,67 @@ func (c *Client) ImagePull(ctx context.Context, ref string, options image.PullOp
 	current := RemoteImage{Digest: desc.Digest.String(), ManifestDigest: expected.manifest.String(), ConfigDigest: expected.config.String()}
 	if localImageMatches(pullCtx, c.APIClient, tarTag(tag), current) {
 		transport.CloseIdleConnections()
-		return io.NopCloser(strings.NewReader(`{"status":"Image is up to date"}` + "\n")), nil
+		return newPullStream(io.NopCloser(strings.NewReader(`{"status":"Image is up to date"}` + "\n"))), nil
 	}
 
 	keepCancel = true
-	return startPullPipeline(ctx, pullCtx, cancel, c.APIClient, tag, img, expected, platform, transport)
+	rc, err := startPullPipeline(ctx, pullCtx, cancel, c.APIClient, tag, img, expected, platform, transport)
+	if err != nil {
+		return nil, err
+	}
+	return newPullStream(rc), nil
+}
+
+// pullStream gives the proxied tarball pipeline the SDK's ImagePullResponse
+// shape (Compose consumes JSONMessages/Wait). Mirrors moby's internal stream.
+type pullStream struct {
+	io.ReadCloser
+	close func() error
+}
+
+func newPullStream(rc io.ReadCloser) *pullStream {
+	return &pullStream{ReadCloser: rc, close: sync.OnceValue(rc.Close)}
+}
+
+func (s *pullStream) Close() error { return s.close() }
+
+func (s *pullStream) JSONMessages(ctx context.Context) iter.Seq2[jsonstream.Message, error] {
+	return func(yield func(jsonstream.Message, error) bool) {
+		stop := context.AfterFunc(ctx, func() { _ = s.Close() })
+		defer func() {
+			stop()
+			_ = s.Close()
+		}()
+		dec := json.NewDecoder(s)
+		for {
+			var m jsonstream.Message
+			if err := dec.Decode(&m); err != nil {
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					err = ctxErr
+				}
+				yield(jsonstream.Message{}, err)
+				return
+			}
+			if !yield(m, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (s *pullStream) Wait(ctx context.Context) error {
+	for m, err := range s.JSONMessages(ctx) {
+		if err != nil {
+			return err
+		}
+		if m.Error != nil {
+			return errors.New(m.Error.Message)
+		}
+	}
+	return nil
 }
 
 func localImageMatches(ctx context.Context, apiClient dockerclient.APIClient, ref string, r RemoteImage) bool {
@@ -314,10 +378,11 @@ func (c *Client) pullPlatform(ctx context.Context, raw string) (v1.Platform, err
 		}
 		return normalized, nil
 	}
-	info, err := c.APIClient.Info(ctx)
+	res, err := c.APIClient.Info(ctx, dockerclient.InfoOptions{})
 	if err != nil {
 		return v1.Platform{}, errors.New("cannot determine Docker daemon platform")
 	}
+	info := res.Info
 	if info.OSType == "" || info.Architecture == "" {
 		return v1.Platform{}, errors.New("Docker daemon platform is unavailable")
 	}
@@ -385,7 +450,7 @@ func pullAuth(ref name.Reference, encoded string) (authn.Authenticator, error) {
 	if encoded == "" {
 		return authn.Anonymous, nil
 	}
-	cfg, err := registry.DecodeAuthConfig(encoded)
+	cfg, err := authconfig.Decode(encoded)
 	if err != nil {
 		return nil, errors.New("invalid registry authentication")
 	}
@@ -787,12 +852,12 @@ func (p *pullPipeline) coordinate(apiClient dockerclient.APIClient, tag name.Tag
 	}
 
 	response, loadErr := apiClient.ImageLoad(p.ctx, p.inputR)
-	if loadErr == nil && response.Body == nil {
+	if loadErr == nil && response == nil {
 		loadErr = errors.New("Docker ImageLoad returned no response body")
 	}
 	if loadErr != nil {
-		if response.Body != nil {
-			_ = response.Body.Close()
+		if response != nil {
+			_ = response.Close()
 		}
 		p.abort(loadErr)
 		producerErr := <-producerDone
@@ -800,7 +865,7 @@ func (p *pullPipeline) coordinate(apiClient dockerclient.APIClient, tag name.Tag
 		return
 	}
 	progress := &progressSink{dst: p.outputW}
-	readErr := ConsumeProgress(p.ctx, progress, response.Body)
+	readErr := ConsumeProgress(p.ctx, progress, response)
 	if readErr != nil {
 		p.abort(readErr)
 		producerErr := <-producerDone

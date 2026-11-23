@@ -17,12 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/image"
-	dockerclient "github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/containerd/platforms"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	dockerclient "github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // TestImagePullProxyAcceptance is opt-in because it mutates a real Docker
@@ -71,7 +72,7 @@ func TestImagePullProxyAcceptance(t *testing.T) {
 		defer cancel()
 		// Remove exactly the generated tag. Do not force-remove or prune
 		// children, so the fixture cannot delete an unrelated image.
-		if _, err := rawClient.ImageRemove(cleanupCtx, ref, image.RemoveOptions{Force: false, PruneChildren: false}); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := rawClient.ImageRemove(cleanupCtx, ref, dockerclient.ImageRemoveOptions{Force: false, PruneChildren: false}); err != nil && !cerrdefs.IsNotFound(err) {
 			t.Errorf("remove generated image tag: %v", err)
 		}
 		if err := rawClient.Close(); err != nil {
@@ -79,7 +80,8 @@ func TestImagePullProxyAcceptance(t *testing.T) {
 		}
 	})
 	infoCtx, infoCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	info, err := rawClient.Info(infoCtx)
+	infoRes, err := rawClient.Info(infoCtx, dockerclient.InfoOptions{})
+	info := infoRes.Info
 	infoCancel()
 	if err != nil {
 		t.Fatal("inspect Docker daemon:", err)
@@ -90,7 +92,7 @@ func TestImagePullProxyAcceptance(t *testing.T) {
 	// acceptance container the daemon is outside that network namespace, so a
 	// native pull must fail; this guards against accidentally bypassing proxy.
 	nativeCtx, nativeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	nativeStream, nativeErr := rawClient.ImagePull(nativeCtx, ref, image.PullOptions{})
+	nativeStream, nativeErr := rawClient.ImagePull(nativeCtx, ref, dockerclient.ImagePullOptions{})
 	if nativeErr == nil {
 		if nativeStream == nil {
 			nativeErr = errors.New("native ImagePull returned no stream")
@@ -111,7 +113,7 @@ func TestImagePullProxyAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal("configure pull proxy:", err)
 	}
-	stream, err := (&Client{APIClient: rawClient}).ImagePull(ctx, ref, image.PullOptions{Platform: os.Getenv("PHYLESS_PROXY_TEST_PLATFORM")})
+	stream, err := (&Client{APIClient: rawClient}).ImagePull(ctx, ref, dockerclient.ImagePullOptions{Platforms: acceptancePlatforms(t)})
 	if err != nil {
 		t.Fatal("proxied ImagePull:", err)
 	}
@@ -138,7 +140,7 @@ func TestImagePullProxyAcceptance(t *testing.T) {
 	// daemon ImageLoad. A second pull of the same tag must therefore finish
 	// without downloading the layer again.
 	before := registryLayerBytes.Load()
-	currentStream, err := (&Client{APIClient: rawClient}).ImagePull(ctx, ref, image.PullOptions{Platform: os.Getenv("PHYLESS_PROXY_TEST_PLATFORM")})
+	currentStream, err := (&Client{APIClient: rawClient}).ImagePull(ctx, ref, dockerclient.ImagePullOptions{Platforms: acceptancePlatforms(t)})
 	if err != nil {
 		t.Fatal("up-to-date proxied ImagePull:", err)
 	}
@@ -148,6 +150,19 @@ func TestImagePullProxyAcceptance(t *testing.T) {
 	if after := registryLayerBytes.Load(); after != before {
 		t.Fatalf("up-to-date pull downloaded %d additional layer bytes", after-before)
 	}
+}
+
+// acceptancePlatforms reads the optional PHYLESS_PROXY_TEST_PLATFORM ("os/arch[/variant]").
+func acceptancePlatforms(t *testing.T) []ocispec.Platform {
+	raw := os.Getenv("PHYLESS_PROXY_TEST_PLATFORM")
+	if raw == "" {
+		return nil
+	}
+	p, err := platforms.Parse(raw)
+	if err != nil {
+		t.Fatal("invalid PHYLESS_PROXY_TEST_PLATFORM:", err)
+	}
+	return []ocispec.Platform{p}
 }
 
 func acceptanceTag(registryURL string) (string, name.Tag, error) {

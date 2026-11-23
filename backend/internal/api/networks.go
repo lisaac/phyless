@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
 	"github.com/go-chi/chi/v5"
+
+	"phyless/backend/internal/docker"
 )
 
 // networkWithUsage adds which containers are attached to a network — mirrors
@@ -16,12 +16,12 @@ import (
 // leaves Containers empty (only NetworkInspect fills it), so compute it here
 // by scanning each container's own network endpoints.
 type networkWithUsage struct {
-	network.Summary
+	docker.NetworkSummary
 	UsedBy []containerRef `json:"UsedBy"`
 }
 
 func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
-	nets, err := s.docker.NetworkList(r.Context(), network.ListOptions{})
+	nets, err := s.docker.ListNetworks(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -31,7 +31,7 @@ func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 	// polling doesn't reshuffle the list.
 	sort.Slice(nets, func(i, j int) bool { return nets[i].Created.Before(nets[j].Created) })
 
-	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	containers, err := s.docker.ListContainers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -55,18 +55,18 @@ func (s *Server) handleListNetworks(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]networkWithUsage, len(nets))
 	for i, n := range nets {
-		out[i] = networkWithUsage{Summary: n, UsedBy: usedBy[n.ID]}
+		out[i] = networkWithUsage{NetworkSummary: n, UsedBy: usedBy[n.ID]}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name    string            `json:"name"`
-		Driver  string            `json:"driver"` // bridge, macvlan, ipvlan, overlay, etc.
-		IPAM    *network.IPAM     `json:"ipam,omitempty"`
-		Options map[string]string `json:"options,omitempty"`
-		Labels  map[string]string `json:"labels,omitempty"`
+		Name    string              `json:"name"`
+		Driver  string              `json:"driver"` // bridge, macvlan, ipvlan, overlay, etc.
+		IPAM    *docker.NetworkIPAM `json:"ipam,omitempty"`
+		Options map[string]string   `json:"options,omitempty"`
+		Labels  map[string]string   `json:"labels,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -75,7 +75,7 @@ func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 	if body.Driver == "" {
 		body.Driver = "bridge"
 	}
-	resp, err := s.docker.NetworkCreate(r.Context(), body.Name, network.CreateOptions{
+	id, err := s.docker.CreateNetwork(r.Context(), body.Name, docker.NetworkSpec{
 		Driver:  body.Driver,
 		IPAM:    body.IPAM,
 		Options: body.Options,
@@ -86,12 +86,12 @@ func (s *Server) handleCreateNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditFromCtx(r, "network.create", body.Name, "ok")
-	writeJSON(w, http.StatusCreated, map[string]string{"id": resp.ID})
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
 func (s *Server) handleGetNetwork(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	info, err := s.docker.NetworkInspect(r.Context(), id, network.InspectOptions{})
+	info, err := s.docker.InspectNetwork(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -101,7 +101,7 @@ func (s *Server) handleGetNetwork(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteNetwork(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.docker.NetworkRemove(r.Context(), id); err != nil {
+	if err := s.docker.RemoveNetwork(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -123,7 +123,7 @@ func (s *Server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.ContainerID = strings.TrimSpace(body.ContainerID)
-	if err := s.docker.NetworkConnect(r.Context(), id, body.ContainerID, nil); err != nil {
+	if err := s.docker.ConnectNetwork(r.Context(), id, body.ContainerID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -141,7 +141,7 @@ func (s *Server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	body.ContainerID = strings.TrimSpace(body.ContainerID)
-	if err := s.docker.NetworkDisconnect(r.Context(), id, body.ContainerID, body.Force); err != nil {
+	if err := s.docker.DisconnectNetwork(r.Context(), id, body.ContainerID, body.Force); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

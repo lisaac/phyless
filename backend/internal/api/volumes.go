@@ -9,12 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	volumetypes "github.com/docker/docker/api/types/volume"
 	"github.com/go-chi/chi/v5"
-
-	"github.com/docker/docker/errdefs"
 
 	"phyless/backend/internal/docker"
 	"phyless/backend/internal/docker/debugshell"
@@ -24,12 +19,12 @@ import (
 // imageWithUsage's UsedBy field (see images.go), computed the same way: scan
 // every container's Mounts for ones that reference this volume by name.
 type volumeWithUsage struct {
-	volumetypes.Volume
+	docker.Volume
 	UsedBy []containerRef `json:"UsedBy"`
 }
 
 func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.docker.VolumeList(r.Context(), volumetypes.ListOptions{})
+	vols, err := s.docker.ListVolumes(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -38,18 +33,18 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 	// instability class as Mounts/Ports/RepoTags/networks. Sort by creation
 	// time (unparsable/empty timestamps sort first) so polling doesn't
 	// reshuffle the list.
-	sort.Slice(resp.Volumes, func(i, j int) bool {
-		ti, _ := time.Parse(time.RFC3339, resp.Volumes[i].CreatedAt)
-		tj, _ := time.Parse(time.RFC3339, resp.Volumes[j].CreatedAt)
+	sort.Slice(vols, func(i, j int) bool {
+		ti, _ := time.Parse(time.RFC3339, vols[i].CreatedAt)
+		tj, _ := time.Parse(time.RFC3339, vols[j].CreatedAt)
 		return ti.Before(tj)
 	})
 
-	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	containers, err := s.docker.ListContainers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	resp.Volumes = slices.DeleteFunc(resp.Volumes, func(v *volumetypes.Volume) bool { return docker.IsHelper(v.Labels) })
+	vols = slices.DeleteFunc(vols, func(v docker.Volume) bool { return docker.IsHelper(v.Labels) })
 	usedBy := make(map[string][]containerRef)
 	for _, c := range containers {
 		if docker.IsHelper(c.Labels) { // a browse container mounting it is not a user
@@ -60,15 +55,15 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 		for _, m := range c.Mounts {
-			if m.Type == mount.TypeVolume && m.Name != "" {
+			if m.Type == docker.MountTypeVolume && m.Name != "" {
 				usedBy[m.Name] = append(usedBy[m.Name], containerRef{ID: c.ID, Name: name})
 			}
 		}
 	}
 
-	out := make([]volumeWithUsage, len(resp.Volumes))
-	for i, v := range resp.Volumes {
-		out[i] = volumeWithUsage{Volume: *v, UsedBy: usedBy[v.Name]}
+	out := make([]volumeWithUsage, len(vols))
+	for i, v := range vols {
+		out[i] = volumeWithUsage{Volume: v, UsedBy: usedBy[v.Name]}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -76,7 +71,7 @@ func (s *Server) handleListVolumes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVolumeDownloadFile(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Query().Get("path")
 	rc, err := s.fs.OpenVolume(r.Context(), chi.URLParam(r, "id"), p)
-	if errdefs.IsNotFound(err) {
+	if docker.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -98,11 +93,7 @@ func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	vol, err := s.docker.VolumeCreate(r.Context(), volumetypes.CreateOptions{
-		Name:   body.Name,
-		Driver: body.Driver,
-		Labels: body.Labels,
-	})
+	vol, err := s.docker.CreateVolume(r.Context(), body.Name, body.Driver, body.Labels)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -112,7 +103,7 @@ func (s *Server) handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetVolume(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	vol, err := s.docker.VolumeInspect(r.Context(), id)
+	vol, err := s.docker.InspectVolume(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -127,7 +118,7 @@ func (s *Server) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.docker.VolumeRemove(r.Context(), id, force); err != nil {
+	if err := s.docker.RemoveVolume(r.Context(), id, force); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -143,7 +134,7 @@ func (s *Server) handleVolumeListFiles(w http.ResponseWriter, r *http.Request) {
 	ctx, helper := debugshell.Track(r.Context())
 	entries, err := s.fs.ListVolume(ctx, chi.URLParam(r, "id"), r.URL.Query().Get("path"))
 	setHelperHeader(w, helper())
-	if errdefs.IsNotFound(err) {
+	if docker.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

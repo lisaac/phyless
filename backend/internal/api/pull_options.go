@@ -6,7 +6,6 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/distribution/reference"
-	"github.com/docker/docker/api/types/registry"
 	"phyless/backend/internal/docker"
 )
 
@@ -52,8 +51,8 @@ func safePullTarget(ref string) string {
 
 // composeRegistryAuth selects credentials explicitly and never consults an
 // external credential helper. Duplicate accounts for one host are ambiguous.
-func (s *Server) composeRegistryAuth(ids []string) (map[string]registry.AuthConfig, error) {
-	result := make(map[string]registry.AuthConfig, len(ids))
+func (s *Server) composeRegistryAuth(ids []string) (map[string]docker.AuthConfig, error) {
+	result := make(map[string]docker.AuthConfig, len(ids))
 	if len(ids) == 0 {
 		return result, nil
 	}
@@ -84,7 +83,7 @@ func (s *Server) composeRegistryAuth(ids []string) (map[string]registry.AuthConf
 			if err != nil {
 				return nil, fmt.Errorf("cannot decrypt stored password for %s; re-enter it", host)
 			}
-			result[host] = registry.AuthConfig{Username: reg.Username, Password: password, ServerAddress: host}
+			result[host] = docker.AuthConfig{Username: reg.Username, Password: password, ServerAddress: host}
 			break
 		}
 		if !found {
@@ -117,7 +116,7 @@ func (s *Server) registryAuthForImage(ref, id string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("selected registry does not match image host")
 	}
-	return registry.EncodeAuthConfig(config)
+	return docker.EncodeAuth(config)
 }
 
 // requestRegistryAuth is every pull entry point's account choice: one account
@@ -153,5 +152,5 @@ func (s *Server) registryAuthFromIDs(ref string, ids []string) (string, error) {
 	if !ok {
 		return "", nil
 	}
-	return registry.EncodeAuthConfig(config)
+	return docker.EncodeAuth(config)
 }

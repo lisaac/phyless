@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	dockerclient "github.com/moby/moby/client"
+
 	"phyless/backend/internal/models"
 )
 
@@ -29,7 +31,7 @@ func TestNewClientConnectsToPlainAndTLSRemoteAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer cli.Close()
-		if _, err := cli.Ping(context.Background()); err != nil {
+		if _, err := cli.Ping(context.Background(), dockerclient.PingOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -49,7 +51,7 @@ func TestNewClientConnectsToPlainAndTLSRemoteAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer cli.Close()
-		if _, err := cli.Ping(context.Background()); err != nil {
+		if _, err := cli.Ping(context.Background(), dockerclient.PingOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	})

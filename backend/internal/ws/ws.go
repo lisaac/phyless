@@ -13,15 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
+	"phyless/backend/internal/docker"
 	"phyless/backend/internal/docker/debugshell"
 )
 
@@ -82,7 +77,7 @@ func MonitorConnection(parent context.Context, conn *websocket.Conn) (context.Co
 }
 
 // Logs streams container logs over WebSocket.
-func Logs(cli client.APIClient) http.HandlerFunc {
+func Logs(cli *docker.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -92,14 +87,14 @@ func Logs(cli client.APIClient) http.HandlerFunc {
 		ctx, stop := MonitorConnection(r.Context(), conn)
 		defer stop()
 
-		info, err := cli.ContainerInspect(ctx, id)
+		info, err := cli.InspectContainer(ctx, id)
 		if err != nil {
 			_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 			return
 		}
 		q := r.URL.Query()
-		rc, err := cli.ContainerLogs(ctx, id, container.LogsOptions{
-			ShowStdout: true, ShowStderr: true, Follow: true, Timestamps: true,
+		rc, err := cli.ContainerLogStream(ctx, id, docker.LogOptions{
+			Follow: true, Timestamps: true,
 			Since: q.Get("since"), Until: q.Get("until"), Tail: LiveTail(q),
 		})
 		if err != nil {
@@ -133,14 +128,14 @@ func copyContainerLogs(dst io.Writer, src io.Reader, tty bool) (int64, error) {
 	}
 	// Docker multiplexes stdout/stderr for non-TTY containers. Decode the
 	// 8-byte stream headers before forwarding payload bytes to the browser.
-	return stdcopy.StdCopy(dst, dst, src)
+	return docker.DemuxLogs(dst, dst, src)
 }
 
 // Terminal runs an exec session and pipes stdin/stdout over WebSocket. When
 // the shell does not exist in the container (distroless), it opens a debugshell
 // container instead. Query params: cmd (space-separated, default "/bin/sh"),
 // user (default "", ignored in debug mode)
-func Terminal(cli client.APIClient) http.HandlerFunc {
+func Terminal(cli *docker.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -157,9 +152,9 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 		if f := strings.Fields(cmdStr); len(f) > 0 {
 			cmd = f
 		}
-		var resp types.HijackedResponse
-		var resize func(container.ResizeOptions) error
-		if missingCommand(ctx, cli, id, cmd[0]) {
+		var resp docker.HijackedResponse
+		var resize func(rows, cols uint) error
+		if strings.HasPrefix(cmd[0], "/") && cli.PathMissing(ctx, id, cmd[0]) {
 			var debugID string
 			debugID, resp, err = debugshell.Start(ctx, cli, id)
 			if err != nil {
@@ -168,23 +163,14 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 			}
 			// Closing the attach already ends the shell (StdinOnce + AutoRemove);
 			// this removes it right away instead of trusting that.
-			defer cli.ContainerRemove(context.WithoutCancel(ctx), debugID, container.RemoveOptions{Force: true}) //nolint:errcheck
-			resize = func(o container.ResizeOptions) error { return cli.ContainerResize(ctx, debugID, o) }
+			defer cli.RemoveContainer(context.WithoutCancel(ctx), debugID, true) //nolint:errcheck
+			resize = func(rows, cols uint) error { return cli.ResizeContainerTTY(ctx, debugID, rows, cols) }
 		} else {
-			execID, err := cli.ContainerExecCreate(ctx, id, container.ExecOptions{
-				AttachStdin: true, AttachStdout: true, AttachStderr: true,
-				Tty: true, Cmd: cmd, User: r.URL.Query().Get("user"),
-			})
+			resp, resize, err = cli.ExecTTY(ctx, id, cmd, r.URL.Query().Get("user"))
 			if err != nil {
 				_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
 				return
 			}
-			resp, err = cli.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{Tty: true})
-			if err != nil {
-				_ = WriteMessage(conn, websocket.TextMessage, []byte("error: "+err.Error()))
-				return
-			}
-			resize = func(o container.ResizeOptions) error { return cli.ContainerExecResize(ctx, execID.ID, o) }
 		}
 		defer resp.Close()
 
@@ -239,7 +225,7 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 				Rows uint   `json:"rows"`
 			}
 			if json.Unmarshal(msg, &ctrl) == nil && ctrl.Type == "resize" {
-				if err := resize(container.ResizeOptions{Height: ctrl.Rows, Width: ctrl.Cols}); err != nil {
+				if err := resize(ctrl.Rows, ctrl.Cols); err != nil {
 					closeSession()
 					return
 				}
@@ -258,7 +244,7 @@ func Terminal(cli client.APIClient) http.HandlerFunc {
 }
 
 // Stats streams one complete JSON object per WebSocket message.
-func Stats(cli client.APIClient) http.HandlerFunc {
+func Stats(cli *docker.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -268,16 +254,16 @@ func Stats(cli client.APIClient) http.HandlerFunc {
 		ctx, stop := MonitorConnection(r.Context(), conn)
 		defer stop()
 
-		rc, err := cli.ContainerStats(ctx, id, true)
+		rc, err := cli.StatsStream(ctx, id)
 		if err != nil {
 			return
 		}
-		defer rc.Body.Close()
+		defer rc.Close()
 		go func() {
 			<-ctx.Done()
-			_ = rc.Body.Close()
+			_ = rc.Close()
 		}()
-		_, _ = streamJSONFrames(conn, rc.Body)
+		_, _ = streamJSONFrames(conn, rc)
 	}
 }
 
@@ -318,7 +304,7 @@ type eventLine struct {
 // seconds, query params) let the events page show a past time range instead
 // of only live-tailing — Docker replays history up to until (or now, if
 // omitted) and then keeps streaming live only when until is unset/future.
-func Events(cli client.APIClient) http.HandlerFunc {
+func Events(cli *docker.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -327,11 +313,7 @@ func Events(cli client.APIClient) http.HandlerFunc {
 		ctx, stop := MonitorConnection(r.Context(), conn)
 		defer stop()
 
-		opts := events.ListOptions{
-			Since: r.URL.Query().Get("since"),
-			Until: r.URL.Query().Get("until"),
-		}
-		eventCh, errCh := cli.Events(ctx, opts)
+		eventCh, errCh := cli.EventStream(ctx, r.URL.Query().Get("since"), r.URL.Query().Get("until"))
 		for eventCh != nil || errCh != nil {
 			select {
 			case <-ctx.Done():
@@ -388,14 +370,4 @@ func writeAll(w io.Writer, p []byte) error {
 		}
 	}
 	return nil
-}
-
-// missingCommand reports whether an absolute command path is absent from the
-// container. Relative names go through PATH and are left to exec.
-func missingCommand(ctx context.Context, cli client.APIClient, id, name string) bool {
-	if !strings.HasPrefix(name, "/") {
-		return false
-	}
-	_, err := cli.ContainerStatPath(ctx, id, name)
-	return errdefs.IsNotFound(err)
 }

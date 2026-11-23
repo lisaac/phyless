@@ -15,11 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/errdefs"
 	"github.com/go-chi/chi/v5"
 	"phyless/backend/internal/autoupdate"
+	"phyless/backend/internal/docker"
 	dockercompose "phyless/backend/internal/docker/compose"
 	dockercontainer "phyless/backend/internal/docker/container"
 	"phyless/backend/internal/models"
@@ -142,7 +140,7 @@ func (s *Server) containerPolicyName(ctx context.Context, id string) string {
 	if err != nil || !slices.ContainsFunc(ps, func(p models.AutoUpdatePolicy) bool { return p.Kind == "container" }) {
 		return ""
 	}
-	info, err := s.docker.ContainerInspect(ctx, id)
+	info, err := s.docker.InspectContainer(ctx, id)
 	if err != nil {
 		return ""
 	}
@@ -334,8 +332,8 @@ func (s *Server) recordAutoUpdate(id string, fn func(*models.AutoUpdatePolicy)) 
 
 // autoUpdateContainer returns the outcome; for skipped, err says why.
 func (s *Server) autoUpdateContainer(ctx context.Context, p models.AutoUpdatePolicy, w io.Writer, attempt func(string)) (string, error) {
-	info, err := s.docker.ContainerInspect(ctx, p.Target)
-	if errdefs.IsNotFound(err) {
+	info, err := s.docker.InspectContainer(ctx, p.Target)
+	if docker.IsNotFound(err) {
 		return autoMissing, fmt.Errorf("目标容器 %s 不存在", p.Target)
 	}
 	if err != nil {
@@ -364,7 +362,7 @@ func (s *Server) autoUpdateContainer(ctx context.Context, p models.AutoUpdatePol
 	if p.Mode != "update" {
 		return autoAvailable, nil
 	}
-	if img, err := s.docker.ImageInspect(ctx, info.Image); err == nil && dockercontainer.NeedsEnvReview(info, img) {
+	if img, err := s.docker.InspectImage(ctx, info.Image); err == nil && dockercontainer.NeedsEnvReview(info, img) {
 		return autoSkipped, errors.New("容器带有旧版升级残留的环境变量，需手动升级一次以确认")
 	}
 	skipPull := res.Status == updateLocalNewer
@@ -404,9 +402,7 @@ func (s *Server) autoUpdateCompose(ctx context.Context, p models.AutoUpdatePolic
 	}
 	// Running containers only: `up` on a behind service would also start one
 	// that was stopped on purpose.
-	list, err := s.docker.ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", labelProject+"="+resolved.projectName)),
-	})
+	list, err := s.docker.ListRunningContainers(ctx, labelProject+"="+resolved.projectName)
 	if err != nil {
 		return "", err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,11 +12,10 @@ import (
 	"testing"
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
-	dockertypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/client"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/docker"
 	dockercompose "phyless/backend/internal/docker/compose"
@@ -31,16 +29,15 @@ type composeDiscoveryClient struct {
 	err        error
 }
 
-func (c *composeDiscoveryClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
-	return c.containers, c.err
+func (c *composeDiscoveryClient) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{Items: c.containers}, c.err
 }
 
 func (c *composeDiscoveryClient) DaemonHost() string    { return "unix:///var/run/docker.sock" }
 func (c *composeDiscoveryClient) ClientVersion() string { return "1.49" }
-func (c *composeDiscoveryClient) Ping(context.Context) (dockertypes.Ping, error) {
-	return dockertypes.Ping{APIVersion: "1.49", OSType: "linux"}, nil
+func (c *composeDiscoveryClient) Ping(context.Context, client.PingOptions) (client.PingResult, error) {
+	return client.PingResult{APIVersion: "1.49", OSType: "linux"}, nil
 }
-func (c *composeDiscoveryClient) NegotiateAPIVersionPing(dockertypes.Ping) {}
 
 func newComposeDiscoveryServer(t *testing.T, p models.ComposeProject, containers []container.Summary) *Server {
 	t.Helper()
@@ -50,7 +47,7 @@ func newComposeDiscoveryServer(t *testing.T, p models.ComposeProject, containers
 	}
 	return &Server{
 		store:  projectStore,
-		docker: &composeDiscoveryClient{containers: containers},
+		docker: &docker.Client{APIClient: &composeDiscoveryClient{containers: containers}},
 	}
 }
 
@@ -118,7 +115,7 @@ func TestResolveComposePropagatesDiscoveryFailure(t *testing.T) {
 	dir := t.TempDir()
 	p := models.ComposeProject{ID: "1", Name: "display", BaseDir: dir, ComposeFile: filepath.Join(dir, "compose.yaml")}
 	server := newComposeDiscoveryServer(t, p, nil)
-	server.docker = &composeDiscoveryClient{err: errors.New("daemon unavailable")}
+	server.docker = &docker.Client{APIClient: &composeDiscoveryClient{err: errors.New("daemon unavailable")}}
 
 	_, err := server.resolveCompose(context.Background(), p.ID)
 	var lookupErr *composeLookupError
@@ -131,7 +128,7 @@ func TestListComposePropagatesDiscoveryFailure(t *testing.T) {
 	dir := t.TempDir()
 	p := models.ComposeProject{ID: "1", Name: "display", BaseDir: dir, ComposeFile: filepath.Join(dir, "compose.yaml")}
 	server := newComposeDiscoveryServer(t, p, nil)
-	server.docker = &composeDiscoveryClient{err: errors.New("daemon unavailable")}
+	server.docker = &docker.Client{APIClient: &composeDiscoveryClient{err: errors.New("daemon unavailable")}}
 	res := httptest.NewRecorder()
 	server.handleListCompose(res, httptest.NewRequest(http.MethodGet, "/api/compose", nil))
 	if res.Code != http.StatusServiceUnavailable {
@@ -338,7 +335,7 @@ func TestComposeDetailMissingRunningFileReturnsMetadata(t *testing.T) {
 
 func TestComposeOperationValidationBoundaries(t *testing.T) {
 	project := &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
-		"builder": {Name: "builder", Build: &composetypes.BuildConfig{Context: "."}},
+		"builder": {Name: "builder", WorkloadSpec: composetypes.WorkloadSpec{Build: &composetypes.BuildConfig{Context: "."}}},
 	}}
 	proxied, err := docker.WithPullProxy(context.Background(), "http://proxy.example:8080")
 	if err != nil {
@@ -357,13 +354,13 @@ func TestComposeOperationValidationBoundaries(t *testing.T) {
 		t.Fatalf("provider validation = %v", err)
 	}
 	if err := validateComposeOperation(context.Background(), "up", &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
-		"remote": {Name: "remote", Build: &composetypes.BuildConfig{Context: ".", AdditionalContexts: map[string]string{"source": "git://example/repo"}}},
+		"remote": {Name: "remote", WorkloadSpec: composetypes.WorkloadSpec{Build: &composetypes.BuildConfig{Context: ".", AdditionalContexts: map[string]string{"source": "git://example/repo"}}}},
 	}}); err == nil || !strings.Contains(err.Error(), "remote additional context") {
 		t.Fatalf("remote context validation = %v", err)
 	}
 	if err := validateComposeOperation(context.Background(), "up", &composetypes.Project{
 		Services:         map[string]composetypes.ServiceConfig{"app": {Name: "app"}},
-		DisabledServices: map[string]composetypes.ServiceConfig{"builder": {Name: "builder", Build: &composetypes.BuildConfig{Context: "git://example/repo"}}},
+		DisabledServices: map[string]composetypes.ServiceConfig{"builder": {Name: "builder", WorkloadSpec: composetypes.WorkloadSpec{Build: &composetypes.BuildConfig{Context: "git://example/repo"}}}},
 	}); err != nil {
 		t.Fatalf("disabled build validation = %v", err)
 	}
@@ -373,7 +370,7 @@ func TestComposeOperationValidationBoundaries(t *testing.T) {
 		t.Fatalf("proxy build validation = %v, want nil", err)
 	}
 	if err := validateComposeOperation(context.Background(), "build", &composetypes.Project{Services: map[string]composetypes.ServiceConfig{
-		"remote": {Name: "remote", Build: &composetypes.BuildConfig{Context: "git://example/repo"}},
+		"remote": {Name: "remote", WorkloadSpec: composetypes.WorkloadSpec{Build: &composetypes.BuildConfig{Context: "git://example/repo"}}},
 	}}); err == nil || !strings.Contains(err.Error(), "remote build context") {
 		t.Fatalf("remote build context validation = %v", err)
 	}
@@ -399,7 +396,7 @@ func TestListComposeReportsCanBuild(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{store: projectStore, docker: &composeDiscoveryClient{}, buildCache: newBuildCapabilityCache()}
+	server := &Server{store: projectStore, docker: &docker.Client{APIClient: &composeDiscoveryClient{}}, buildCache: newBuildCapabilityCache()}
 	runtime, err := dockercompose.NewRuntime(server.docker)
 	if err != nil {
 		t.Fatal(err)
@@ -468,7 +465,7 @@ func TestFindRegisteredComposeWorksWithoutDaemon(t *testing.T) {
 		ComposeFile: filepath.Join(dir, "compose.yaml"),
 	}
 	server := newComposeDiscoveryServer(t, project, nil)
-	server.docker = &composeDiscoveryClient{err: errors.New("daemon unavailable")}
+	server.docker = &docker.Client{APIClient: &composeDiscoveryClient{err: errors.New("daemon unavailable")}}
 
 	got, err := server.findCompose(context.Background(), project.ID)
 	if err != nil {
@@ -501,21 +498,21 @@ type composePullClient struct {
 	proxied bool
 }
 
-func (c *composePullClient) ServerVersion(context.Context) (dockertypes.Version, error) {
-	return dockertypes.Version{APIVersion: "1.49"}, nil
+func (c *composePullClient) ServerVersion(context.Context, client.ServerVersionOptions) (client.ServerVersionResult, error) {
+	return client.ServerVersionResult{APIVersion: "1.49"}, nil
 }
 
-func (c *composePullClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (image.InspectResponse, error) {
+func (c *composePullClient) ImageInspect(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
 	if !c.pulled {
-		return image.InspectResponse{}, errdefs.NotFound(errors.New("no such image"))
+		return client.ImageInspectResult{}, cerrdefs.ErrNotFound.WithMessage("no such image")
 	}
-	return image.InspectResponse{ID: "sha256:pulled", Created: "2026-01-01T00:00:00Z"}, nil
+	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: "sha256:pulled", Created: "2026-01-01T00:00:00Z"}}, nil
 }
 
-func (c *composePullClient) ImagePull(ctx context.Context, _ string, _ image.PullOptions) (io.ReadCloser, error) {
+func (c *composePullClient) ImagePull(ctx context.Context, _ string, _ client.ImagePullOptions) (client.ImagePullResponse, error) {
 	c.pulled = true
 	c.proxied = docker.HasPullProxy(ctx)
-	return io.NopCloser(strings.NewReader(`{"status":"done"}` + "\n")), nil
+	return newPullStream(`{"status":"done"}` + "\n"), nil
 }
 
 func newComposePullServer(t *testing.T) (*Server, *composePullClient) {
@@ -527,8 +524,8 @@ func newComposePullServer(t *testing.T) (*Server, *composePullClient) {
 		t.Fatal(err)
 	}
 	server := newComposeDiscoveryServer(t, models.ComposeProject{ID: "1", Name: "display", BaseDir: dir, ComposeFile: composeFile}, nil)
-	fake := &composePullClient{composeDiscoveryClient: server.docker.(*composeDiscoveryClient)}
-	server.docker = fake
+	fake := &composePullClient{composeDiscoveryClient: server.docker.APIClient.(*composeDiscoveryClient)}
+	server.docker = &docker.Client{APIClient: fake}
 	server.audit = audit.New(filepath.Join(dir, "audit.log"))
 	runtime, err := dockercompose.NewRuntime(fake)
 	if err != nil {
@@ -564,7 +561,7 @@ func TestComposeUpPullPolicyOption(t *testing.T) {
 		{"bogus", http.StatusBadRequest, "bogus"}, // helper is blind; composeRequest rejects it
 	} {
 		t.Run("policy="+tc.policy, func(t *testing.T) {
-			project := &composetypes.Project{Services: composetypes.Services{"app": {Name: "app", Image: "busybox"}}}
+			project := &composetypes.Project{Services: composetypes.Services{"app": {Name: "app", ContainerSpec: composetypes.ContainerSpec{Image: "busybox"}}}}
 			applyComposePullPolicy(project, tc.policy)
 			if got := project.Services["app"].PullPolicy; got != tc.want {
 				t.Fatalf("PullPolicy = %q, want %q", got, tc.want)

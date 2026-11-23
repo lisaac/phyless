@@ -3,6 +3,7 @@ package ws
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,16 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
 func TestCopyContainerLogsDemuxesNonTTYFrames(t *testing.T) {
 	var source bytes.Buffer
-	stdout := stdcopy.NewStdWriter(&source, stdcopy.Stdout)
-	stderr := stdcopy.NewStdWriter(&source, stdcopy.Stderr)
-	_, _ = stdout.Write([]byte("out\n"))
-	_, _ = stderr.Write([]byte("err\n"))
+	writeStdFrame(&source, stdcopy.Stdout, "out\n")
+	writeStdFrame(&source, stdcopy.Stderr, "err\n")
 	var out bytes.Buffer
 	if _, err := copyContainerLogs(&out, &source, false); err != nil {
 		t.Fatal(err)
@@ -35,6 +34,15 @@ func TestCopyContainerLogsDemuxesNonTTYFrames(t *testing.T) {
 	if got := out.String(); got != "raw tty\n" {
 		t.Fatalf("tty logs = %q", got)
 	}
+}
+
+// writeStdFrame writes one Docker multiplexed-stream frame (the SDK no longer
+// exports NewStdWriter): [stream, 0, 0, 0, big-endian uint32 length] + payload.
+func writeStdFrame(w *bytes.Buffer, stream stdcopy.StdType, payload string) {
+	header := [8]byte{byte(stream)}
+	binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+	w.Write(header[:])
+	w.WriteString(payload)
 }
 
 func TestStreamJSONFramesKeepsOneStatsObjectPerMessage(t *testing.T) {

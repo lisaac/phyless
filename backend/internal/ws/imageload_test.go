@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/image"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
 )
 
@@ -22,11 +20,13 @@ type fakeLoader struct {
 	progress string
 }
 
-func (f *fakeLoader) ImageLoad(_ context.Context, input io.Reader, _ ...dockerclient.ImageLoadOption) (image.LoadResponse, error) {
+func (f *fakeLoader) LoadImage(_ context.Context, input io.Reader) (io.ReadCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, err := io.Copy(&f.received, input); err != nil {
-		return image.LoadResponse{}, err
+		return nil, err
 	}
-	return image.LoadResponse{Body: io.NopCloser(strings.NewReader(f.progress))}, nil
+	return io.NopCloser(strings.NewReader(f.progress)), nil
 }
 
 func (f *fakeLoader) got() string {

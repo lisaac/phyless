@@ -10,8 +10,6 @@ import (
 
 	"phyless/backend/internal/docker"
 
-	"github.com/docker/docker/api/types/image"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
 )
 
@@ -30,10 +28,10 @@ const (
 )
 
 // imageLoader is the only Docker method this endpoint needs. Narrowing the
-// dependency keeps the handler testable with a tiny fake while *docker.Client
-// (which embeds client.APIClient) still satisfies it.
+// dependency keeps the handler testable with a tiny fake; *docker.Client
+// satisfies it.
 type imageLoader interface {
-	ImageLoad(ctx context.Context, input io.Reader, opts ...dockerclient.ImageLoadOption) (image.LoadResponse, error)
+	LoadImage(ctx context.Context, tar io.Reader) (io.ReadCloser, error)
 }
 
 // ImageLoad streams a browser-assembled docker-load tar into the daemon over a
@@ -57,15 +55,14 @@ func ImageLoad(cli imageLoader) http.HandlerFunc {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			resp, err := cli.ImageLoad(ctx, pr)
+			resp, err := cli.LoadImage(ctx, pr)
 			if err != nil {
 				loadErr = err
 				// Unblock the frame reader if ImageLoad fails before draining.
 				_ = pr.CloseWithError(err)
 				return
 			}
-			defer resp.Body.Close()
-			loadErr = docker.ConsumeProgress(ctx, sink, resp.Body)
+			loadErr = docker.ConsumeProgress(ctx, sink, resp) // closes resp
 		}()
 
 		readErr := readFramesToPipe(conn, pw)

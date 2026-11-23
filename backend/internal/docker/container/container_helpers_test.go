@@ -11,9 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	types "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 )
 
 type helperClient struct {
@@ -26,24 +24,24 @@ type helperClient struct {
 	execRun   bool
 }
 
-func (c *helperClient) CopyToContainer(_ context.Context, _ string, _ string, content io.Reader, _ container.CopyToContainerOptions) error {
+func (c *helperClient) CopyToContainer(_ context.Context, _ string, opts client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
 	c.copyCalls++
-	_, err := io.Copy(&c.copyData, content)
-	return err
+	_, err := io.Copy(&c.copyData, opts.Content)
+	return client.CopyToContainerResult{}, err
 }
 
-func (c *helperClient) ContainerExecCreate(_ context.Context, _ string, opts container.ExecOptions) (container.ExecCreateResponse, error) {
+func (c *helperClient) ExecCreate(_ context.Context, _ string, opts client.ExecCreateOptions) (client.ExecCreateResult, error) {
 	c.execCmd = append([]string(nil), opts.Cmd...)
 	c.execUser = opts.User
-	return container.ExecCreateResponse{ID: "exec"}, nil
+	return client.ExecCreateResult{ID: "exec"}, nil
 }
 
-func (c *helperClient) ContainerExecStart(context.Context, string, container.ExecStartOptions) error {
-	return nil
+func (c *helperClient) ExecStart(context.Context, string, client.ExecStartOptions) (client.ExecStartResult, error) {
+	return client.ExecStartResult{}, nil
 }
 
-func (c *helperClient) ContainerExecInspect(context.Context, string) (container.ExecInspect, error) {
-	return container.ExecInspect{Running: c.execRun, ExitCode: c.execCode}, nil
+func (c *helperClient) ExecInspect(context.Context, string, client.ExecInspectOptions) (client.ExecInspectResult, error) {
+	return client.ExecInspectResult{Running: c.execRun, ExitCode: c.execCode}, nil
 }
 
 func TestUploadTarFileBoundsAndStreams(t *testing.T) {
@@ -119,8 +117,8 @@ func TestUploadTarFileRejectsEarlySuccessfulConsumer(t *testing.T) {
 
 type earlyReturnClient struct{ client.APIClient }
 
-func (*earlyReturnClient) CopyToContainer(context.Context, string, string, io.Reader, container.CopyToContainerOptions) error {
-	return nil
+func (*earlyReturnClient) CopyToContainer(context.Context, string, client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
+	return client.CopyToContainerResult{}, nil
 }
 
 type lsClient struct {
@@ -128,13 +126,13 @@ type lsClient struct {
 	output []byte
 }
 
-func (c *lsClient) ContainerExecAttach(context.Context, string, container.ExecAttachOptions) (types.HijackedResponse, error) {
-	server, client := net.Pipe()
+func (c *lsClient) ExecAttach(context.Context, string, client.ExecAttachOptions) (client.ExecAttachResult, error) {
+	server, conn := net.Pipe()
 	go func() {
 		_, _ = server.Write(c.output)
 		_ = server.Close()
 	}()
-	return types.HijackedResponse{Conn: client, Reader: bufio.NewReader(client)}, nil
+	return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: conn, Reader: bufio.NewReader(conn)}}, nil
 }
 
 func TestExecListDirChecksStreamAndExit(t *testing.T) {

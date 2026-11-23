@@ -12,16 +12,14 @@ import (
 	"strings"
 	"testing"
 
-	dockertypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	dockersystem "github.com/docker/docker/api/types/system"
-	volumetypes "github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	dockersystem "github.com/moby/moby/api/types/system"
+	volumetypes "github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/auth"
+	"phyless/backend/internal/docker"
 	"phyless/backend/internal/docker/fsbrowse"
 	"phyless/backend/internal/models"
 	"phyless/backend/internal/store"
@@ -32,80 +30,76 @@ type routeClient struct {
 	volumeRoot string
 }
 
-func (c *routeClient) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
-	return nil, nil
+func (c *routeClient) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{}, nil
 }
 
-func (c *routeClient) ContainerInspect(context.Context, string) (container.InspectResponse, error) {
-	return container.InspectResponse{Config: &container.Config{}}, nil
+func (c *routeClient) ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+	return client.ContainerInspectResult{Container: container.InspectResponse{Config: &container.Config{}}}, nil
 }
 
-func (c *routeClient) ContainerTop(context.Context, string, []string) (container.TopResponse, error) {
-	return container.TopResponse{}, nil
+func (c *routeClient) ContainerTop(context.Context, string, client.ContainerTopOptions) (client.ContainerTopResult, error) {
+	return client.ContainerTopResult{}, nil
 }
 
-func (c *routeClient) ContainerExecCreate(context.Context, string, container.ExecOptions) (container.ExecCreateResponse, error) {
-	return container.ExecCreateResponse{}, errors.New("exec unavailable")
+func (c *routeClient) ExecCreate(context.Context, string, client.ExecCreateOptions) (client.ExecCreateResult, error) {
+	return client.ExecCreateResult{}, errors.New("exec unavailable")
 }
 
-func (c *routeClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
-	return nil
+func (c *routeClient) ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
+	return client.ContainerRemoveResult{}, nil
 }
 
-func (c *routeClient) ContainerExport(context.Context, string) (io.ReadCloser, error) {
+func (c *routeClient) ContainerExport(context.Context, string, client.ContainerExportOptions) (client.ContainerExportResult, error) {
 	return io.NopCloser(strings.NewReader("tar")), nil
 }
 
-func (c *routeClient) CopyFromContainer(context.Context, string, string) (io.ReadCloser, container.PathStat, error) {
-	return io.NopCloser(strings.NewReader("tar")), container.PathStat{}, nil
+func (c *routeClient) CopyFromContainer(context.Context, string, client.CopyFromContainerOptions) (client.CopyFromContainerResult, error) {
+	return client.CopyFromContainerResult{Content: io.NopCloser(strings.NewReader("tar"))}, nil
 }
 
-func (c *routeClient) ImageList(context.Context, image.ListOptions) ([]image.Summary, error) {
-	return nil, nil
+func (c *routeClient) ImageList(context.Context, client.ImageListOptions) (client.ImageListResult, error) {
+	return client.ImageListResult{}, nil
 }
 
-func (c *routeClient) ImageInspectWithRaw(context.Context, string) (image.InspectResponse, []byte, error) {
-	return image.InspectResponse{}, nil, nil
+func (c *routeClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: id}}, nil
 }
 
-func (c *routeClient) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (image.InspectResponse, error) {
-	return image.InspectResponse{ID: id}, nil
+func (c *routeClient) ContainerCreate(context.Context, client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+	return client.ContainerCreateResult{ID: "helper"}, nil
 }
 
-func (c *routeClient) ContainerCreate(context.Context, *container.Config, *container.HostConfig, *network.NetworkingConfig, *ocispec.Platform, string) (container.CreateResponse, error) {
-	return container.CreateResponse{ID: "helper"}, nil
+func (c *routeClient) ImageHistory(context.Context, string, ...client.ImageHistoryOption) (client.ImageHistoryResult, error) {
+	return client.ImageHistoryResult{}, nil
 }
 
-func (c *routeClient) ImageHistory(context.Context, string, ...client.ImageHistoryOption) ([]image.HistoryResponseItem, error) {
-	return nil, nil
-}
-
-func (c *routeClient) ImageSave(context.Context, []string, ...client.ImageSaveOption) (io.ReadCloser, error) {
+func (c *routeClient) ImageSave(context.Context, []string, ...client.ImageSaveOption) (client.ImageSaveResult, error) {
 	return io.NopCloser(strings.NewReader("tar")), nil
 }
 
-func (c *routeClient) NetworkList(context.Context, network.ListOptions) ([]network.Summary, error) {
-	return nil, nil
+func (c *routeClient) NetworkList(context.Context, client.NetworkListOptions) (client.NetworkListResult, error) {
+	return client.NetworkListResult{}, nil
 }
 
-func (c *routeClient) NetworkInspect(context.Context, string, network.InspectOptions) (network.Inspect, error) {
-	return network.Inspect{}, nil
+func (c *routeClient) NetworkInspect(context.Context, string, client.NetworkInspectOptions) (client.NetworkInspectResult, error) {
+	return client.NetworkInspectResult{}, nil
 }
 
-func (c *routeClient) VolumeList(context.Context, volumetypes.ListOptions) (volumetypes.ListResponse, error) {
-	return volumetypes.ListResponse{}, nil
+func (c *routeClient) VolumeList(context.Context, client.VolumeListOptions) (client.VolumeListResult, error) {
+	return client.VolumeListResult{}, nil
 }
 
-func (c *routeClient) VolumeInspect(context.Context, string) (volumetypes.Volume, error) {
-	return volumetypes.Volume{Mountpoint: c.volumeRoot}, nil
+func (c *routeClient) VolumeInspect(context.Context, string, client.VolumeInspectOptions) (client.VolumeInspectResult, error) {
+	return client.VolumeInspectResult{Volume: volumetypes.Volume{Mountpoint: c.volumeRoot}}, nil
 }
 
-func (*routeClient) Info(context.Context) (dockersystem.Info, error) {
-	return dockersystem.Info{OSType: "linux", Architecture: "amd64"}, nil
+func (*routeClient) Info(context.Context, client.InfoOptions) (client.SystemInfoResult, error) {
+	return client.SystemInfoResult{Info: dockersystem.Info{OSType: "linux", Architecture: "amd64"}}, nil
 }
 
-func (*routeClient) ServerVersion(context.Context) (dockertypes.Version, error) {
-	return dockertypes.Version{Version: "28.0.0", APIVersion: "1.50"}, nil
+func (*routeClient) ServerVersion(context.Context, client.ServerVersionOptions) (client.ServerVersionResult, error) {
+	return client.ServerVersionResult{Version: "28.0.0", APIVersion: "1.50"}, nil
 }
 
 func routeTestServer(t *testing.T) (*Server, http.Handler, string, map[models.Role]string) {
@@ -124,7 +118,7 @@ func routeTestServer(t *testing.T) (*Server, http.Handler, string, map[models.Ro
 	server := &Server{
 		store:     s,
 		jwtSecret: []byte(secret),
-		docker:    dockerClient,
+		docker:    &docker.Client{APIClient: dockerClient},
 		fs:        fsbrowse.New(dockerClient),
 		audit:     audit.New(filepath.Join(t.TempDir(), "audit.log")),
 	}

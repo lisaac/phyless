@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/google/go-containerregistry/pkg/name"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
@@ -41,7 +39,7 @@ type updateCheckResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func updateStatus(current, tag image.InspectResponse, tagErr error, remote docker.RemoteImage, remoteErr error) (string, string) {
+func updateStatus(current, tag docker.ImageInspect, tagErr error, remote docker.RemoteImage, remoteErr error) (string, string) {
 	tagMoved := tagErr == nil && tag.ID != "" && tag.ID != current.ID
 	if remoteErr != nil {
 		if tagMoved {
@@ -80,13 +78,13 @@ func upgradableRef(ref string) bool {
 
 type updateCheckTarget struct {
 	result   updateCheckResult
-	current  image.InspectResponse
+	current  docker.ImageInspect
 	group    string
 	platform string
 }
 
 type imageLookup struct {
-	img image.InspectResponse
+	img docker.ImageInspect
 	err error
 }
 
@@ -117,7 +115,7 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 	ids := body.IDs
 	if len(ids) == 0 {
-		list, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
+		list, err := s.docker.ListContainers(ctx)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -143,11 +141,11 @@ func (s *Server) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
 func (s *Server) checkUpdates(ctx context.Context, ids, registryIDs []string) ([]updateCheckResult, error) {
 	// Containers commonly share images and tags; inspect each once.
 	images := map[string]imageLookup{}
-	inspectImage := func(ref string) (image.InspectResponse, error) {
+	inspectImage := func(ref string) (docker.ImageInspect, error) {
 		if l, ok := images[ref]; ok {
 			return l.img, l.err
 		}
-		img, err := s.docker.ImageInspect(ctx, ref)
+		img, err := s.docker.InspectImage(ctx, ref)
 		images[ref] = imageLookup{img, err}
 		return img, err
 	}
@@ -157,7 +155,7 @@ func (s *Server) checkUpdates(ctx context.Context, ids, registryIDs []string) ([
 	for _, id := range ids {
 		t := &updateCheckTarget{result: updateCheckResult{ID: id, Status: updateError}}
 		targets = append(targets, t)
-		info, err := s.docker.ContainerInspect(ctx, id)
+		info, err := s.docker.InspectContainer(ctx, id)
 		if err != nil {
 			t.result.Error = err.Error()
 			continue
@@ -178,7 +176,7 @@ func (s *Server) checkUpdates(ctx context.Context, ids, registryIDs []string) ([
 		t.platform = dockercontainer.ImagePlatform(t.current)
 		if t.platform == "" {
 			if daemonPlatform == "" {
-				if sys, err := s.docker.Info(ctx); err == nil && sys.OSType != "" && sys.Architecture != "" {
+				if sys, err := s.docker.SystemInfo(ctx); err == nil && sys.OSType != "" && sys.Architecture != "" {
 					daemonPlatform = docker.DaemonPlatform(sys.OSType, sys.Architecture).String()
 				}
 			}
@@ -267,7 +265,7 @@ func (s *Server) resolveRemote(ctx context.Context, t *http.Transport, g *remote
 		}
 		return docker.ResolveRemoteImage(ctx, t, g.ref, g.platform, auth)
 	}
-	di, diErr := s.docker.DistributionInspect(ctx, g.ref, auth)
+	di, diErr := s.docker.InspectDistribution(ctx, g.ref, auth)
 	if diErr == nil && (!g.needConfig || g.platform == "") {
 		return docker.RemoteImage{Digest: di.Descriptor.Digest.String()}, nil
 	}

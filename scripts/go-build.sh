@@ -1,15 +1,13 @@
 #!/bin/sh
 # Release build. The embedded Compose API drags in code that this server can
-# never reach (it pins BUILDX_BUILDER=default and COMPOSE_BAKE=false at startup,
-# see backend/internal/docker/compose/runtime.go, and never exports telemetry). We drop
-# it with go build -overlay instead of forking the modules:
+# never reach (it never exports telemetry). We drop it with go build -overlay
+# instead of forking the modules:
 #
-#   compose  build_buildkit.go   blank-imports of the kubernetes/remote/
-#                                docker-container buildx drivers (k8s.io ~35 MB)
-#   buildx   build/opt.go        S3 cache credential lookup (aws-sdk-go-v2)
-#   buildx   util/buildflags     HCL/cty decoders used only by bake (go-cty)
 #   cli      command/telemetry*  OTLP metric/trace exporters (otel sdk)
 #   compose  internal/tracing    OTLP exporter setup (otel sdk, buildkit detect)
+#
+# (Compose v5 no longer links buildx: phyless builds with the daemon's classic
+# builder, see requestCLI.BuildKitEnabled in backend/internal/docker/compose.)
 #
 # Go forbids overlaying GOMODCACHE, so each module is reached through a temp
 # symlink + throwaway go.mod replace; nothing in the repo or the module cache is
@@ -46,52 +44,13 @@ overlay() { OVERLAY="$OVERLAY${OVERLAY:+,}\"$1\":\"$2\""; }
 # expect N FILE PATTERN -> guard
 expect() { n=$(grep -c -E "$3" "$2" || true); [ "$n" -eq "$1" ] || die "expected $1 match(es) of '$3' in $2, got $n"; }
 
-link github.com/docker/compose/v2 compose
-link github.com/docker/buildx buildx
+link github.com/docker/compose/v5 compose
 link github.com/docker/cli cli
-
-# --- compose: drop dead buildx drivers -------------------------------------
-SRC="$TMP/compose/pkg/compose/build_buildkit.go"
-expect 3 "$SRC" '^[[:space:]]*_ "github.com/docker/buildx/driver/(kubernetes|remote|docker-container)"'
-grep -v -E '^[[:space:]]*_ "github.com/docker/buildx/driver/(kubernetes|remote|docker-container)"' "$SRC" >"$TMP/ov/build_buildkit.go"
-overlay "$SRC" "$TMP/ov/build_buildkit.go"
-
-# --- buildx: no AWS credential lookup for s3 cache --------------------------
-SRC="$TMP/buildx/build/opt.go"
-expect 1 "$SRC" '^[[:space:]]*awsconfig "github.com/aws/aws-sdk-go-v2/config"'
-expect 1 "$SRC" '^func addAwsCredentials\(ci \*client.CacheOptionsEntry\) \{'
-awk '
-	/^[[:space:]]*awsconfig "github.com\/aws\/aws-sdk-go-v2\/config"/ { next }
-	/^func addAwsCredentials\(ci \*client.CacheOptionsEntry\) \{/ { print "func addAwsCredentials(*client.CacheOptionsEntry) {} // phyless: no S3 cache credentials on this build"; skip=1; next }
-	skip && /^}/ { skip=0; next }
-	skip { next }
-	{ print }
-' "$SRC" >"$TMP/ov/opt.go"
-overlay "$SRC" "$TMP/ov/opt.go"
-
-# --- buildx: drop cty (bake HCL) decoders ------------------------------------
-for f in attests cache export secrets ssh; do
-	[ -f "$TMP/buildx/util/buildflags/${f}_cty.go" ] || die "missing buildflags/${f}_cty.go"
-	overlay "$TMP/buildx/util/buildflags/${f}_cty.go" ""
-done
-SRC="$TMP/buildx/util/buildflags/cache.go"
-expect 2 "$SRC" '"github.com/zclconf/go-cty/cty(/json)?"'
-expect 1 "$SRC" '^[[:space:]]*case cty.Value:'
-awk '
-	/"github.com\/zclconf\/go-cty\/cty(\/json)?"/ { next }
-	/^[[:space:]]*case cty.Value:/ { getline; next }
-	{ print }
-' "$SRC" >"$TMP/ov/cache.go"
-overlay "$SRC" "$TMP/ov/cache.go"
-SRC="$TMP/buildx/util/buildflags/utils.go"
-expect 1 "$SRC" '^func removeDupes\['
-expect 1 "$SRC" '^func getAndDelete\('
-awk '/^func getAndDelete\(/ { exit } { print }' "$SRC" | grep -v 'zclconf/go-cty' >"$TMP/ov/utils.go"
-overlay "$SRC" "$TMP/ov/utils.go"
 
 # --- docker/cli: no OTLP telemetry -------------------------------------------
 SRC="$TMP/cli/cli/command/telemetry.go"
 expect 1 "$SRC" '^type TelemetryClient interface'
+expect 1 "$SRC" '^func \(cli \*DockerCli\) Resource\(\) \*resource.Resource'
 expect 1 "$SRC" '^func \(cli \*DockerCli\) createGlobalMeterProvider\('
 expect 1 "$SRC" '^func \(cli \*DockerCli\) createGlobalTracerProvider\('
 expect 1 "$SRC" '^func filterResourceAttributesEnvvar\(\)'
@@ -109,16 +68,20 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 type TelemetryClient interface {
+	Resource() *resource.Resource
 	TracerProvider() trace.TracerProvider
 	MeterProvider() metric.MeterProvider
 }
 
 type telemetryResource struct{}
+
+func (*DockerCli) Resource() *resource.Resource { return resource.Empty() }
 
 func (*DockerCli) TracerProvider() trace.TracerProvider { return tracenoop.NewTracerProvider() }
 func (*DockerCli) MeterProvider() metric.MeterProvider  { return metricnoop.NewMeterProvider() }

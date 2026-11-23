@@ -69,7 +69,7 @@ fi
 scp -q -o BatchMode=yes -o ConnectTimeout=10 -i "$key" "$binary" "$target:$remote_binary"
 
 set +e
-ssh_readonly "docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m --cap-drop=ALL --security-opt=no-new-privileges --memory=512m --pids-limit=256 -e PATH=/nonexistent -e HOME=/tmp -e DOCKER_HOST=unix:///var/run/docker.sock -e COMPOSE_BAKE=false -e PHYLESS_ACCEPTANCE=1 -e PHYLESS_ACCEPTANCE_PROJECT=$project_name -v /var/run/docker.sock:/var/run/docker.sock -v '$remote_binary:/usr/local/bin/compose-acceptance.test:ro' alpine:latest /usr/local/bin/compose-acceptance.test -test.v -test.run '^TestComposeAPI(Real|ProxyPull)Acceptance$'"
+ssh_readonly "docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m --cap-drop=ALL --security-opt=no-new-privileges --memory=512m --pids-limit=256 -e PATH=/nonexistent -e HOME=/tmp -e DOCKER_HOST=unix:///var/run/docker.sock -e PHYLESS_ACCEPTANCE=1 -e PHYLESS_ACCEPTANCE_PROJECT=$project_name -v /var/run/docker.sock:/var/run/docker.sock -v '$remote_binary:/usr/local/bin/compose-acceptance.test:ro' alpine:latest /usr/local/bin/compose-acceptance.test -test.v -test.run '^TestComposeAPI(Real|ProxyPull)Acceptance$'"
 test_status=$?
 set -e
 

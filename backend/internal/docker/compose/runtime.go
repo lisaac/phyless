@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	composecli "github.com/compose-spec/compose-go/v2/cli"
@@ -19,21 +18,19 @@ import (
 	"github.com/docker/cli/cli/context/store"
 	"github.com/docker/cli/cli/flags"
 	"github.com/docker/cli/cli/streams"
-	composeapi "github.com/docker/compose/v2/pkg/api"
-	composeimpl "github.com/docker/compose/v2/pkg/compose"
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/client"
-	dockerregistry "github.com/docker/docker/registry"
+	composeapi "github.com/docker/compose/v5/pkg/api"
+	composeimpl "github.com/docker/compose/v5/pkg/compose"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/client"
 	"github.com/spf13/pflag"
 )
 
 // Runtime owns the process-scoped Docker CLI state needed by Compose and
 // creates request-scoped adapters around the shared Docker API client.
 //
-// Docker Compose's build path uses buildx, whose builder store requires a
-// non-nil context store and a resolved default endpoint. Initializing those
-// pieces once here avoids calling DockerCli.Initialize for every HTTP request
-// (which also changes process-global CLI state).
+// The CLI's context store and default endpoint are resolved once here instead
+// of calling DockerCli.Initialize for every HTTP request (which also changes
+// process-global CLI state).
 type Runtime struct {
 	base         *command.DockerCli
 	client       client.APIClient
@@ -51,9 +48,6 @@ type Runtime struct {
 func NewRuntime(dc client.APIClient) (*Runtime, error) {
 	if dc == nil {
 		return nil, fmt.Errorf("docker client is nil")
-	}
-	if err := configureComposeBuildEnvironment(); err != nil {
-		return nil, err
 	}
 	if strings.TrimSpace(os.Getenv(configfile.DockerEnvConfigKey)) != "" {
 		return nil, fmt.Errorf("%s is not supported by Compose API requests; select registry accounts per request instead", configfile.DockerEnvConfigKey)
@@ -95,37 +89,6 @@ func NewRuntime(dc client.APIClient) (*Runtime, error) {
 		serverInfo:   serverInfo,
 		baseConfig:   base.ConfigFile(),
 	}, nil
-}
-
-// configureComposeBuildEnvironment is called once while the process-scoped
-// Compose runtime is initialized. Compose v2.40 defaults to Bake when the
-// variable is absent, and buildx also consults BUILDX_BUILDER for every build;
-// neither implicit choice is safe for an API service that promises no hidden
-// subprocess or remote builder. An unset variable is therefore fixed to the
-// daemon's default exactly once at startup. Requests never mutate the env.
-func configureComposeBuildEnvironment() error {
-	if raw, ok := os.LookupEnv("COMPOSE_BAKE"); !ok {
-		if err := os.Setenv("COMPOSE_BAKE", "false"); err != nil {
-			return fmt.Errorf("disable Compose Bake at startup: %w", err)
-		}
-	} else {
-		enabled, err := strconv.ParseBool(strings.TrimSpace(raw))
-		if err != nil {
-			return fmt.Errorf("COMPOSE_BAKE must be false for the embedded Compose API: %w", err)
-		}
-		if enabled {
-			return fmt.Errorf("COMPOSE_BAKE=true is not supported by the embedded Compose API; set COMPOSE_BAKE=false before startup")
-		}
-	}
-
-	if raw := strings.TrimSpace(os.Getenv("BUILDX_BUILDER")); raw == "" {
-		if err := os.Setenv("BUILDX_BUILDER", "default"); err != nil {
-			return fmt.Errorf("select Docker default builder at startup: %w", err)
-		}
-	} else if raw != "default" {
-		return fmt.Errorf("BUILDX_BUILDER=%q is not supported by the embedded Compose API; use the Docker daemon default builder", raw)
-	}
-	return nil
 }
 
 func newClientOptions() *flags.ClientOptions {
@@ -176,9 +139,12 @@ func (r *Runtime) NewService(ctx context.Context, options ServiceOptions) (*Serv
 		config:    cloneConfigFile(r.baseConfig, options.AuthConfigs),
 	}
 
-	service := composeimpl.NewComposeService(request, composeimpl.WithPrompt(func(message string, defaultValue bool) (bool, error) {
+	service, err := composeimpl.NewComposeService(request, composeimpl.WithPrompt(func(message string, defaultValue bool) (bool, error) {
 		return false, fmt.Errorf("compose confirmation required: %s", message)
 	}))
+	if err != nil {
+		return nil, err
+	}
 	return &Service{compose: service, cli: request}, nil
 }
 
@@ -196,16 +162,6 @@ func (s *Service) ConfigFile() *configfile.ConfigFile {
 		return nil
 	}
 	return s.cli.config
-}
-
-// MaxConcurrency sets the official Compose service concurrency limit. The
-// v2.40.3 pull implementation appends build fallbacks from concurrent
-// goroutines without synchronization; callers should use 1 for Pull until a
-// Compose release fixes that upstream race.
-func (s *Service) MaxConcurrency(parallel int) {
-	if s != nil && s.compose != nil {
-		s.compose.MaxConcurrency(parallel)
-	}
 }
 
 // ProjectOptions is the subset of compose-go project options needed by the
@@ -377,8 +333,8 @@ func cloneConfigFile(source *configfile.ConfigFile, auths map[string]registry.Au
 	if source != nil {
 		filename = source.Filename
 	}
-	// Compose only needs the filename for buildx's per-daemon state path. Do
-	// not copy host credential stores, proxies, or auth entries: registry
+	// Keep only the filename (Compose derives per-daemon state paths from it).
+	// Do not copy host credential stores, proxies, or auth entries: registry
 	// credentials are supplied explicitly per request below.
 	clone := configfile.New(filename)
 	for key, auth := range auths {
@@ -386,7 +342,6 @@ func cloneConfigFile(source *configfile.ConfigFile, auths map[string]registry.Au
 			Username:      auth.Username,
 			Password:      auth.Password,
 			Auth:          auth.Auth,
-			Email:         auth.Email,
 			ServerAddress: auth.ServerAddress,
 			IdentityToken: auth.IdentityToken,
 			RegistryToken: auth.RegistryToken,
@@ -395,11 +350,15 @@ func cloneConfigFile(source *configfile.ConfigFile, auths map[string]registry.Au
 	return clone
 }
 
+// dockerHubAuthKey is the config-file key Docker uses for Docker Hub
+// credentials (the CLI keeps its own copy internal).
+const dockerHubAuthKey = "https://index.docker.io/v1/"
+
 func composeAuthConfigKey(key string) string {
 	key = strings.TrimRight(strings.TrimSpace(key), "/")
 	switch strings.TrimPrefix(key, "https://") {
 	case "docker.io", "index.docker.io", "registry-1.docker.io":
-		return dockerregistry.IndexServer
+		return dockerHubAuthKey
 	default:
 		return key
 	}
@@ -418,15 +377,20 @@ type requestCLI struct {
 
 var _ command.Cli = (*requestCLI)(nil)
 
-func (c *requestCLI) Client() client.APIClient               { return c.runtime.client }
-func (c *requestCLI) ConfigFile() *configfile.ConfigFile     { return c.config }
-func (c *requestCLI) In() *streams.In                        { return c.in }
-func (c *requestCLI) Out() *streams.Out                      { return c.out }
-func (c *requestCLI) Err() *streams.Out                      { return c.err }
-func (c *requestCLI) SetIn(in *streams.In)                   { c.in = in }
-func (c *requestCLI) ServerInfo() command.ServerInfo         { return c.runtime.serverInfo }
-func (c *requestCLI) CurrentVersion() string                 { return c.runtime.client.ClientVersion() }
-func (c *requestCLI) BuildKitEnabled() (bool, error)         { return c.runtime.base.BuildKitEnabled() }
+func (c *requestCLI) Client() client.APIClient           { return c.runtime.client }
+func (c *requestCLI) ConfigFile() *configfile.ConfigFile { return c.config }
+func (c *requestCLI) In() *streams.In                    { return c.in }
+func (c *requestCLI) Out() *streams.Out                  { return c.out }
+func (c *requestCLI) Err() *streams.Out                  { return c.err }
+func (c *requestCLI) SetIn(in *streams.In)               { c.in = in }
+func (c *requestCLI) ServerInfo() command.ServerInfo     { return c.runtime.serverInfo }
+func (c *requestCLI) CurrentVersion() string             { return c.runtime.client.ClientVersion() }
+
+// BuildKitEnabled is false on purpose: with BuildKit Compose v5 builds by
+// shelling out to the `docker buildx` plugin (bake). phyless builds with the
+// daemon's classic builder only; BuildKit-only Dockerfile features fail with
+// Compose's explicit error instead of starting a hidden subprocess.
+func (c *requestCLI) BuildKitEnabled() (bool, error)         { return false, nil }
 func (c *requestCLI) ContextStore() store.Store              { return c.runtime.contextStore }
 func (c *requestCLI) CurrentContext() string                 { return c.runtime.currentCtx }
 func (c *requestCLI) DockerEndpoint() dockercontext.Endpoint { return c.runtime.endpoint }

@@ -8,9 +8,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"phyless/backend/internal/docker"
 )
@@ -19,13 +18,14 @@ import (
 // The shell is the container's main process (beside a sleep that anchors
 // /proc/<pid>/root) and stdin is StdinOnce, so closing resp (or phyless dying)
 // ends the shell, the container with it, and AutoRemove deletes it — nothing is left behind.
-func Start(ctx context.Context, cli client.APIClient, target string) (string, types.HijackedResponse, error) {
-	var none types.HijackedResponse
-	t, err := cli.ContainerInspect(ctx, target)
+func Start(ctx context.Context, cli client.APIClient, target string) (string, client.HijackedResponse, error) {
+	var none client.HijackedResponse
+	res, err := cli.ContainerInspect(ctx, target, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", none, err
 	}
-	if t.ContainerJSONBase == nil || t.State == nil || !t.State.Running || t.State.Paused {
+	t := res.Container
+	if t.State == nil || !t.State.Running || t.State.Paused {
 		return "", none, fmt.Errorf("容器未运行，无法进入调试模式")
 	}
 	// chroot into the target without mounting anything: /proc/$K/root is a
@@ -67,20 +67,20 @@ exec sh`
 		return "", none, fmt.Errorf("创建调试容器失败: %w", err)
 	}
 	cleanup := func() {
-		_ = cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true})
+		_, _ = cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, client.ContainerRemoveOptions{Force: true})
 	}
 	// Attach before start, like `docker run -it`, so no output is lost.
-	hj, err := cli.ContainerAttach(ctx, resp.ID, container.AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true})
+	hj, err := cli.ContainerAttach(ctx, resp.ID, client.ContainerAttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true})
 	if err != nil {
 		cleanup()
 		return "", none, err
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		hj.Close()
 		cleanup()
 		return "", none, fmt.Errorf("启动调试容器失败: %w", err)
 	}
-	return resp.ID, hj, nil
+	return resp.ID, hj.HijackedResponse, nil
 }
 
 // TargetRoot is t's filesystem as seen from a container sharing its PID

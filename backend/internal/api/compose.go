@@ -21,10 +21,6 @@ import (
 
 	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/distribution/reference"
-	composeapi "github.com/docker/compose/v2/pkg/api"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/registry"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"phyless/backend/internal/config"
@@ -58,11 +54,11 @@ func (s *Server) mountComposeRoutes(r chi.Router) {
 }
 
 const (
-	labelProject         = composeapi.ProjectLabel
-	labelConfigFiles     = composeapi.ConfigFilesLabel
-	labelWorkingDir      = composeapi.WorkingDirLabel
-	labelEnvironmentFile = composeapi.EnvironmentFileLabel
-	labelService         = composeapi.ServiceLabel
+	labelProject         = dockercompose.ProjectLabel
+	labelConfigFiles     = dockercompose.ConfigFilesLabel
+	labelWorkingDir      = dockercompose.WorkingDirLabel
+	labelEnvironmentFile = dockercompose.EnvironmentFileLabel
+	labelService         = dockercompose.ServiceLabel
 )
 
 type composeLookupError struct {
@@ -158,19 +154,19 @@ type ComposeInfo struct {
 }
 
 // discoverProjects groups all containers by their compose project label.
-func (s *Server) discoverProjectsWithError(ctx context.Context) (map[string][]container.Summary, error) {
+func (s *Server) discoverProjectsWithError(ctx context.Context) (map[string][]phyDocker.ContainerSummary, error) {
 	if s.docker == nil {
 		return nil, errors.New("docker client is not initialized")
 	}
-	containers, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
+	containers, err := s.docker.ListContainers(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return groupComposeContainers(containers), nil
 }
 
-func groupComposeContainers(containers []container.Summary) map[string][]container.Summary {
-	groups := make(map[string][]container.Summary)
+func groupComposeContainers(containers []phyDocker.ContainerSummary) map[string][]phyDocker.ContainerSummary {
+	groups := make(map[string][]phyDocker.ContainerSummary)
 	for _, c := range containers {
 		if proj := c.Labels[labelProject]; proj != "" {
 			groups[proj] = append(groups[proj], c)
@@ -179,7 +175,7 @@ func groupComposeContainers(containers []container.Summary) map[string][]contain
 	return groups
 }
 
-func composeContainerLabel(cs []container.Summary, key string) string {
+func composeContainerLabel(cs []phyDocker.ContainerSummary, key string) string {
 	for _, c := range cs {
 		if value := c.Labels[key]; value != "" {
 			return value
@@ -188,7 +184,7 @@ func composeContainerLabel(cs []container.Summary, key string) string {
 	return ""
 }
 
-func discoveredComposeProject(projectName string, cs []container.Summary) models.ComposeProject {
+func discoveredComposeProject(projectName string, cs []phyDocker.ContainerSummary) models.ComposeProject {
 	return models.ComposeProject{
 		ID:          "auto:" + projectName,
 		Name:        projectName,
@@ -198,7 +194,7 @@ func discoveredComposeProject(projectName string, cs []container.Summary) models
 	}
 }
 
-func composeRunningCounts(cs []container.Summary) (running, total int) {
+func composeRunningCounts(cs []phyDocker.ContainerSummary) (running, total int) {
 	for _, c := range cs {
 		total++
 		if c.State == "running" {
@@ -238,7 +234,7 @@ func (s *Server) handleListCompose(w http.ResponseWriter, r *http.Request) {
 	}
 	if sid := s.selfID(r.Context()); sid != "" {
 		for i := range out {
-			out[i].Self = out[i].ProjectName != "" && slices.ContainsFunc(groups[out[i].ProjectName], func(c container.Summary) bool { return c.ID == sid })
+			out[i].Self = out[i].ProjectName != "" && slices.ContainsFunc(groups[out[i].ProjectName], func(c phyDocker.ContainerSummary) bool { return c.ID == sid })
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -320,7 +316,7 @@ func mergeFilesystemCompose(out []ComposeInfo, dirs []string) []ComposeInfo {
 	return out
 }
 
-func mergeComposeProjects(projects []models.ComposeProject, groups map[string][]container.Summary) []ComposeInfo {
+func mergeComposeProjects(projects []models.ComposeProject, groups map[string][]phyDocker.ContainerSummary) []ComposeInfo {
 	var out []ComposeInfo
 	for _, p := range projects {
 		out = append(out, ComposeInfo{ComposeProject: p, CanBuild: false})
@@ -1154,31 +1150,18 @@ func (s *Server) composeExec(ctx context.Context, operation string, project *com
 			}
 		}
 		if operation == "redeploy" {
-			if err := service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project}); err != nil {
+			if err := service.Down(ctx, projectName, project); err != nil {
 				return err
 			}
 		}
 		applyComposePullPolicy(project, options.PullPolicy)
-		return service.Compose().Up(ctx, project, composeapi.UpOptions{
-			Create: composeapi.CreateOptions{
-				Build: &composeapi.BuildOptions{
-					Deps:     true,
-					Quiet:    true,
-					Progress: "quiet",
-					Out:      output,
-				},
-				Recreate:             composeapi.RecreateDiverged,
-				RecreateDependencies: composeapi.RecreateDiverged,
-				Inherit:              true,
-			},
-			Start: composeapi.StartOptions{Project: project},
-		})
+		return service.Up(ctx, project, output)
 	case "stop":
-		return service.Compose().Stop(ctx, projectName, composeapi.StopOptions{Project: project})
+		return service.Stop(ctx, projectName, project)
 	case "pause":
-		return service.Compose().Pause(ctx, projectName, composeapi.PauseOptions{Project: project})
+		return service.Pause(ctx, projectName, project)
 	case "down":
-		return service.Compose().Down(ctx, projectName, composeapi.DownOptions{Project: project})
+		return service.Down(ctx, projectName, project)
 	case "build":
 		if project == nil {
 			return fmt.Errorf("compose build requires a readable project file")
@@ -1188,24 +1171,17 @@ func (s *Server) composeExec(ctx context.Context, operation string, project *com
 				return err
 			}
 		}
-		return service.Compose().Build(ctx, project, composeapi.BuildOptions{
-			Progress: "plain",
-			Out:      output,
-		})
+		return service.Build(ctx, project, output)
 	case "pull":
 		if project == nil {
 			return fmt.Errorf("compose pull requires a readable project file")
 		}
-		// ponytail: Compose v2.40.3 appends build fallbacks from concurrent pull
-		// goroutines without a lock. Keep this one operation serial until
-		// an upstream release fixes that race; Up retains normal parallelism.
-		service.MaxConcurrency(1)
 		// Build services are handled by the follow-up build step (see
 		// runComposeUpdate); pulling their image tag here is meaningless
 		// and unsupported through the pull proxy.
-		return service.Compose().Pull(ctx, project, composeapi.PullOptions{IgnoreBuildable: true})
+		return service.Pull(ctx, project)
 	case "restart":
-		return service.Compose().Restart(ctx, projectName, composeapi.RestartOptions{Project: project})
+		return service.Restart(ctx, projectName, project)
 	default:
 		return fmt.Errorf("unsupported compose operation %q", operation)
 	}
@@ -1223,7 +1199,7 @@ func (s *Server) composeSelf(ctx context.Context, projectName, operation string)
 	if sid == "" {
 		return ""
 	}
-	info, err := s.docker.ContainerInspect(ctx, sid)
+	info, err := s.docker.InspectContainer(ctx, sid)
 	if err != nil || info.Config == nil || info.Config.Labels[labelProject] != projectName {
 		return ""
 	}
@@ -1253,7 +1229,7 @@ func (s *Server) composeHandoff(ctx context.Context, w io.Writer, output *docker
 			policy = composetypes.PullPolicyMissing // Up's default; Pull's own default is always
 		}
 		applyComposePullPolicy(project, policy)
-		if err := service.Compose().Pull(ctx, project, composeapi.PullOptions{IgnoreBuildable: true}); err != nil {
+		if err := service.Pull(ctx, project); err != nil {
 			return err
 		}
 	}
@@ -1333,7 +1309,7 @@ func composeCanUseRunningFallback(operation string, resolved composeResolution, 
 // finds them in the local image store. buildkit runs its own FROM pulls inside
 // the daemon, which never pass through phyless's userspace registry proxy, so
 // without this a proxied build/up cannot reach a blocked registry.
-func (s *Server) prePullBuildBases(ctx context.Context, project *composetypes.Project, auths map[string]registry.AuthConfig, platform string, output io.Writer) error {
+func (s *Server) prePullBuildBases(ctx context.Context, project *composetypes.Project, auths map[string]phyDocker.AuthConfig, platform string, output io.Writer) error {
 	if project == nil {
 		return nil
 	}
@@ -1368,13 +1344,13 @@ func (s *Server) prePullBuildBases(ctx context.Context, project *composetypes.Pr
 	return nil
 }
 
-func (s *Server) prePullBaseImage(ctx context.Context, ref string, auths map[string]registry.AuthConfig, platform string, output io.Writer) error {
+func (s *Server) prePullBaseImage(ctx context.Context, ref string, auths map[string]phyDocker.AuthConfig, platform string, output io.Writer) error {
 	encoded, err := encodeRegistryAuthForImage(ref, auths)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(output, "通过代理预拉取基础镜像 %s\n", safePullTarget(ref))
-	rc, err := s.docker.ImagePull(ctx, ref, image.PullOptions{RegistryAuth: encoded, Platform: platform})
+	rc, err := s.docker.PullImage(ctx, ref, encoded, platform)
 	if err != nil {
 		return fmt.Errorf("预拉取基础镜像 %s 失败: %w", safePullTarget(ref), err)
 	}
@@ -1386,7 +1362,7 @@ func (s *Server) prePullBaseImage(ctx context.Context, ref string, auths map[str
 
 // encodeRegistryAuthForImage picks the configured credential whose host matches
 // the base image's registry; unmatched hosts pull anonymously (public bases).
-func encodeRegistryAuthForImage(ref string, auths map[string]registry.AuthConfig) (string, error) {
+func encodeRegistryAuthForImage(ref string, auths map[string]phyDocker.AuthConfig) (string, error) {
 	named, err := reference.ParseNormalizedNamed(ref)
 	if err != nil {
 		return "", fmt.Errorf("invalid base image reference %q", ref)
@@ -1399,7 +1375,7 @@ func encodeRegistryAuthForImage(ref string, auths map[string]registry.AuthConfig
 	if !ok {
 		return "", nil
 	}
-	return registry.EncodeAuthConfig(cfg)
+	return phyDocker.EncodeAuth(cfg)
 }
 
 func validateComposeOperation(ctx context.Context, operation string, project *composetypes.Project) error {
@@ -1682,13 +1658,10 @@ func (s *Server) handleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	consumer := &composeLogConsumer{conn: conn, cancel: cancel}
-	err = service.Compose().Logs(ctx, projectName, consumer, composeapi.LogOptions{
-		Project:    project,
-		Follow:     true,
-		Timestamps: true,
-		Since:      r.URL.Query().Get("since"),
-		Until:      r.URL.Query().Get("until"),
-		Tail:       phyWS.LiveTail(r.URL.Query()),
+	err = service.Logs(ctx, projectName, project, consumer, dockercompose.LogsOptions{
+		Since: r.URL.Query().Get("since"),
+		Until: r.URL.Query().Get("until"),
+		Tail:  phyWS.LiveTail(r.URL.Query()),
 	})
 	if err != nil && consumer.WriteErr() == nil && ctx.Err() == nil {
 		consumer.send("error: " + err.Error() + "\n")

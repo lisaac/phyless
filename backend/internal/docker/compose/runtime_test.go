@@ -7,10 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/buildx/builder"
-	dockertypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/client"
 )
 
 type fakeAPIClient struct {
@@ -20,17 +18,13 @@ type fakeAPIClient struct {
 
 func (f *fakeAPIClient) DaemonHost() string    { return f.host }
 func (f *fakeAPIClient) ClientVersion() string { return "1.49" }
-func (f *fakeAPIClient) Ping(context.Context) (dockertypes.Ping, error) {
-	return dockertypes.Ping{APIVersion: "1.49", OSType: "linux"}, nil
+func (f *fakeAPIClient) Ping(context.Context, client.PingOptions) (client.PingResult, error) {
+	return client.PingResult{APIVersion: "1.49", OSType: "linux"}, nil
 }
-func (f *fakeAPIClient) NegotiateAPIVersionPing(dockertypes.Ping) {}
 
 func newTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
-	t.Setenv("COMPOSE_BAKE", "false")
-	t.Setenv("BUILDX_BUILDER", "default")
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
-	t.Setenv("BUILDX_CONFIG", t.TempDir())
 	runtime, err := NewRuntime(&fakeAPIClient{host: "unix:///var/run/docker.sock"})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +32,7 @@ func newTestRuntime(t *testing.T) *Runtime {
 	return runtime
 }
 
-func TestRuntimeInitializesBuildxDependencies(t *testing.T) {
+func TestRuntimeInitializesRequestCLI(t *testing.T) {
 	runtime := newTestRuntime(t)
 	service, err := runtime.NewService(context.Background(), ServiceOptions{})
 	if err != nil {
@@ -53,12 +47,9 @@ func TestRuntimeInitializesBuildxDependencies(t *testing.T) {
 	if service.cli.DockerEndpoint().Host != "unix:///var/run/docker.sock" {
 		t.Fatalf("endpoint = %q, want injected daemon endpoint", service.cli.DockerEndpoint().Host)
 	}
-
-	// builder.New is the first buildx boundary used by Compose. This check is
-	// intentionally against the request adapter: a nil ContextStore used to
-	// panic here when only NewDockerCli(WithAPIClient(...)) was supplied.
-	if _, err := builder.New(service.cli); err != nil && !strings.Contains(err.Error(), "no builder") {
-		t.Fatalf("builder initialization failed: %v", err)
+	// BuildKit on would make Compose v5 shell out to `docker buildx bake`.
+	if on, err := service.cli.BuildKitEnabled(); on || err != nil {
+		t.Fatalf("BuildKitEnabled = %v, %v; want classic builder only", on, err)
 	}
 }
 
@@ -216,59 +207,8 @@ func TestServiceConfigUsesOnlyExplicitRegistryCredentials(t *testing.T) {
 }
 
 func TestNewRuntimeRejectsImplicitAuthEnvironment(t *testing.T) {
-	t.Setenv("COMPOSE_BAKE", "false")
-	t.Setenv("BUILDX_BUILDER", "default")
 	t.Setenv("DOCKER_AUTH_CONFIG", `{"auths":{}}`)
 	if _, err := NewRuntime(&fakeAPIClient{host: "unix:///var/run/docker.sock"}); err == nil || !strings.Contains(err.Error(), "DOCKER_AUTH_CONFIG") {
 		t.Fatalf("NewRuntime error = %v", err)
 	}
-}
-
-func TestNewRuntimeDisablesImplicitBakeAtStartup(t *testing.T) {
-	oldBake, hadBake := os.LookupEnv("COMPOSE_BAKE")
-	oldBuilder, hadBuilder := os.LookupEnv("BUILDX_BUILDER")
-	if err := os.Unsetenv("COMPOSE_BAKE"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Unsetenv("BUILDX_BUILDER"); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if hadBake {
-			_ = os.Setenv("COMPOSE_BAKE", oldBake)
-		} else {
-			_ = os.Unsetenv("COMPOSE_BAKE")
-		}
-		if hadBuilder {
-			_ = os.Setenv("BUILDX_BUILDER", oldBuilder)
-		} else {
-			_ = os.Unsetenv("BUILDX_BUILDER")
-		}
-	})
-	if _, err := NewRuntime(&fakeAPIClient{host: "unix:///var/run/docker.sock"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := os.Getenv("COMPOSE_BAKE"); got != "false" {
-		t.Fatalf("COMPOSE_BAKE = %q, want false", got)
-	}
-	if got := os.Getenv("BUILDX_BUILDER"); got != "default" {
-		t.Fatalf("BUILDX_BUILDER = %q, want default", got)
-	}
-}
-
-func TestNewRuntimeRejectsBakeAndNonDefaultBuilder(t *testing.T) {
-	t.Run("bake", func(t *testing.T) {
-		t.Setenv("COMPOSE_BAKE", "true")
-		t.Setenv("BUILDX_BUILDER", "default")
-		if _, err := NewRuntime(&fakeAPIClient{host: "unix:///var/run/docker.sock"}); err == nil || !strings.Contains(err.Error(), "COMPOSE_BAKE") {
-			t.Fatalf("NewRuntime error = %v", err)
-		}
-	})
-	t.Run("builder", func(t *testing.T) {
-		t.Setenv("COMPOSE_BAKE", "false")
-		t.Setenv("BUILDX_BUILDER", "remote-builder")
-		if _, err := NewRuntime(&fakeAPIClient{host: "unix:///var/run/docker.sock"}); err == nil || !strings.Contains(err.Error(), "BUILDX_BUILDER") {
-			t.Fatalf("NewRuntime error = %v", err)
-		}
-	})
 }

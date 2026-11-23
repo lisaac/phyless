@@ -14,12 +14,12 @@ import (
 	"strings"
 	"sync"
 
-	dockerclient "github.com/docker/docker/client"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"phyless/backend/internal/audit"
 	"phyless/backend/internal/auth"
 	"phyless/backend/internal/autoupdate"
+	"phyless/backend/internal/docker"
 	dockercompose "phyless/backend/internal/docker/compose"
 	"phyless/backend/internal/docker/fsbrowse"
 	"phyless/backend/internal/models"
@@ -33,7 +33,7 @@ type Server struct {
 	jwtSecret      []byte
 	dataDir        string
 	audit          *audit.Logger
-	docker         dockerclient.APIClient
+	docker         *docker.Client
 	composeRuntime *dockercompose.Runtime
 	fs             *fsbrowse.FS
 	buildCache     *buildCapabilityCache

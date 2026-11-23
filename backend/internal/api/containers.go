@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"phyless/backend/internal/docker/debugshell"
 	"phyless/backend/internal/docker/self"
 	"slices"
@@ -15,15 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/platforms"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/strslice"
-	"github.com/docker/docker/errdefs"
-	"github.com/docker/go-connections/nat"
 	"github.com/go-chi/chi/v5"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/singleflight"
 	"phyless/backend/internal/docker"
 	dockercontainer "phyless/backend/internal/docker/container"
@@ -33,12 +26,12 @@ import (
 // fresh on every call (it isn't stored in the order shown), so without this
 // the same container's mounts visibly reshuffle in the frontend on every
 // poll even though nothing about the container changed.
-func sortMounts(mounts []container.MountPoint) {
+func sortMounts(mounts []docker.MountPoint) {
 	sort.Slice(mounts, func(a, b int) bool { return mounts[a].Destination < mounts[b].Destination })
 }
 
 // sortPorts is the same fix for Ports, which has the same instability.
-func sortPorts(ports []container.Port) {
+func sortPorts(ports []docker.PortSummary) {
 	sort.Slice(ports, func(a, b int) bool {
 		if ports[a].PrivatePort != ports[b].PrivatePort {
 			return ports[a].PrivatePort < ports[b].PrivatePort
@@ -48,12 +41,12 @@ func sortPorts(ports []container.Port) {
 }
 
 func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
-	containers, err := s.docker.ContainerList(r.Context(), container.ListOptions{All: true})
+	containers, err := s.docker.ListContainers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	containers = slices.DeleteFunc(containers, func(c container.Summary) bool { return docker.IsHelper(c.Labels) })
+	containers = slices.DeleteFunc(containers, func(c docker.ContainerSummary) bool { return docker.IsHelper(c.Labels) })
 	for i := range containers {
 		sortMounts(containers[i].Mounts)
 		sortPorts(containers[i].Ports)
@@ -120,7 +113,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "image required")
 		return
 	}
-	var baseCfg *container.Config
+	var baseCfg *docker.ContainerConfig
 	ctx, err := s.pullContext(r.Context(), body.ProxyURL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -131,13 +124,13 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var platform *ocispec.Platform
+	var platform *docker.Platform
 	if body.Platform != "" {
 		if !strings.Contains(body.Platform, "/") {
 			writeError(w, http.StatusBadRequest, "platform must include OS and architecture")
 			return
 		}
-		p, err := platforms.Parse(body.Platform)
+		p, err := docker.ParsePlatform(body.Platform)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid platform")
 			return
@@ -150,9 +143,9 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid pull policy")
 		return
 	}
-	var baseHostCfg *container.HostConfig
+	var baseHostCfg *docker.HostConfig
 	if body.TemplateID != "" {
-		info, err := s.docker.ContainerInspect(r.Context(), body.TemplateID)
+		info, err := s.docker.InspectContainer(r.Context(), body.TemplateID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "template inspect failed: "+err.Error())
 			return
@@ -165,16 +158,16 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		baseHostCfg = info.HostConfig
 	}
 
-	cfg := &container.Config{Image: body.Image}
+	cfg := &docker.ContainerConfig{Image: body.Image}
 	if baseCfg != nil {
 		cfg = baseCfg
 		cfg.Image = body.Image
 	}
 	if len(body.Cmd) > 0 {
-		cfg.Cmd = strslice.StrSlice(body.Cmd)
+		cfg.Cmd = body.Cmd
 	}
 	if body.Entrypoint != nil {
-		cfg.Entrypoint = strslice.StrSlice(body.Entrypoint)
+		cfg.Entrypoint = body.Entrypoint
 	}
 	if len(body.Env) > 0 {
 		cfg.Env = body.Env
@@ -189,15 +182,15 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		cfg.WorkingDir = body.WorkingDir
 	}
 
-	hostCfg := &container.HostConfig{}
+	hostCfg := &docker.HostConfig{}
 	if baseHostCfg != nil {
 		hostCfg = baseHostCfg
 	}
 	if body.RestartPolicy != "" {
-		hostCfg.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyMode(body.RestartPolicy)}
+		hostCfg.RestartPolicy = docker.RestartPolicy{Name: docker.RestartPolicyMode(body.RestartPolicy)}
 	}
 	if body.NetworkMode != "" {
-		hostCfg.NetworkMode = container.NetworkMode(body.NetworkMode)
+		hostCfg.NetworkMode = docker.NetworkMode(body.NetworkMode)
 	}
 	if body.Memory > 0 {
 		hostCfg.Memory = body.Memory
@@ -241,26 +234,30 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		cfg.Tty = true
 	}
 	if body.NoHealthcheck {
-		cfg.Healthcheck = &container.HealthConfig{Test: []string{"NONE"}}
+		cfg.Healthcheck = &docker.HealthConfig{Test: []string{"NONE"}}
 	}
 	if body.Sysctls != nil {
 		hostCfg.Sysctls = body.Sysctls
 	}
 	if len(body.Ports) > 0 {
-		_, portBindings, err := nat.ParsePortSpecs(body.Ports)
+		exposed, portBindings, err := docker.ParsePortSpecs(body.Ports)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid port spec: "+err.Error())
 			return
 		}
 		hostCfg.PortBindings = portBindings
-		exposed := nat.PortSet{}
-		for p := range portBindings {
-			exposed[p] = struct{}{}
-		}
 		cfg.ExposedPorts = exposed
 	}
 	if len(body.DNS) > 0 {
-		hostCfg.DNS = body.DNS
+		hostCfg.DNS = make([]netip.Addr, 0, len(body.DNS))
+		for _, d := range body.DNS {
+			ip, err := netip.ParseAddr(strings.TrimSpace(d))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid DNS server: "+d)
+				return
+			}
+			hostCfg.DNS = append(hostCfg.DNS, ip)
+		}
 	}
 	if body.User != "" {
 		cfg.User = body.User
@@ -271,7 +268,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	if len(body.Devices) > 0 {
 		for _, d := range body.Devices {
 			parts := strings.SplitN(d, ":", 3)
-			dm := container.DeviceMapping{PathOnHost: parts[0], CgroupPermissions: "rwm"}
+			dm := docker.DeviceMapping{PathOnHost: parts[0], CgroupPermissions: "rwm"}
 			if len(parts) >= 2 {
 				dm.PathInContainer = parts[1]
 			} else {
@@ -295,7 +292,7 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.LogDriver != "" {
-		hostCfg.LogConfig = container.LogConfig{
+		hostCfg.LogConfig = docker.LogConfig{
 			Type:   body.LogDriver,
 			Config: body.LogOpts,
 		}
@@ -310,19 +307,19 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	// (for the requested platform) is not local, instead of failing the create.
 	pull := body.PullPolicy == "always"
 	if body.PullPolicy == "missing" || body.PullPolicy == "" {
-		local, err := s.docker.ImageInspect(ctx, body.Image)
-		if err != nil && !errdefs.IsNotFound(err) {
+		local, err := s.docker.InspectImage(ctx, body.Image)
+		if err != nil && !docker.IsNotFound(err) {
 			dockercontainer.EmitError(w, err)
 			return
 		}
-		pull = errdefs.IsNotFound(err)
+		pull = docker.IsNotFound(err)
 		if err == nil && platform != nil {
-			pull = !platforms.OnlyStrict(*platform).Match(ocispec.Platform{OS: local.Os, Architecture: local.Architecture, Variant: local.Variant})
+			pull = !docker.PlatformMatches(*platform, local)
 		}
 	}
 	if pull {
 		dockercontainer.EmitStream(w, "正在拉取镜像 %s …", body.Image)
-		rc, err := s.docker.ImagePull(ctx, body.Image, image.PullOptions{RegistryAuth: encoded, Platform: body.Platform})
+		rc, err := s.docker.PullImage(ctx, body.Image, encoded, body.Platform)
 		if err != nil {
 			dockercontainer.EmitError(w, fmt.Errorf("pull failed: %w", err))
 			return
@@ -337,17 +334,17 @@ func (s *Server) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
 		dockercontainer.EmitError(w, err)
 		return
 	}
-	resp, err := s.docker.ContainerCreate(ctx, cfg, hostCfg, &network.NetworkingConfig{}, platform, body.Name)
+	newID, err := s.docker.CreateContainer(ctx, body.Name, cfg, hostCfg, platform)
 	if err != nil {
 		dockercontainer.EmitError(w, err)
 		return
 	}
-	if strings.TrimSpace(resp.ID) == "" {
+	if strings.TrimSpace(newID) == "" {
 		dockercontainer.EmitError(w, fmt.Errorf("Docker returned an empty container ID"))
 		return
 	}
 	result = "ok"
-	dockercontainer.EmitDone(w, resp.ID, "✓ 创建完成，容器 ID: %s", resp.ID)
+	dockercontainer.EmitDone(w, newID, "✓ 创建完成，容器 ID: %s", newID)
 }
 
 func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
@@ -356,19 +353,18 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 	// so only the 层 tab asks, and concurrent asks for one container share a
 	// walk. The daemon finishes the walk even if the client goes away, so the
 	// shared call ignores the first caller's cancellation.
-	var info container.InspectResponse
+	var info docker.ContainerInspect
 	var err error
 	if r.URL.Query().Get("size") == "1" {
 		var v any
 		v, err, _ = containerSizeFlight.Do(id, func() (any, error) {
-			i, _, err := s.docker.ContainerInspectWithRaw(context.WithoutCancel(r.Context()), id, true)
-			return i, err
+			return s.docker.InspectContainerSize(context.WithoutCancel(r.Context()), id)
 		})
 		if err == nil {
-			info = v.(container.InspectResponse)
+			info = v.(docker.ContainerInspect)
 		}
 	} else {
-		info, err = s.docker.ContainerInspect(r.Context(), id)
+		info, err = s.docker.InspectContainer(r.Context(), id)
 	}
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -376,13 +372,13 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	sortMounts(info.Mounts)
 	resp := struct {
-		container.InspectResponse
+		docker.ContainerInspect
 		// Name of the `container:<ref>` network-mode target, so the detail
 		// page needn't inspect the target just to label it.
 		NetworkContainerName string `json:"NetworkContainerName,omitempty"`
-	}{InspectResponse: info}
-	if info.ContainerJSONBase != nil && info.HostConfig != nil && info.HostConfig.NetworkMode.IsContainer() {
-		if target, err := s.docker.ContainerInspect(r.Context(), info.HostConfig.NetworkMode.ConnectedContainer()); err == nil && target.ContainerJSONBase != nil {
+	}{ContainerInspect: info}
+	if info.HostConfig != nil && info.HostConfig.NetworkMode.IsContainer() {
+		if target, err := s.docker.InspectContainer(r.Context(), info.HostConfig.NetworkMode.ConnectedContainer()); err == nil {
 			resp.NetworkContainerName = strings.TrimPrefix(target.Name, "/")
 		}
 	}
@@ -399,7 +395,7 @@ func (s *Server) handleDeleteContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policyName := s.containerPolicyName(r.Context(), id)
-	err := s.docker.ContainerRemove(r.Context(), id, container.RemoveOptions{Force: force})
+	err := s.docker.RemoveContainer(r.Context(), id, force)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -411,7 +407,7 @@ func (s *Server) handleDeleteContainer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.docker.ContainerStart(r.Context(), id, container.StartOptions{}); err != nil {
+	if err := s.docker.StartContainer(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -421,7 +417,7 @@ func (s *Server) handleContainerStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.docker.ContainerStop(r.Context(), id, container.StopOptions{}); err != nil {
+	if err := s.docker.StopContainer(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -431,7 +427,7 @@ func (s *Server) handleContainerStop(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.docker.ContainerRestart(r.Context(), id, container.StopOptions{}); err != nil {
+	if err := s.docker.RestartContainer(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -442,12 +438,12 @@ func (s *Server) handleContainerRestart(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleContainerPause(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if sid := s.selfID(r.Context()); sid != "" {
-		if info, err := s.docker.ContainerInspect(r.Context(), id); err == nil && info.ID == sid {
+		if info, err := s.docker.InspectContainer(r.Context(), id); err == nil && info.ID == sid {
 			writeError(w, http.StatusBadRequest, "不能暂停 phyless 自身容器：暂停后 phyless 无法自行恢复")
 			return
 		}
 	}
-	if err := s.docker.ContainerPause(r.Context(), id); err != nil {
+	if err := s.docker.PauseContainer(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -456,7 +452,7 @@ func (s *Server) handleContainerPause(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.docker.ContainerUnpause(r.Context(), id); err != nil {
+	if err := s.docker.UnpauseContainer(r.Context(), id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -465,7 +461,7 @@ func (s *Server) handleContainerUnpause(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleContainerKill(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := s.docker.ContainerKill(r.Context(), id, "SIGKILL"); err != nil {
+	if err := s.docker.KillContainer(r.Context(), id, "SIGKILL"); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -483,7 +479,7 @@ func (s *Server) handleContainerRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	policyName := s.containerPolicyName(r.Context(), id)
-	if err := s.docker.ContainerRename(r.Context(), id, body.Name); err != nil {
+	if err := s.docker.RenameContainer(r.Context(), id, body.Name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -545,7 +541,7 @@ func (s *Server) handleContainerUpgrade(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	info, err := s.docker.ContainerInspect(ctx, id)
+	info, err := s.docker.InspectContainer(ctx, id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -578,7 +574,7 @@ type containerUpgrade struct {
 
 // upgradeAuth validates the upgrade reference and encodes registry
 // credentials for the pull, before any progress is streamed.
-func (s *Server) upgradeAuth(info container.InspectResponse, skipPull bool, opts requestPullOptions) (string, error) {
+func (s *Server) upgradeAuth(info docker.ContainerInspect, skipPull bool, opts requestPullOptions) (string, error) {
 	imageRef := dockercontainer.UpgradeImageRef(info)
 	if imageRef == "" {
 		return "", errors.New("container has no image reference")
@@ -592,7 +588,7 @@ func (s *Server) upgradeAuth(info container.InspectResponse, skipPull bool, opts
 // upgradeContainer is the upgrade shared by the HTTP handler and scheduled
 // auto-updates. phyless's own container is handed to the helper, which then
 // owns the outcome (handedOff); old-image cleanup is skipped in that case.
-func (s *Server) upgradeContainer(ctx context.Context, info container.InspectResponse, u containerUpgrade, w io.Writer) (handedOff bool, err error) {
+func (s *Server) upgradeContainer(ctx context.Context, info docker.ContainerInspect, u containerUpgrade, w io.Writer) (handedOff bool, err error) {
 	uopts := dockercontainer.UpgradeOptions{EnvFromImage: u.envFromImage}
 	if info.ID == s.selfID(ctx) {
 		uopts.Handoff = func() error {
@@ -605,7 +601,7 @@ func (s *Server) upgradeContainer(ctx context.Context, info container.InspectRes
 	if u.skipPull {
 		newID, err = dockercontainer.UpgradeWithoutPull(ctx, s.docker, info.ID, w, uopts)
 	} else {
-		newID, err = dockercontainer.Upgrade(ctx, s.docker, info.ID, w, image.PullOptions{RegistryAuth: u.auth}, uopts)
+		newID, err = dockercontainer.Upgrade(ctx, s.docker, info.ID, w, u.auth, uopts)
 	}
 	if err == nil && newID != "" && u.removeOldImage {
 		s.removeUnusedImages(ctx, []string{info.Image}, w)
@@ -617,7 +613,7 @@ func (s *Server) upgradeContainer(ctx context.Context, info container.InspectRes
 // forced, and an image that still has a tag stays: removing it by ID would
 // silently drop that tag (Docker only refuses with two or more).
 func (s *Server) removeUnusedImages(ctx context.Context, ids []string, w io.Writer) {
-	list, err := s.docker.ContainerList(ctx, container.ListOptions{All: true})
+	list, err := s.docker.ListContainers(ctx)
 	if err != nil {
 		dockercontainer.EmitStream(w, "⚠ 未清理旧镜像：无法列出容器：%v", err)
 		return
@@ -635,7 +631,7 @@ func (s *Server) removeUnusedImages(ctx context.Context, ids []string, w io.Writ
 			dockercontainer.EmitStream(w, "旧镜像 %s 仍被其他容器使用，保留", shortImageID(id))
 			continue
 		}
-		img, err := s.docker.ImageInspect(ctx, id)
+		img, err := s.docker.InspectImage(ctx, id)
 		if err != nil {
 			dockercontainer.EmitStream(w, "旧镜像 %s 未删除：%v", shortImageID(id), err)
 			continue
@@ -662,7 +658,7 @@ func shortImageID(id string) string {
 
 func (s *Server) handleContainerUpdateResources(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var body container.UpdateConfig
+	var body docker.UpdateConfig
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
@@ -673,7 +669,7 @@ func (s *Server) handleContainerUpdateResources(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "online memory limit clearing is unsupported; recreate the container")
 		return
 	}
-	if _, err := s.docker.ContainerUpdate(r.Context(), id, body); err != nil {
+	if err := s.docker.UpdateContainer(r.Context(), id, body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -682,17 +678,17 @@ func (s *Server) handleContainerUpdateResources(w http.ResponseWriter, r *http.R
 
 func (s *Server) handleContainerTop(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	result, err := s.docker.ContainerTop(r.Context(), id, nil)
+	titles, processes, err := s.docker.ContainerProcesses(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, map[string]any{"Titles": titles, "Processes": processes})
 }
 
 func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	rc, err := s.docker.ContainerExport(r.Context(), id)
+	rc, err := s.docker.ExportContainer(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -705,9 +701,7 @@ func (s *Server) handleContainerExport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleContainerImport(w http.ResponseWriter, r *http.Request) {
 	ref := r.URL.Query().Get("ref")
-	resp, err := s.docker.ImageImport(r.Context(),
-		image.ImportSource{Source: r.Body, SourceName: "-"},
-		ref, image.ImportOptions{})
+	resp, err := s.docker.ImportImage(r.Context(), r.Body, ref)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -734,7 +728,7 @@ func (s *Server) handleContainerListFiles(w http.ResponseWriter, r *http.Request
 		entries, err = s.fs.ListContainer(ctx, id, dirPath)
 	}
 	setHelperHeader(w, helper())
-	if errdefs.IsNotFound(err) {
+	if docker.IsNotFound(err) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

@@ -27,7 +27,7 @@ COPY --from=build /x /x
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	svc := composetypes.ServiceConfig{Build: &composetypes.BuildConfig{Context: dir}}
+	svc := composetypes.ServiceConfig{WorkloadSpec: composetypes.WorkloadSpec{Build: &composetypes.BuildConfig{Context: dir}}}
 	got, err := BuildBaseImages(svc, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -40,10 +40,10 @@ COPY --from=build /x /x
 }
 
 func TestBuildBaseImagesBuildArgOverride(t *testing.T) {
-	svc := composetypes.ServiceConfig{Build: &composetypes.BuildConfig{
+	svc := composetypes.ServiceConfig{WorkloadSpec: composetypes.WorkloadSpec{Build: &composetypes.BuildConfig{
 		DockerfileInline: "ARG TAG=3.19\nFROM alpine:${TAG}\n",
 		Args:             composetypes.MappingWithEquals{"TAG": strptr("3.20")},
-	}}
+	}}}
 	got, err := BuildBaseImages(svc, "")
 	if err != nil {
 		t.Fatal(err)
