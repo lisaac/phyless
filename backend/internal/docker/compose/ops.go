@@ -23,12 +23,24 @@ const (
 // LogConsumer receives `compose logs` lines.
 type LogConsumer = composeapi.LogConsumer
 
-// Up builds missing images (build output to buildOut), creates/recreates
-// diverged services and starts the project, like `docker compose up -d`.
+// Up builds missing images (quietly; failures still return), creates/
+// recreates diverged services and starts the project, like
+// `docker compose up -d`.
 func (s *Service) Up(ctx context.Context, project *composetypes.Project, buildOut io.Writer) error {
+	build := &composeapi.BuildOptions{Deps: true, Quiet: true, Progress: "quiet", Out: buildOut}
+	if s.cli.runtime.buildKit {
+		names, err := s.servicesToBuild(ctx, project)
+		if err != nil {
+			return err
+		}
+		if err := s.buildKitServices(ctx, project, names, nil); err != nil {
+			return err
+		}
+		build = nil // images are in place; Compose must not build again
+	}
 	return s.compose.Up(ctx, project, composeapi.UpOptions{
 		Create: composeapi.CreateOptions{
-			Build:                &composeapi.BuildOptions{Deps: true, Quiet: true, Progress: "quiet", Out: buildOut},
+			Build:                build,
 			Recreate:             composeapi.RecreateDiverged,
 			RecreateDependencies: composeapi.RecreateDiverged,
 			Inherit:              true,
@@ -55,7 +67,16 @@ func (s *Service) Restart(ctx context.Context, name string, project *composetype
 
 // Build builds every service with a build section, plain progress to out.
 func (s *Service) Build(ctx context.Context, project *composetypes.Project, out io.Writer) error {
-	return s.compose.Build(ctx, project, composeapi.BuildOptions{Progress: "plain", Out: out})
+	if !s.cli.runtime.buildKit {
+		return s.compose.Build(ctx, project, composeapi.BuildOptions{Progress: "plain", Out: out})
+	}
+	var names []string
+	for name, svc := range project.Services {
+		if svc.Build != nil {
+			names = append(names, name)
+		}
+	}
+	return s.buildKitServices(ctx, project, names, out)
 }
 
 // Pull pulls service images, skipping services that are built locally.

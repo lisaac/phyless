@@ -39,6 +39,10 @@ type Runtime struct {
 	endpoint     dockercontext.Endpoint
 	serverInfo   command.ServerInfo
 	baseConfig   *configfile.ConfigFile
+	// buildKit: build in-process through the daemon's BuildKit (buildkit.go).
+	// False only for daemons without it (Windows) or DOCKER_BUILDKIT=0; those
+	// fall back to Compose's classic builder.
+	buildKit bool
 }
 
 // NewRuntime initializes the official Docker CLI once against the already
@@ -80,6 +84,10 @@ func NewRuntime(dc client.APIClient) (*Runtime, error) {
 	// official CLI's lazy initializer.
 	endpoint := base.DockerEndpoint()
 	serverInfo := base.ServerInfo()
+	buildKit, err := base.BuildKitEnabled()
+	if err != nil {
+		return nil, err
+	}
 	return &Runtime{
 		base:         base,
 		client:       dc,
@@ -88,6 +96,7 @@ func NewRuntime(dc client.APIClient) (*Runtime, error) {
 		endpoint:     endpoint,
 		serverInfo:   serverInfo,
 		baseConfig:   base.ConfigFile(),
+		buildKit:     buildKit,
 	}, nil
 }
 
@@ -387,9 +396,9 @@ func (c *requestCLI) ServerInfo() command.ServerInfo     { return c.runtime.serv
 func (c *requestCLI) CurrentVersion() string             { return c.runtime.client.ClientVersion() }
 
 // BuildKitEnabled is false on purpose: with BuildKit Compose v5 builds by
-// shelling out to the `docker buildx` plugin (bake). phyless builds with the
-// daemon's classic builder only; BuildKit-only Dockerfile features fail with
-// Compose's explicit error instead of starting a hidden subprocess.
+// shelling out to the `docker buildx` plugin (bake). phyless runs BuildKit
+// builds itself (buildkit.go) before handing the project to Compose, so
+// Compose's own builder is only the classic fallback and never a subprocess.
 func (c *requestCLI) BuildKitEnabled() (bool, error)         { return false, nil }
 func (c *requestCLI) ContextStore() store.Store              { return c.runtime.contextStore }
 func (c *requestCLI) CurrentContext() string                 { return c.runtime.currentCtx }
