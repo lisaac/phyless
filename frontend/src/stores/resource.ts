@@ -2,7 +2,7 @@ import { createSignal, type Accessor, type Resource } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { get, isBackendDown } from "../api/client";
 import { SETTLED_EVENT } from "./taskQueue";
-import { REFRESH_EVENT, autoRefresh, refreshSeconds } from "./refresh";
+import { REFRESH_EVENT, autoRefresh, refreshSeconds, setNow } from "./refresh";
 
 /** Read a createResource value WITHOUT triggering <Suspense>: undefined until
  *  the first load resolves (or on error — check res.error), then the latest
@@ -80,6 +80,7 @@ export function createPollingResource<T>(path: string, initial: T, key = "Id"): 
         if (requestGeneration === generation) {
           setState("value", reconcile(data ?? initial, { key }));
           setError("");
+          setNow(Date.now());
         }
       } catch (e) {
         // Backend down is reported once as a sticky toast; keep the last list.

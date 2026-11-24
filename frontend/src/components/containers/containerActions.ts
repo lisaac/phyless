@@ -1,4 +1,5 @@
 import { enqueue, isPending } from "../../stores/taskQueue";
+import { now } from "../../stores/refresh";
 import { selfContainerId } from "../../api/selfRestart";
 import { confirmAction } from "../shared/ConfirmModal";
 import { toast } from "../shared/Toast";
@@ -15,6 +16,7 @@ export function findContainer(list: readonly ContainerSummary[], ref: string): C
 }
 
 export function fmtRelTime(unix: number): string {
+  now(); // track: re-render on every poll; value from the real clock (unpolled pages)
   const diff = Date.now() - unix * 1000;
   const m = Math.floor(diff / 60000);
   const h = Math.floor(diff / 3600000);

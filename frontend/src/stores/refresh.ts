@@ -23,6 +23,10 @@ const initial = load();
 export const [autoRefresh, setAutoRefreshSignal] = createSignal(initial.on);
 export const [refreshSeconds, setRefreshSecondsSignal] = createSignal(initial.seconds);
 
+// Clock for relative times ("3m 前"): bumped on every successful poll, so text
+// derived from unchanged fields (reconcile keeps them) still re-renders.
+export const [now, setNow] = createSignal(Date.now());
+
 export const refreshAll = () => window.dispatchEvent(new Event(REFRESH_EVENT));
 
 function persist() {

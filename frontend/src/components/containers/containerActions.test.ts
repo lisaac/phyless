@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { containerRunCommand, findContainer } from "./containerActions";
+import { describe, it, expect, vi } from "vitest";
+import { containerRunCommand, findContainer, fmtRelTime } from "./containerActions";
 import type { ContainerSummary } from "../../types";
 
 const base: ContainerSummary = {
@@ -35,5 +35,24 @@ describe("findContainer", () => {
     expect(findContainer(list, "abc1")?.Names[0]).toBe("/vpn");
     expect(findContainer(list, "web")?.Id).toBe("ffff");
     expect(findContainer(list, "nope")).toBeUndefined();
+  });
+});
+
+describe("fmtRelTime reactivity", () => {
+  it("re-renders on a poll even though Created did not change", async () => {
+    const { createRoot, createMemo } = await import("solid-js");
+    const { setNow } = await import("../../stores/refresh");
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    const created = 1_000_000_000 - 120; // 2m ago
+    createRoot((dispose) => {
+      const text = createMemo(() => fmtRelTime(created));
+      expect(text()).toBe("2m 前");
+      vi.setSystemTime(1_000_000_000_000 + 3 * 60_000);
+      setNow(Date.now());
+      expect(text()).toBe("5m 前");
+      dispose();
+    });
+    vi.useRealTimers();
   });
 });
