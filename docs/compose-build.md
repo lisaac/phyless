@@ -29,9 +29,22 @@ Build 按钮**仅在满足以下全部条件时显示**：
 POST /api/compose/build?id=<项目ID>
 ```
 
-复用 `runComposeOperation`（`backend/internal/api/compose.go`），内部调用官方 Compose API 的
-`service.Compose().Build`，进度以 `plain` 模式流式写回。需要可读的 compose 文件；
-文件不可读时返回错误，不会静默构建一个不同的配置（与 Up / Pull 的严格策略一致）。
+复用 `runComposeOperation`（`backend/internal/api/compose.go`），调用
+`backend/internal/docker/compose/ops.go` 的 `Service.Build`，进度以 `plain` 模式流式写回。需要可读的
+compose 文件；文件不可读时返回错误，不会静默构建一个不同的配置（与 Up / Pull 的严格策略一致）。
+
+### 构建器
+
+- 默认在进程内直连守护进程内置的 BuildKit（经 API 的 `/grpc`、`/session` 端点，与 buildx 的
+  `docker` 驱动相同，见 `buildkit.go`），不启动子进程，也不需要 buildx 插件。支持 `RUN --mount`、
+  secrets、ssh、多平台、`additional_contexts`（含 `service:`，按依赖顺序构建）、target、
+  `cache_from` / `cache_to`、network、`extra_hosts`、`shm_size`、ulimits、privileged / entitlements、
+  `dockerfile_inline`。多个服务逐个构建。
+- 仓库认证只用本次请求所选账号（内存中的隔离配置），不读宿主机 Docker 凭据；构建 secret 只从项目
+  定义（文件 / 项目环境变量 / content）取值。
+- Up：只构建本地缺失镜像或 `pull_policy: build` 的服务；同时声明了 `image:` 的服务先尝试拉取，
+  拉不到再构建。构建完成后交给 Compose，Compose 不再重复构建。
+- Windows 守护进程或 `DOCKER_BUILDKIT=0` 时退回 Compose 的经典构建器（不支持 BuildKit 专有语法）。
 
 ### 构建能力标记 `can_build`
 

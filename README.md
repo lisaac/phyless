@@ -2,7 +2,7 @@
 
 轻量的自托管 Docker 管理面板：**一个二进制，无需任何依赖。**
 
-整个程序就是一个约 36 MB 的静态可执行文件（压缩后约 15 MB），网页前端和 Compose 引擎都编译在里面。不需要数据库、运行时或额外的库，也不需要安装 docker CLI 或 docker compose。只要机器上有 Docker Engine，下载后直接运行即可。
+整个程序就是一个约 27 MB 的静态可执行文件（压缩后约 12 MB），网页前端和 Compose 引擎都编译在里面。不需要数据库、运行时或额外的库，也不需要安装 docker CLI 或 docker compose。只要机器上有 Docker Engine，下载后直接运行即可。
 
 [在线演示](https://lisaac.github.io/phyless/) · [Docker 镜像](https://github.com/lisaac/phyless/pkgs/container/phyless) · [下载二进制](https://github.com/lisaac/phyless/releases/latest)
 
@@ -19,7 +19,7 @@
 
 ## 快速开始
 
-前提：服务器上已运行 Docker Engine，除此之外不需要任何东西。
+前提：服务器上已运行 Docker Engine（19.03 及以上，即 API 1.40+），除此之外不需要任何东西。
 
 **用容器运行：**
 
@@ -81,7 +81,7 @@ sudo ./phyless-linux-$ARCH -C /var/lib/phyless
 
 ### 轻量
 
-- **单个二进制**：后端、网页和 Compose 引擎编译进同一个文件，Linux amd64 约 36 MB（压缩包约 15 MB）。容器镜像基于 scratch，里面只有这一个文件，根证书也编译在程序里。
+- **单个二进制**：后端、网页和 Compose 引擎编译进同一个文件，Linux amd64 约 27 MB（压缩包约 12 MB）。容器镜像基于 scratch，里面只有这一个文件，根证书也编译在程序里。
 - **无需任何依赖**：静态编译，不依赖 glibc 或其他系统库；不需要数据库，账号和配置是数据目录里的普通文件；Compose 通过内嵌的 Go API 执行，宿主机无需安装 `docker` 或 `docker compose` 命令。
 - **省内存**：默认把堆内存软上限设为 128 MB，路由器、NAS、小 VPS 也跑得动（可用 `GOMEMLIMIT`、`GOGC` 环境变量调整）。
 - **部署简单**：一条 `docker run`，或者下载二进制直接运行。
@@ -119,7 +119,7 @@ Docker 主机与版本、操作系统和内核、总内存、存储驱动与可�
 - 查看项目下的服务与容器状态。
 - 在线编辑 `compose.yaml` 及项目目录内的其他文件（上传、下载、重命名）。
 - 操作：Up、Down、Stop、Restart、Pause、Pull、Build、Update（拉取并重建）；输出以流式日志显示在任务抽屉中。
-- Build 仅对含 `build:` 的项目显示，浏览器代理模式下会先预拉 Dockerfile 的 `FROM` 镜像。详见 [docs/compose-build.md](docs/compose-build.md)。
+- Build 仅对含 `build:` 的项目显示。构建直接使用 Docker 守护进程内置的 BuildKit，支持 `RUN --mount`、构建 secrets、多平台、`additional_contexts` 等，不需要 buildx 插件；守护进程不支持 BuildKit（如 Windows）或设置了 `DOCKER_BUILDKIT=0` 时退回经典构建器。仓库认证只使用本次选中的账号，不读取宿主机的 Docker 凭据。浏览器代理模式下会先预拉 Dockerfile 的 `FROM` 镜像。详见 [docs/compose-build.md](docs/compose-build.md)。
 
 ### 镜像
 
