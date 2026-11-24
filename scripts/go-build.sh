@@ -8,8 +8,15 @@
 #   cli      command/container   init() registering `docker container …` cobra
 #                                commands (Compose only calls RunExec/RunAttach)
 #   grpc     -tags grpcnotrace   x/net/trace debug pages (html/template)
+#   compose  registry/desktop    Docker Desktop Hub session lookup (secrets-engine,
+#                                connectrpc). Also a fix: credentials must come
+#                                only from the request, never Desktop's account.
+#   chi      middleware/profiler net/http/pprof + expvar (unused; their init()
+#                                registers /debug/* on http.DefaultServeMux)
+#   compose  pkg/compose/publish `compose publish` (secret-detector regexps at init)
+#   compose  internal/build      bake subprocess path (never taken, see below)
 #
-# The last two matter far more than their own size: any reachable text/template
+# The container and grpcnotrace items matter far more than their own size: any reachable text/template
 # execution makes the linker keep every exported method of every type (reflect
 # MethodByName), ~8 MB here. Check with -ldflags=-dumpdep: no <ReflectMethod>.
 #
@@ -54,6 +61,7 @@ expect() { n=$(grep -c -E "$3" "$2" || true); [ "$n" -eq "$1" ] || die "expected
 
 link github.com/docker/compose/v5 compose
 link github.com/docker/cli cli
+link github.com/go-chi/chi/v5 chi
 
 # --- docker/cli: no OTLP telemetry -------------------------------------------
 SRC="$TMP/cli/cli/command/telemetry.go"
@@ -123,6 +131,60 @@ for f in cmd prune; do
 	sed "s/^func init() {$/func phylessDropped_$f() {/" "$SRC" >"$TMP/ov/container_$f.go"
 	overlay "$SRC" "$TMP/ov/container_$f.go"
 done
+
+# --- compose: never use the Docker Desktop Hub session -----------------------
+# The originals are renamed (unreachable, dropped); the replacements make the
+# provider the plain fallback and the shared sessions' lazy connect a no-op.
+SRC="$TMP/compose/internal/registry/desktop.go"
+expect 1 "$SRC" '^func NewDesktopAuthProvider\(fallback AuthProvider\) AuthProvider \{$'
+expect 1 "$SRC" '^func connectDesktop\(opts \.\.\.dockerhub\.Option\) \(hubSessions, error\) \{$'
+sed -e 's/^func NewDesktopAuthProvider(/func phylessDroppedNewDesktopAuthProvider(/' \
+	-e 's/^func connectDesktop(/func phylessDroppedConnectDesktop(/' "$SRC" >"$TMP/ov/desktop.go"
+cat >>"$TMP/ov/desktop.go" <<'GO'
+
+// phyless: registry credentials come only from the request's isolated config.
+func NewDesktopAuthProvider(fallback AuthProvider) AuthProvider { return fallback }
+
+func connectDesktop(...dockerhub.Option) (hubSessions, error) { return nil, dockerhub.ErrNoSession }
+GO
+overlay "$SRC" "$TMP/ov/desktop.go"
+
+# --- chi: no pprof/expvar ----------------------------------------------------
+SRC="$TMP/chi/middleware/profiler.go"
+expect 1 "$SRC" '^func Profiler\(\) http\.Handler \{$'
+grep -rqs 'middleware\.Profiler' "$REPO/backend" && die "backend uses chi middleware.Profiler"
+overlay "$SRC" ""
+
+# --- compose: no `compose publish` -------------------------------------------
+# Unused, but importing internal/publish runs DefangLabs secret-detector's
+# init(): dozens of regexps compiled at every start.
+SRC="$TMP/compose/pkg/compose/publish.go"
+expect 1 "$SRC" '^func \(s \*composeService\) Publish\(ctx context.Context, project \*types.Project, repository string, options api.PublishOptions\) error \{$'
+cat >"$TMP/ov/publish.go" <<'GO'
+package compose
+
+import (
+	"context"
+
+	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/docker/compose/v5/pkg/api"
+)
+
+func (s *composeService) Publish(context.Context, *types.Project, string, api.PublishOptions) error {
+	return api.ErrNotImplemented
+}
+GO
+overlay "$SRC" "$TMP/ov/publish.go"
+
+# --- compose: no bake subprocess path ----------------------------------------
+# requestCLI.BuildKitEnabled is false (phyless runs BuildKit itself), so Compose
+# only ever takes its classic fallback; constant-false lets the compiler drop
+# doBuildBake and its buildx plugin plumbing.
+SRC="$TMP/compose/internal/build/build.go"
+expect 1 "$SRC" '^	bake, err := buildWithBake\(s\.backend\.CLI\(\)\)$'
+sed 's/^	bake, err := buildWithBake(s\.backend\.CLI())$/	bake, err := false, error(nil)/' "$SRC" >"$TMP/ov/build.go"
+overlay "$SRC" "$TMP/ov/build.go"
 
 printf '{"Replace":{%s}}' "$OVERLAY" >"$TMP/overlay.json"
 exec go build -modfile="$TMP/go.mod" -overlay "$TMP/overlay.json" -tags grpcnotrace -trimpath -ldflags='-s -w' "$@"
