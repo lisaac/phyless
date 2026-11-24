@@ -187,4 +187,5 @@ sed 's/^	bake, err := buildWithBake(s\.backend\.CLI())$/	bake, err := false, err
 overlay "$SRC" "$TMP/ov/build.go"
 
 printf '{"Replace":{%s}}' "$OVERLAY" >"$TMP/overlay.json"
-exec go build -modfile="$TMP/go.mod" -overlay "$TMP/overlay.json" -tags grpcnotrace -trimpath -ldflags='-s -w' "$@"
+# No exec: the EXIT trap must still remove $TMP.
+go build -modfile="$TMP/go.mod" -overlay "$TMP/overlay.json" -tags grpcnotrace -trimpath -ldflags='-s -w' "$@"
