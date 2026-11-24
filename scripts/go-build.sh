@@ -5,9 +5,17 @@
 #
 #   cli      command/telemetry*  OTLP metric/trace exporters (otel sdk)
 #   compose  internal/tracing    OTLP exporter setup (otel sdk, buildkit detect)
+#   cli      command/container   init() registering `docker container …` cobra
+#                                commands (Compose only calls RunExec/RunAttach)
+#   grpc     -tags grpcnotrace   x/net/trace debug pages (html/template)
 #
-# (Compose v5 no longer links buildx: phyless builds with the daemon's classic
-# builder, see requestCLI.BuildKitEnabled in backend/internal/docker/compose.)
+# The last two matter far more than their own size: any reachable text/template
+# execution makes the linker keep every exported method of every type (reflect
+# MethodByName), ~8 MB here. Check with -ldflags=-dumpdep: no <ReflectMethod>.
+#
+# (Compose v5 no longer links buildx. phyless builds in process against the
+# daemon's BuildKit, see backend/internal/docker/compose/buildkit.go; Compose's
+# own classic builder stays only as the fallback for daemons without BuildKit.)
 #
 # Go forbids overlaying GOMODCACHE, so each module is reached through a temp
 # symlink + throwaway go.mod replace; nothing in the repo or the module cache is
@@ -106,5 +114,15 @@ done
 expect 0 "$TMP/compose/internal/tracing/attributes.go" 'otel/sdk|OTLPConfig|ShutdownFunc'
 expect 0 "$TMP/compose/internal/tracing/wrap.go" 'otel/sdk|OTLPConfig|ShutdownFunc'
 
+# --- cli: no `docker container` command registration ------------------------
+# Renamed, not deleted, so the files' imports stay used; the unexported funcs
+# are then unreachable and dropped.
+for f in cmd prune; do
+	SRC="$TMP/cli/cli/command/container/$f.go"
+	expect 1 "$SRC" '^func init\(\) \{$'
+	sed "s/^func init() {$/func phylessDropped_$f() {/" "$SRC" >"$TMP/ov/container_$f.go"
+	overlay "$SRC" "$TMP/ov/container_$f.go"
+done
+
 printf '{"Replace":{%s}}' "$OVERLAY" >"$TMP/overlay.json"
-exec go build -modfile="$TMP/go.mod" -overlay "$TMP/overlay.json" -trimpath -ldflags='-s -w' "$@"
+exec go build -modfile="$TMP/go.mod" -overlay "$TMP/overlay.json" -tags grpcnotrace -trimpath -ldflags='-s -w' "$@"
