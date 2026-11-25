@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"sync"
@@ -92,22 +93,53 @@ func (l *Logger) ReadAll() ([]Entry, error) {
 // ReadTail returns only the newest entries, keeping audit responses bounded as
 // the log rotates, with one shared byte budget across all retained files.
 func (l *Logger) ReadTail(maxEntries int) ([]Entry, error) {
+	return l.ReadRange(maxEntries, time.Time{}, time.Time{})
+}
+
+// ReadRange returns the newest entries with since <= time <= until (zero =
+// unbounded). Without a range it reads only the last maxTailBytes; with one it
+// scans whole files, skipping rotated files whose mtime window misses the range.
+// ponytail: mtime-based skipping assumes files were not copied/touched; a range
+// on a full log scans up to 60 MiB — add an index if that ever matters.
+func (l *Logger) ReadRange(maxEntries int, since, until time.Time) ([]Entry, error) {
 	if maxEntries <= 0 {
 		return nil, fmt.Errorf("max entries must be positive")
 	}
 	if maxEntries > DefaultMaxEntries {
 		maxEntries = DefaultMaxEntries
 	}
+	ranged := !since.IsZero() || !until.IsZero()
+	keep := func(e Entry) bool {
+		if !ranged {
+			return true
+		}
+		t, err := time.Parse(time.RFC3339, e.Time)
+		return err == nil && (since.IsZero() || !t.Before(since)) && (until.IsZero() || !t.After(until))
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	entries := []Entry{}
 	remainingBytes := int64(maxTailBytes)
-	for i := 0; i <= l.backups && len(entries) < maxEntries && remainingBytes > 0; i++ {
-		file := l.path
-		if i > 0 {
-			file = fmt.Sprintf("%s.%d", l.path, i)
+	if ranged {
+		remainingBytes = math.MaxInt64
+	}
+	file := func(i int) string {
+		if i == 0 {
+			return l.path
 		}
-		tail, consumed, err := readFileTail(file, maxEntries-len(entries), remainingBytes)
+		return fmt.Sprintf("%s.%d", l.path, i)
+	}
+	for i := 0; i <= l.backups && len(entries) < maxEntries && remainingBytes > 0; i++ {
+		if ranged {
+			// Entries in file i were written after file i+1's mtime and up to its own.
+			if info, err := os.Stat(file(i)); err == nil && !since.IsZero() && info.ModTime().Before(since) {
+				break
+			}
+			if info, err := os.Stat(file(i + 1)); err == nil && !until.IsZero() && info.ModTime().After(until.Add(time.Second)) {
+				continue
+			}
+		}
+		tail, consumed, err := readFileTail(file(i), maxEntries-len(entries), remainingBytes, keep)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +149,7 @@ func (l *Logger) ReadTail(maxEntries int) ([]Entry, error) {
 	return entries, nil
 }
 
-func readFileTail(path string, maxEntries int, maxBytes int64) ([]Entry, int64, error) {
+func readFileTail(path string, maxEntries int, maxBytes int64, keep func(Entry) bool) ([]Entry, int64, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, 0, nil
@@ -142,18 +174,18 @@ func readFileTail(path string, maxEntries int, maxBytes int64) ([]Entry, int64, 
 		}
 		reader = buffered
 	}
-	entries, err := scanTail(reader, maxEntries)
+	entries, err := scanTail(reader, maxEntries, keep)
 	return entries, consumed, err
 }
 
-func scanTail(r io.Reader, maxEntries int) ([]Entry, error) {
+func scanTail(r io.Reader, maxEntries int, keep func(Entry) bool) ([]Entry, error) {
 	entries := make([]Entry, 0, maxEntries)
 	next := 0
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 4096), maxAuditLine+1)
 	for scanner.Scan() {
 		var e Entry
-		if json.Unmarshal(scanner.Bytes(), &e) == nil {
+		if json.Unmarshal(scanner.Bytes(), &e) == nil && keep(e) {
 			if len(entries) == maxEntries {
 				entries[next] = e
 				next = (next + 1) % maxEntries

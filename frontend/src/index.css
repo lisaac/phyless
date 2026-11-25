@@ -267,6 +267,7 @@ html:not(.dark) .file\:text-zinc-200::file-selector-button     { color: #1e293b;
 html:not(.dark) .file\:hover\:bg-zinc-700:hover::file-selector-button { background-color: #cbd5e1; }
 
 html:not(.dark) .text-violet-300, html:not(.dark) .text-violet-400 { color: #6d28d9; }
+html:not(.dark) .text-pink-400 { color: #be185d; }
 html:not(.dark) .text-teal-400  { color: #0f766e; }
 html:not(.dark) .text-green-400 { color: #15803d; }
 html:not(.dark) .hover\:text-emerald-400:hover { color: #065f46; }
